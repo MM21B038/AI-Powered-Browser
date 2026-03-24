@@ -4,8 +4,8 @@
   "description": "AI-powered Chromium browser with chat automation",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "dev": "electron . --remote-debugging-port=9222",
+    "start": "npx electron .",
+    "dev": "npx electron . --remote-debugging-port=9222",
     "build": "electron-builder",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
@@ -17,13 +17,9 @@
     "electron"
   ],
   "author": "",
-  "license": "MIT",
-  "devDependencies": {
-    "electron": "^41.0.3",
-    "electron-builder": "^26.8.1"
-  },
   "dependencies": {
-    "axios": "^1.6.0"
+    "axios": "^1.6.0",
+    "sqlite3": "^6.0.1"
   },
   "build": {
     "appId": "com.autonomousbrowser.app",
@@ -47,5 +43,9 @@
         "deb"
       ]
     }
+  },
+  "devDependencies": {
+    "electron": "^41.0.3",
+    "electron-rebuild": "^3.2.9"
   }
 }

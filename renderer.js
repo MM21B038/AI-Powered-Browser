@@ -32,6 +32,8 @@ const zoomLevelEl = document.getElementById("zoomLevel");
 const devtoolsBtn = document.getElementById("devtoolsBtn");
 const settingsBtn = document.getElementById("settingsBtn");
 const settingsBtnChat = document.getElementById("settingsBtnChat");
+const bookmarksBtn = document.getElementById("bookmarksBtn");
+const historyBtn = document.getElementById("historyBtn");
 const settingsPanel = document.getElementById("settingsPanel");
 const settingsOverlay = document.getElementById("settingsOverlay");
 const closeSettingsBtn = document.getElementById("closeSettingsBtn");
@@ -48,6 +50,20 @@ const findCount = document.getElementById("findCount");
 const findPrev = document.getElementById("findPrev");
 const findNext = document.getElementById("findNext");
 const findClose = document.getElementById("findClose");
+
+// Import UI elements
+const browserSelect = document.getElementById("browserSelect");
+const importBookmarks = document.getElementById("importBookmarks");
+const importHistory = document.getElementById("importHistory");
+const importCookies = document.getElementById("importCookies");
+const importStats = document.getElementById("importStats");
+const chromeStats = document.getElementById("chromeStats");
+const firefoxStats = document.getElementById("firefoxStats");
+const checkImportBtn = document.getElementById("checkImportBtn");
+const startImportBtn = document.getElementById("startImportBtn");
+const importProgress = document.getElementById("importProgress");
+const progressFill = document.getElementById("progressFill");
+const progressText = document.getElementById("progressText");
 const chatMessages = document.getElementById("chatMessages");
 const chatInput = document.getElementById("chatInput");
 const sendBtn = document.getElementById("sendBtn");
@@ -61,6 +77,14 @@ const chatSection = document.getElementById("chatSection");
 const chatWrapper = document.getElementById("chatWrapper");
 const aiChatToggleBtn = document.getElementById("aiChatToggleBtn");
 const closeChatBtn = document.getElementById("closeChatBtn");
+
+// First-run wizard elements
+const firstRunOverlay = document.getElementById("firstRunOverlay");
+const chromePreview = document.getElementById("chromePreview");
+const firefoxPreview = document.getElementById("firefoxPreview");
+const skipImportBtn = document.getElementById("skipImportBtn");
+const importOptionBtns = document.querySelectorAll(".import-option-btn");
+
 let chatOpen = true;
 
 // ── Init ─────────────────────────────────────────────────────
@@ -78,9 +102,11 @@ document.addEventListener("DOMContentLoaded", () => {
   setupToolsPanel();
   setupResizeHandle();
   setupDataPanelButtons();
+  setupImportWizard();
   createTab(homePage);
   loadSystemInfo();
   setupProfileModal();
+  checkFirstRun();
 });
 
 // -----------------------------------------------------------
@@ -127,7 +153,7 @@ function switchTab(id) {
     tab.initialized = true;
     if (!webviewReady) {
       webviewReady = true;
-      browserFrame.setAttribute("src", tab.url); // bootstrap guest process
+      browserFrame.src = tab.url; // bootstrap guest process
     } else {
       browserFrame.loadURL(tab.url);
     }
@@ -974,6 +1000,188 @@ function setupSettings() {
       localStorage.setItem("homePage", val);
     }
   });
+
+  // Import functionality
+  checkImportBtn.onclick = checkAvailableData;
+  startImportBtn.onclick = startImport;
+  browserSelect.onchange = updateImportUI;
+}
+
+async function checkAvailableData() {
+  try {
+    checkImportBtn.disabled = true;
+    checkImportBtn.textContent = "Checking...";
+
+    const stats = await window.electronAPI.getBrowserStats();
+
+    chromeStats.textContent = stats.chrome.available
+      ? `${stats.chrome.bookmarks} bookmarks, ${stats.chrome.history} history, ${stats.chrome.cookies} cookies`
+      : "Not found";
+
+    firefoxStats.textContent = stats.firefox.available
+      ? `${stats.firefox.bookmarks} bookmarks, ${stats.firefox.history} history, ${stats.firefox.cookies} cookies`
+      : "Not found";
+
+    importStats.style.display = "block";
+    startImportBtn.disabled = false;
+
+  } catch (error) {
+    console.error("Failed to check browser data:", error);
+    showToast("Failed to check browser data", "error");
+  } finally {
+    checkImportBtn.disabled = false;
+    checkImportBtn.textContent = "Check Available Data";
+  }
+}
+
+async function startImport() {
+  const browser = browserSelect.value;
+  if (!browser) {
+    showToast("Please select a browser", "warning");
+    return;
+  }
+
+  const dataTypes = [];
+  if (importBookmarks.checked) dataTypes.push("bookmarks");
+  if (importHistory.checked) dataTypes.push("history");
+  if (importCookies.checked) dataTypes.push("cookies");
+
+  if (dataTypes.length === 0) {
+    showToast("Please select at least one data type", "warning");
+    return;
+  }
+
+  try {
+    startImportBtn.disabled = true;
+    importProgress.style.display = "block";
+    progressFill.style.width = "0%";
+    progressText.textContent = "Starting import...";
+
+    // Simulate progress updates
+    const progressSteps = [
+      "Preparing import...",
+      "Reading browser data...",
+      "Processing bookmarks...",
+      "Processing history...",
+      "Processing cookies...",
+      "Saving data...",
+      "Import complete!"
+    ];
+
+    for (let i = 0; i < progressSteps.length; i++) {
+      progressText.textContent = progressSteps[i];
+      progressFill.style.width = `${((i + 1) / progressSteps.length) * 100}%`;
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    const result = await window.electronAPI.importBrowserData({ browser, dataTypes });
+
+    if (result.success) {
+      showToast(`Successfully imported ${result.results.bookmarks + result.results.history + result.results.cookies} items`, "success");
+      importProgress.style.display = "none";
+      startImportBtn.disabled = false;
+    } else {
+      throw new Error(result.error);
+    }
+
+  } catch (error) {
+    console.error("Import failed:", error);
+    showToast("Import failed: " + error.message, "error");
+    importProgress.style.display = "none";
+    startImportBtn.disabled = false;
+  }
+}
+
+function updateImportUI() {
+  const browser = browserSelect.value;
+  startImportBtn.disabled = !browser;
+  if (browser) {
+    importStats.style.display = "none";
+  }
+}
+
+// ── First Run Wizard ──────────────────────────────────────────
+async function checkFirstRun() {
+  const hasRunBefore = localStorage.getItem("hasRunBefore");
+  if (!hasRunBefore) {
+    await showFirstRunWizard();
+    localStorage.setItem("hasRunBefore", "true");
+  }
+}
+
+async function showFirstRunWizard() {
+  try {
+    // Check available browser data
+    const stats = await window.electronAPI.getBrowserStats();
+
+    chromePreview.textContent = stats.chrome.available
+      ? `${stats.chrome.bookmarks} bookmarks, ${stats.chrome.history} history items`
+      : "Chrome not found or no data available";
+
+    firefoxPreview.textContent = stats.firefox.available
+      ? `${stats.firefox.bookmarks} bookmarks, ${stats.firefox.history} history items`
+      : "Firefox not found or no data available";
+
+    // Show the wizard
+    firstRunOverlay.style.display = "flex";
+
+    // Setup event listeners
+    importOptionBtns.forEach(btn => {
+      btn.onclick = () => quickImport(btn.dataset.browser);
+    });
+
+    skipImportBtn.onclick = () => {
+      firstRunOverlay.style.display = "none";
+    };
+
+  } catch (error) {
+    console.error("Failed to show first-run wizard:", error);
+    // Continue without wizard if there's an error
+  }
+}
+
+async function quickImport(browser) {
+  try {
+    // Disable all buttons
+    importOptionBtns.forEach(btn => btn.disabled = true);
+    skipImportBtn.disabled = true;
+
+    // Show progress on the selected button
+    const selectedBtn = document.querySelector(`[data-browser="${browser}"] .import-option-btn`);
+    selectedBtn.textContent = "Importing...";
+    selectedBtn.style.background = "var(--text3)";
+
+    // Perform import with all data types
+    const result = await window.electronAPI.importBrowserData({
+      browser,
+      dataTypes: ["bookmarks", "history", "cookies"]
+    });
+
+    if (result.success) {
+      selectedBtn.textContent = "Import Complete!";
+      selectedBtn.style.background = "var(--success)";
+
+      // Close wizard after a delay
+      setTimeout(() => {
+        firstRunOverlay.style.display = "none";
+        showToast(`Successfully imported ${result.results.bookmarks + result.results.history + result.results.cookies} items from ${browser}`, "success");
+      }, 2000);
+    } else {
+      throw new Error(result.error);
+    }
+
+  } catch (error) {
+    console.error("Quick import failed:", error);
+    showToast("Import failed: " + error.message, "error");
+
+    // Re-enable buttons
+    importOptionBtns.forEach(btn => {
+      btn.disabled = false;
+      btn.textContent = `Import from ${btn.dataset.browser === 'chrome' ? 'Chrome' : 'Firefox'}`;
+      btn.style.background = "";
+    });
+    skipImportBtn.disabled = false;
+  }
 }
 
 async function loadSystemInfo() {
@@ -1592,6 +1800,117 @@ function setupResizeHandle() {
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
   });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  BROWSER IMPORT WIZARD
+// ═══════════════════════════════════════════════════════════
+
+async function setupImportWizard() {
+  const wizard = document.getElementById("importWizard");
+  const browserList = document.getElementById("importBrowserList");
+  const skipBtn = document.getElementById("importSkipBtn");
+  const startBtn = document.getElementById("importStartBtn");
+
+  // Check if first run
+  const hasImported = localStorage.getItem("hasImported");
+  if (hasImported) return; // Skip if already imported
+
+  try {
+    // Get browser stats
+    const stats = await window.electronAPI.getBrowserStats();
+
+    // Clear existing
+    browserList.innerHTML = "";
+
+    // Add Chrome option
+    if (stats.chrome.available) {
+      const chromeCard = createBrowserCard("chrome", "Chrome", "🌐", stats.chrome);
+      browserList.appendChild(chromeCard);
+    }
+
+    // Add Firefox option
+    if (stats.firefox.available) {
+      const firefoxCard = createBrowserCard("firefox", "Firefox", "🦊", stats.firefox);
+      browserList.appendChild(firefoxCard);
+    }
+
+    // Show wizard if browsers available
+    if (browserList.children.length > 0) {
+      wizard.style.display = "flex";
+    }
+
+  } catch (error) {
+    console.error("Failed to setup import wizard:", error);
+  }
+
+  // Event listeners
+  skipBtn.onclick = () => {
+    wizard.style.display = "none";
+    localStorage.setItem("hasImported", "true");
+  };
+
+  startBtn.onclick = async () => {
+    const selectedCards = browserList.querySelectorAll(".browser-import-card.selected");
+    if (selectedCards.length === 0) return;
+
+    const selectedCard = selectedCards[0];
+    const browser = selectedCard.dataset.browser;
+
+    startBtn.disabled = true;
+    startBtn.textContent = "Importing...";
+
+    try {
+      const result = await window.electronAPI.browserImport();
+
+      if (result.sources.length > 0) {
+        startBtn.textContent = "Import Complete!";
+        startBtn.style.background = "var(--success)";
+
+        setTimeout(() => {
+          wizard.style.display = "none";
+          localStorage.setItem("hasImported", "true");
+          showToast(`Successfully imported ${result.bookmarks.length} bookmarks, ${result.history.length} history items, and ${result.cookies.length} cookies`, "success");
+        }, 2000);
+      } else {
+        throw new Error("No data imported");
+      }
+    } catch (error) {
+      console.error("Import failed:", error);
+      showToast("Import failed: " + error.message, "error");
+      startBtn.disabled = false;
+      startBtn.textContent = "Import Selected";
+    }
+  };
+}
+
+function createBrowserCard(browser, name, icon, stats) {
+  const card = document.createElement("div");
+  card.className = "browser-import-card";
+  card.dataset.browser = browser;
+
+  card.innerHTML = `
+    <div class="browser-icon">${icon}</div>
+    <div class="browser-info">
+      <h3>${name}</h3>
+      <p>Import bookmarks, history, and cookies</p>
+    </div>
+    <div class="browser-stats">
+      <div class="stat"><strong>${stats.bookmarks}</strong> bookmarks</div>
+      <div class="stat"><strong>${stats.history}</strong> history</div>
+      <div class="stat"><strong>${stats.cookies}</strong> cookies</div>
+    </div>
+  `;
+
+  card.onclick = () => {
+    // Remove selection from others
+    document.querySelectorAll(".browser-import-card").forEach(c => c.classList.remove("selected"));
+    // Select this one
+    card.classList.add("selected");
+    document.getElementById("importStartBtn").disabled = false;
+  };
+
+  return card;
 }
 
 // ═══════════════════════════════════════════════════════════

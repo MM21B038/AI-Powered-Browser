@@ -8,7 +8,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   windowIsMaximized:    () => ipcRenderer.invoke("window-is-maximized"),
   onWindowStateChanged: (cb) => ipcRenderer.on("window-state-changed", (_, state) => cb(state)),
 
-  // Navigation (pass-through)
+  // Navigation stubs
   navigateUrl:   (url)      => ipcRenderer.invoke("navigate-url", url),
   fillFormField: (data)     => ipcRenderer.invoke("fill-form-field", data),
   clickElement:  (selector) => ipcRenderer.invoke("click-element", selector),
@@ -41,7 +41,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
   profileDelete: (name)       => ipcRenderer.invoke("profile-delete", name),
 
   // Browser import
-  browserImport: () => ipcRenderer.invoke("browser-import"),
+  browserImport:     ()        => ipcRenderer.invoke("browser-import"),
+  getBrowserStats:   ()        => ipcRenderer.invoke("get-browser-stats"),
+  importBrowserData: (options) => ipcRenderer.invoke("import-browser-data", options),
+
+  // Data access
+  getBookmarks:     () => ipcRenderer.invoke("get-bookmarks"),
+  getHistory:       () => ipcRenderer.invoke("get-history"),
+  getCookies:       () => ipcRenderer.invoke("get-cookies"),
+  getPasswords:     () => ipcRenderer.invoke("get-passwords"),
+  getAutofill:      () => ipcRenderer.invoke("get-autofill"),
+
+  addBookmark:      (bm)    => ipcRenderer.invoke("add-bookmark", bm),
+  addHistoryEntry:  (entry) => ipcRenderer.invoke("add-history-entry", entry),
+  getDataStats:     ()      => ipcRenderer.invoke("get-data-stats"),
+  clearAllData:     ()      => ipcRenderer.invoke("clear-all-data"),
 
   // Main → Renderer events
   onFromMain: (cb) => ipcRenderer.on("from-main", (_, data) => cb(data)),
