@@ -26,18 +26,20 @@ class FirefoxImporter {
         const full = path.join(this.profilesBase, entry);
         try {
           const stat = await fs.stat(full);
-          // Match any Firefox profile dir: xxxxxxxx.default, xxxxxxxx.default-release, etc.
-          if (stat.isDirectory() && /\.(default|default-release|dev-edition-default)/.test(entry))
-            profiles.push({ name: entry, path: full });
+          if (!stat.isDirectory()) continue;
+          await fs.access(path.join(full, "places.sqlite"));
+          profiles.push({ name: entry, path: full });
         } catch { /* skip */ }
       }
-      // Prefer default-release over plain default
       profiles.sort((a, b) => {
-        const score = (n) => n.includes("default-release") ? 0 : n.includes("default") ? 1 : 2;
-        return score(a.name) - score(b.name);
+        const score = (n) =>
+          n.includes("default-release") ? 0 : n.includes("default") && !n.includes("Profile") ? 1 : 2;
+        return score(a.name) - score(b.name) || a.name.localeCompare(b.name);
       });
       return profiles;
-    } catch { return []; }
+    } catch {
+      return [];
+    }
   }
 
   async getDefaultProfile() {
@@ -234,8 +236,18 @@ class FirefoxImporter {
 
   // ── Stats (fast — no full import) ─────────────────────────────────────────
 
-  async getImportStats() {
-    const profile = await this.getDefaultProfile();
+  async getImportStats(profilePath) {
+    let profile;
+    if (profilePath) {
+      try {
+        await fs.access(profilePath);
+        profile = { name: path.basename(profilePath), path: profilePath };
+      } catch {
+        profile = null;
+      }
+    } else {
+      profile = await this.getDefaultProfile();
+    }
     if (!profile) return { available: false, bookmarks: 0, history: 0, cookies: 0, passwords: 0, autofill: 0 };
 
     const p = profile.path;

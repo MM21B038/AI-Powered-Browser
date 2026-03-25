@@ -1,6 +1,50 @@
+// @ts-nocheck
+/* eslint-disable -- legacy kernel port from renderer.js; refactor into modules incrementally */
+import { dispatchAutomationLine, runAutomationCommand } from "./automation/router";
+
+/**
+ * Browser kernel: tab/webview/profile/chat/tools. Call initBrowserKernel() after the shell DOM
+ * (BrowserShell) has mounted so getElementById finds nodes.
+ */
+let kernelInitDone = false;
+export function initBrowserKernel(): void {
+  if (kernelInitDone) {
+    ensureReactPortalHostsAfterShellChange();
+    return;
+  }
+  kernelInitDone = true;
+
 // ═══════════════════════════════════════════════════════════
 //  ORION BROWSER — Renderer Process
 // ═══════════════════════════════════════════════════════════
+
+// ── Feature flags ─────────────────────────────────────────────
+/** When true, tab strip is rendered by React; legacy renderTabs skips DOM. */
+const USE_REACT_TABS_UI = true;
+/** When true, nav bar + find bar are rendered by React; legacy controls hidden. */
+const USE_REACT_NAV_UI = true;
+/** When true, bookmarks/history/passwords lists are rendered by React; legacy render* skips DOM. */
+const USE_REACT_SIDE_PANELS = true;
+/** Settings, first-run, profile, import wizard, import overlay — React ModalsBridge. */
+const USE_REACT_MODALS = true;
+/** Toast host driven by React + legacy-toast events. */
+const USE_REACT_TOAST = true;
+/** Chat panel resize drag handled in ChatShellBridge (single listener set). */
+const USE_REACT_CHAT_RESIZE = true;
+
+/** Per-<webview> lifecycle listeners (one Electron <webview> per tab). */
+const webviewsWithListeners = new WeakSet();
+
+window.__FEATURE_FLAGS__ = {
+  USE_REACT_MODALS,
+  USE_REACT_TOAST,
+  USE_REACT_CHAT_RESIZE,
+};
+
+/** Last find-in-page result label for React nav (e.g. "1/5" / "No results"). */
+let findMatchDisplay = "";
+/** Last find query for find-next/prev when React owns the find UI. */
+let lastFindQuery = "";
 
 // ── State ────────────────────────────────────────────────────
 let tabs = [];
@@ -12,102 +56,241 @@ let loadingTimer = null;
 let findActive = false;
 let homePage = localStorage.getItem("homePage") || "https://www.duckduckgo.com";
 
-// ── DOM Refs ─────────────────────────────────────────────────
-const tabScrollArea = document.getElementById("tabScrollArea");
+// ── DOM Refs (re-read after shell reinject / React StrictMode remount) ──
+let tabScrollArea;
+let tabBarEl;
+let browserSectionEl;
+let browserFrame;
+let addressBar;
+let clearAddressBtn;
+let addressWrapper;
+let securityIcon;
+let backBtn;
+let forwardBtn;
+let reloadBtn;
+let homeBtn;
+let screenshotBtn;
+let findBtn;
+let zoomInBtn;
+let zoomOutBtn;
+let zoomLevelEl;
+let devtoolsBtn;
+let settingsBtn;
+let settingsBtnChat;
+let bookmarksBtn;
+let historyBtn;
+let settingsPanel;
+let settingsOverlay;
+let closeSettingsBtn;
+let loadingBar;
+let loadingOverlay;
+let errorPage;
+let errorDesc;
+let errorRetryBtn;
+let statusText;
+let statusSecurity;
+let statusSecurityChip;
+let findBar;
+let findInput;
+let findCount;
+let findPrev;
+let findNext;
+let findClose;
+let browserSelect;
+let importBookmarks;
+let importHistory;
+let importCookies;
+let importStats;
+let chromeStats;
+let firefoxStats;
+let checkImportBtn;
+let startImportBtn;
+let importProgress;
+let progressFill;
+let progressText;
+let chatMessages;
+let chatInput;
+let sendBtn;
+let clearChatBtn;
+let toast;
+let tbMinimize;
+let tbMaximize;
+let tbClose;
+let homePageInput;
+let chatSection;
+let chatWrapper;
+let aiChatToggleBtn;
+let closeChatBtn;
+let firstRunOverlay;
+let chromePreview;
+let firefoxPreview;
+let skipImportBtn;
+let importOptionBtns;
+
+function refreshDomRefsFromDocument() {
+  tabScrollArea = document.getElementById("tabScrollArea");
+  tabBarEl = document.getElementById("tabBar");
+  browserSectionEl = document.getElementById("browserSection");
+  browserFrame = document.getElementById("browserFrame");
+  addressBar = document.getElementById("addressBar");
+  clearAddressBtn = document.getElementById("clearAddressBtn");
+  addressWrapper = document.getElementById("addressBarWrapper");
+  securityIcon = document.getElementById("securityIcon");
+  backBtn = document.getElementById("backBtn");
+  forwardBtn = document.getElementById("forwardBtn");
+  reloadBtn = document.getElementById("reloadBtn");
+  homeBtn = document.getElementById("homeBtn");
+  screenshotBtn = document.getElementById("screenshotBtn");
+  findBtn = document.getElementById("findBtn");
+  zoomInBtn = document.getElementById("zoomInBtn");
+  zoomOutBtn = document.getElementById("zoomOutBtn");
+  zoomLevelEl = document.getElementById("zoomLevel");
+  devtoolsBtn = document.getElementById("devtoolsBtn");
+  settingsBtn = document.getElementById("settingsBtn");
+  settingsBtnChat = document.getElementById("settingsBtnChat");
+  bookmarksBtn = document.getElementById("bookmarksBtn");
+  historyBtn = document.getElementById("historyBtn");
+  settingsPanel = document.getElementById("settingsPanel");
+  settingsOverlay = document.getElementById("settingsOverlay");
+  closeSettingsBtn = document.getElementById("closeSettingsBtn");
+  loadingBar = document.getElementById("loadingBar");
+  loadingOverlay = document.getElementById("loadingOverlay");
+  errorPage = document.getElementById("errorPage");
+  errorDesc = document.getElementById("errorDesc");
+  errorRetryBtn = document.getElementById("errorRetryBtn");
+  statusText = document.getElementById("statusText");
+  statusSecurity = document.getElementById("statusSecurity");
+  statusSecurityChip = document.getElementById("statusSecurityChip");
+  findBar = document.getElementById("findBar");
+  findInput = document.getElementById("findInput");
+  findCount = document.getElementById("findCount");
+  findPrev = document.getElementById("findPrev");
+  findNext = document.getElementById("findNext");
+  findClose = document.getElementById("findClose");
+  browserSelect = document.getElementById("browserSelect");
+  importBookmarks = document.getElementById("importBookmarks");
+  importHistory = document.getElementById("importHistory");
+  importCookies = document.getElementById("importCookies");
+  importStats = document.getElementById("importStats");
+  chromeStats = document.getElementById("chromeStats");
+  firefoxStats = document.getElementById("firefoxStats");
+  checkImportBtn = document.getElementById("checkImportBtn");
+  startImportBtn = document.getElementById("startImportBtn");
+  importProgress = document.getElementById("importProgress");
+  progressFill = document.getElementById("progressFill");
+  progressText = document.getElementById("progressText");
+  chatMessages = document.getElementById("chatMessages");
+  chatInput = document.getElementById("chatInput");
+  sendBtn = document.getElementById("sendBtn");
+  clearChatBtn = document.getElementById("clearChatBtn");
+  toast = document.getElementById("toast");
+  tbMinimize = document.getElementById("tbMinimize");
+  tbMaximize = document.getElementById("tbMaximize");
+  tbClose = document.getElementById("tbClose");
+  homePageInput = document.getElementById("homePageInput");
+  chatSection = document.getElementById("chatSection");
+  chatWrapper = document.getElementById("chatWrapper");
+  aiChatToggleBtn = document.getElementById("aiChatToggleBtn");
+  closeChatBtn = document.getElementById("closeChatBtn");
+  firstRunOverlay = document.getElementById("firstRunOverlay");
+  chromePreview = document.getElementById("chromePreview");
+  firefoxPreview = document.getElementById("firefoxPreview");
+  skipImportBtn = document.getElementById("skipImportBtn");
+  importOptionBtns = document.querySelectorAll(".import-option-btn");
+}
+
+function setupReactPortalHosts() {
+  const tb = tabBarEl;
+  const tsa = tabScrollArea;
+  const bsec = browserSectionEl;
+  if (USE_REACT_TABS_UI && tsa && tb) {
+    tsa.style.cssText =
+      "display:none;width:0;height:0;overflow:hidden;padding:0;margin:0;border:0;min-height:0;flex:0;min-width:0;";
+    let reactTabStripHost = document.getElementById("reactTabStripHost");
+    if (!reactTabStripHost) {
+      reactTabStripHost = document.createElement("div");
+      reactTabStripHost.id = "reactTabStripHost";
+      reactTabStripHost.className = "tab-scroll-area";
+      tb.appendChild(reactTabStripHost);
+    }
+  }
+  if (USE_REACT_NAV_UI && bsec && tb) {
+    const legacyNavBar = bsec.querySelector(".nav-bar");
+    if (legacyNavBar) legacyNavBar.style.display = "none";
+    const fb = document.getElementById("findBar");
+    if (fb) fb.style.display = "none";
+    const pageFrame = document.getElementById("browserPageFrame");
+    const mainCol = document.getElementById("browserMainColumn");
+    const navParent = pageFrame ?? mainCol;
+    if (!navParent) return;
+    let reactNavHost = document.getElementById("reactNavHost");
+    if (!reactNavHost) {
+      reactNavHost = document.createElement("div");
+      reactNavHost.id = "reactNavHost";
+      reactNavHost.className = "nav-bar";
+      navParent.insertBefore(reactNavHost, navParent.firstChild);
+    } else if (reactNavHost.parentElement !== navParent) {
+      navParent.insertBefore(reactNavHost, navParent.firstChild);
+    }
+    let reactFindHost = document.getElementById("reactFindHost");
+    if (!reactFindHost) {
+      reactFindHost = document.createElement("div");
+      reactFindHost.id = "reactFindHost";
+      reactNavHost.after(reactFindHost);
+    } else if (
+      reactFindHost.parentElement !== navParent ||
+      reactFindHost.previousElementSibling !== reactNavHost
+    ) {
+      reactNavHost.after(reactFindHost);
+    }
+  }
+}
+
+function ensureReactPortalHostsAfterShellChange() {
+  const prevFrame = browserFrame;
+  refreshDomRefsFromDocument();
+  setupReactPortalHosts();
+  refreshDomRefsFromDocument();
+  if (USE_REACT_MODALS) wireReactSettingsButtons();
+  if (!browserFrame) return;
+  if (prevFrame !== browserFrame || (prevFrame && !prevFrame.isConnected)) {
+    webviewReady = false;
+    if (browserFrame) setupWebviewEvents(browserFrame);
+    const t = getTab(activeTabId);
+    if (t) {
+      t.initialized = false;
+      switchTab(activeTabId);
+    }
+  }
+}
+
+refreshDomRefsFromDocument();
+setupReactPortalHosts();
 // addTabBtn is rendered dynamically inside renderTabs()
-const browserFrame = document.getElementById("browserFrame");
-const addressBar = document.getElementById("addressBar");
-const clearAddressBtn = document.getElementById("clearAddressBtn");
-const addressWrapper = document.getElementById("addressBarWrapper");
-const securityIcon = document.getElementById("securityIcon");
-const backBtn = document.getElementById("backBtn");
-const forwardBtn = document.getElementById("forwardBtn");
-const reloadBtn = document.getElementById("reloadBtn");
-const homeBtn = document.getElementById("homeBtn");
-const screenshotBtn = document.getElementById("screenshotBtn");
-const findBtn = document.getElementById("findBtn");
-const zoomInBtn = document.getElementById("zoomInBtn");
-const zoomOutBtn = document.getElementById("zoomOutBtn");
-const zoomLevelEl = document.getElementById("zoomLevel");
-const devtoolsBtn = document.getElementById("devtoolsBtn");
-const settingsBtn = document.getElementById("settingsBtn");
-const settingsBtnChat = document.getElementById("settingsBtnChat");
-const bookmarksBtn = document.getElementById("bookmarksBtn");
-const historyBtn = document.getElementById("historyBtn");
-const settingsPanel = document.getElementById("settingsPanel");
-const settingsOverlay = document.getElementById("settingsOverlay");
-const closeSettingsBtn = document.getElementById("closeSettingsBtn");
-const loadingBar = document.getElementById("loadingBar");
-const loadingOverlay = document.getElementById("loadingOverlay");
-const errorPage = document.getElementById("errorPage");
-const errorDesc = document.getElementById("errorDesc");
-const errorRetryBtn = document.getElementById("errorRetryBtn");
-const statusText = document.getElementById("statusText");
-const statusSecurity = document.getElementById("statusSecurity");
-const findBar = document.getElementById("findBar");
-const findInput = document.getElementById("findInput");
-const findCount = document.getElementById("findCount");
-const findPrev = document.getElementById("findPrev");
-const findNext = document.getElementById("findNext");
-const findClose = document.getElementById("findClose");
-
-// Import UI elements
-const browserSelect = document.getElementById("browserSelect");
-const importBookmarks = document.getElementById("importBookmarks");
-const importHistory = document.getElementById("importHistory");
-const importCookies = document.getElementById("importCookies");
-const importStats = document.getElementById("importStats");
-const chromeStats = document.getElementById("chromeStats");
-const firefoxStats = document.getElementById("firefoxStats");
-const checkImportBtn = document.getElementById("checkImportBtn");
-const startImportBtn = document.getElementById("startImportBtn");
-const importProgress = document.getElementById("importProgress");
-const progressFill = document.getElementById("progressFill");
-const progressText = document.getElementById("progressText");
-const chatMessages = document.getElementById("chatMessages");
-const chatInput = document.getElementById("chatInput");
-const sendBtn = document.getElementById("sendBtn");
-const clearChatBtn = document.getElementById("clearChatBtn");
-const toast = document.getElementById("toast");
-const tbMinimize = document.getElementById("tbMinimize");
-const tbMaximize = document.getElementById("tbMaximize");
-const tbClose = document.getElementById("tbClose");
-const homePageInput = document.getElementById("homePageInput");
-const chatSection = document.getElementById("chatSection");
-const chatWrapper = document.getElementById("chatWrapper");
-const aiChatToggleBtn = document.getElementById("aiChatToggleBtn");
-const closeChatBtn = document.getElementById("closeChatBtn");
-
-// First-run wizard elements
-const firstRunOverlay = document.getElementById("firstRunOverlay");
-const chromePreview = document.getElementById("chromePreview");
-const firefoxPreview = document.getElementById("firefoxPreview");
-const skipImportBtn = document.getElementById("skipImportBtn");
-const importOptionBtns = document.querySelectorAll(".import-option-btn");
 
 let chatOpen = true;
 
 // ── Init ─────────────────────────────────────────────────────
-document.addEventListener("DOMContentLoaded", () => {
-  setupTitleBar();
-  setupTheme();
-  setupSettings();
-  setupKeyboardShortcuts();
-  setupWebviewEvents();
-  setupNavEvents();
-  setupFindBar();
-  setupZoom();
-  setupChat();
-  setupChatPanel();
-  setupToolsPanel();
-  setupResizeHandle();
-  setupDataPanelButtons();
-  setupImportWizard();
-  createTab(homePage);
-  loadSystemInfo();
-  setupProfileModal();
-  checkFirstRun();
-});
+function hideLegacyModalContainers() {
+  [
+    "settingsOverlay",
+    "settingsPanel",
+    "firstRunOverlay",
+    "profileOverlay",
+    "importWizard",
+    "importOverlay",
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = "none";
+  });
+}
+
+function wireReactSettingsButtons() {
+  const s = document.getElementById("settingsBtn");
+  const open = () =>
+    window.dispatchEvent(new CustomEvent("react-open-settings"));
+  if (s) s.onclick = open;
+}
 
 // -----------------------------------------------------------
 //  TAB MANAGEMENT
@@ -123,6 +306,7 @@ function createTab(url = homePage) {
     loading: false,
     _new: true,
     initialized: false,
+    webview: null,
   });
   switchTab(id);
 }
@@ -144,28 +328,136 @@ function spawnTab(triggerEl) {
 
 let webviewReady = false;
 
+function urlsMatchForTabSwitch(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  try {
+    return new URL(a).href === new URL(b).href;
+  } catch {
+    return false;
+  }
+}
+
+function isActiveWebview(wv) {
+  const t = getTab(activeTabId);
+  return !!(t && t.webview === wv);
+}
+
+function ensureWebviewForTab(tab) {
+  if (tab.webview) return tab.webview;
+  const container = document.getElementById("webviewContainer");
+  if (!container) return null;
+
+  const unowned = document.getElementById("browserFrame");
+  if (
+    unowned &&
+    unowned.parentNode === container &&
+    !tabs.some((t) => t.webview === unowned)
+  ) {
+    tab.webview = unowned;
+    unowned.dataset.orionTabId = String(tab.id);
+    unowned.style.position = "absolute";
+    unowned.style.inset = "0";
+    setupWebviewEvents(unowned);
+    return unowned;
+  }
+
+  const wv = document.createElement("webview");
+  wv.className = "browser-frame";
+  wv.setAttribute("allowpopups", "");
+  wv.dataset.orionTabId = String(tab.id);
+  wv.style.cssText =
+    "position:absolute;inset:0;visibility:hidden;pointer-events:none;z-index:0;";
+  container.appendChild(wv);
+  tab.webview = wv;
+  setupWebviewEvents(wv);
+  return wv;
+}
+
 function switchTab(id) {
+  const prevActiveId = activeTabId;
+  const prevTab = prevActiveId != null ? getTab(prevActiveId) : null;
   activeTabId = id;
   const tab = getTab(id);
   if (!tab) return;
-  addressBar.value = tab.url === "about:blank" ? "" : tab.url;
-  if (!tab.initialized) {
-    tab.initialized = true;
-    if (!webviewReady) {
-      webviewReady = true;
-      browserFrame.src = tab.url; // bootstrap guest process
-    } else {
-      browserFrame.loadURL(tab.url);
-    }
+
+  if (prevTab && prevTab.webview) {
+    prevTab.webview.style.visibility = "hidden";
+    prevTab.webview.style.pointerEvents = "none";
+    prevTab.webview.style.zIndex = "0";
+    prevTab.webview.removeAttribute("id");
   }
-  // already-loaded tab: just update UI, don't reload
+
+  const wv = ensureWebviewForTab(tab);
+  if (!wv) {
+    if (addressBar) addressBar.value = tab.url === "about:blank" ? "" : tab.url;
+    renderTabs();
+    return;
+  }
+
+  browserFrame = wv;
+  wv.id = "browserFrame";
+  wv.style.visibility = "visible";
+  wv.style.pointerEvents = "auto";
+  wv.style.zIndex = "1";
+  wv.style.position = "absolute";
+  wv.style.inset = "0";
+
+  if (addressBar) addressBar.value = tab.url === "about:blank" ? "" : tab.url;
+
+  const targetUrl = tab.url === "about:blank" ? "about:blank" : tab.url;
+  let liveUrl = "";
+  try {
+    liveUrl = wv.getURL ? wv.getURL() : "";
+  } catch {
+    /* ignore */
+  }
+  const needsLoad =
+    !liveUrl ||
+    liveUrl === "about:blank" ||
+    !urlsMatchForTabSwitch(liveUrl, targetUrl);
+
+  if (needsLoad) {
+    webviewReady = true;
+    tab.initialized = true;
+    try {
+      wv.loadURL(targetUrl);
+    } catch {
+      try {
+        wv.src = targetUrl;
+      } catch {
+        /* ignore */
+      }
+    }
+  } else {
+    tab.initialized = true;
+    webviewReady = true;
+  }
+
+  try {
+    wv.setZoomLevel(zoomLevel);
+  } catch {
+    /* ignore */
+  }
+
   updateNavButtons();
   updateSecurityIcon(tab.url);
+  updateBookmarkStar(tab.url === "about:blank" ? "" : tab.url);
   renderTabs();
+  syncSidePanelDismissLayer();
 }
 
 function closeTab(id, e) {
   if (e) e.stopPropagation();
+  const closing = getTab(id);
+  if (closing && closing.webview) {
+    try {
+      closing.webview.remove();
+    } catch {
+      /* ignore */
+    }
+    closing.webview = null;
+  }
   tabs = tabs.filter((t) => t.id !== id);
   if (tabs.length === 0) {
     createTab();
@@ -179,7 +471,24 @@ function getTab(id) {
   return tabs.find((t) => t.id === id);
 }
 
+/**
+ * Reorder tabs (same rules as drag-drop in legacy renderTabs).
+ * @param {"left"|"right"} side drop side relative to target tab
+ */
+function reorderTabs(movedId, targetId, side) {
+  if (movedId === targetId) return;
+  const fromIdx = tabs.findIndex((t) => t.id === movedId);
+  const toIdx = tabs.findIndex((t) => t.id === targetId);
+  if (fromIdx < 0 || toIdx < 0) return;
+  const [moved] = tabs.splice(fromIdx, 1);
+  const insertAt = side === "left" ? toIdx : toIdx + 1;
+  const at = fromIdx < toIdx ? insertAt - 1 : insertAt;
+  tabs.splice(at, 0, moved);
+  renderTabs();
+}
+
 function renderTabs() {
+  if (USE_REACT_TABS_UI) return;
   tabScrollArea.innerHTML = "";
   tabs.forEach((tab, index) => {
     const isLast = index === tabs.length - 1;
@@ -373,16 +682,19 @@ function navigateTo(raw) {
   if (!url) return;
   const tab = getTab(activeTabId);
   if (!tab) return;
+  const wv = tab.webview || ensureWebviewForTab(tab);
+  if (!wv) return;
   tab.url = url;
-  tab.initialized = true; // mark so switchTab won't re-load on next switch
-  addressBar.value = url;
-  browserFrame.loadURL(url);
+  tab.initialized = true;
+  if (addressBar) addressBar.value = url;
+  wv.loadURL(url);
   setLoading(true);
   updateSecurityIcon(url);
   hideError();
 }
 
 function updateNavButtons() {
+  if (USE_REACT_NAV_UI) return;
   try {
     backBtn.disabled = !browserFrame.canGoBack();
     forwardBtn.disabled = !browserFrame.canGoForward();
@@ -401,15 +713,19 @@ function setLoading(on) {
   if (on) {
     loadingBar.classList.add("loading");
     loadingOverlay.style.display = "flex";
-    reloadBtn.classList.add("stop-mode");
-    reloadBtn.title = "Stop (Esc)";
-    reloadBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+    if (!USE_REACT_NAV_UI && reloadBtn) {
+      reloadBtn.classList.add("stop-mode");
+      reloadBtn.title = "Stop (Esc)";
+      reloadBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+    }
   } else {
     loadingBar.classList.remove("loading");
     loadingOverlay.style.display = "none";
-    reloadBtn.classList.remove("stop-mode");
-    reloadBtn.title = "Reload (F5)";
-    reloadBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.657 6A6 6 0 1 0 12 11.196" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M14 2.5V6.5H10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    if (!USE_REACT_NAV_UI && reloadBtn) {
+      reloadBtn.classList.remove("stop-mode");
+      reloadBtn.title = "Reload (F5)";
+      reloadBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.657 6A6 6 0 1 0 12 11.196" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M14 2.5V6.5H10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    }
   }
 }
 
@@ -417,18 +733,29 @@ function updateSecurityIcon(url) {
   const isSecure = url && url.startsWith("https://");
   const isLocal =
     url && (url.startsWith("about:") || url.startsWith("file://"));
-  securityIcon.className =
-    "security-icon" + (isSecure ? " secure" : isLocal ? " local" : " insecure");
-  securityIcon.title = isSecure
+  const tip = isSecure
     ? "Secure connection"
     : isLocal
       ? "Local page"
       : "Not secure";
-  statusSecurity.textContent = isSecure
-    ? "🔒 Secure"
-    : isLocal
-      ? ""
-      : "⚠ Not Secure";
+  if (securityIcon) {
+    securityIcon.className =
+      "security-icon" + (isSecure ? " secure" : isLocal ? " local" : " insecure");
+    securityIcon.title = tip;
+  }
+  if (statusSecurity) {
+    statusSecurity.textContent = isSecure
+      ? "Secure"
+      : isLocal
+        ? ""
+        : "Not secure";
+  }
+  if (statusSecurityChip) {
+    const state = isSecure ? "secure" : isLocal ? "local" : "insecure";
+    statusSecurityChip.dataset.connection = state;
+    statusSecurityChip.hidden = Boolean(isLocal);
+    statusSecurityChip.title = tip;
+  }
 }
 
 function showError(desc) {
@@ -443,52 +770,54 @@ function hideError() {
 }
 
 function setupNavEvents() {
-  backBtn.onclick = () => browserFrame.canGoBack() && browserFrame.goBack();
-  forwardBtn.onclick = () =>
-    browserFrame.canGoForward() && browserFrame.goForward();
+  if (!USE_REACT_NAV_UI) {
+    backBtn.onclick = () => browserFrame.canGoBack() && browserFrame.goBack();
+    forwardBtn.onclick = () =>
+      browserFrame.canGoForward() && browserFrame.goForward();
 
-  reloadBtn.onclick = () => {
-    if (isLoading) {
-      browserFrame.stop();
-      setLoading(false);
-    } else {
-      browserFrame.reload();
-      setLoading(true);
-    }
-  };
+    reloadBtn.onclick = () => {
+      if (isLoading) {
+        browserFrame.stop();
+        setLoading(false);
+      } else {
+        browserFrame.reload();
+        setLoading(true);
+      }
+    };
 
-  homeBtn.onclick = () => navigateTo(homePage);
+    homeBtn.onclick = () => navigateTo(homePage);
+
+    // Address bar
+    addressBar.addEventListener("focus", () => {
+      addressBar.select();
+      addressWrapper.classList.add("focused");
+    });
+    addressBar.addEventListener("blur", () => {
+      addressWrapper.classList.remove("focused");
+    });
+    addressBar.addEventListener("input", () => {
+      clearAddressBtn.style.display = addressBar.value ? "flex" : "none";
+    });
+    addressBar.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        navigateTo(addressBar.value);
+        addressBar.blur();
+      }
+      if (e.key === "Escape") {
+        addressBar.blur();
+      }
+    });
+    clearAddressBtn.onclick = () => {
+      addressBar.value = "";
+      clearAddressBtn.style.display = "none";
+      addressBar.focus();
+    };
+  }
 
   errorRetryBtn.onclick = () => {
     hideError();
     browserFrame.reload();
     setLoading(true);
-  };
-
-  // Address bar
-  addressBar.addEventListener("focus", () => {
-    addressBar.select();
-    addressWrapper.classList.add("focused");
-  });
-  addressBar.addEventListener("blur", () => {
-    addressWrapper.classList.remove("focused");
-  });
-  addressBar.addEventListener("input", () => {
-    clearAddressBtn.style.display = addressBar.value ? "flex" : "none";
-  });
-  addressBar.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      navigateTo(addressBar.value);
-      addressBar.blur();
-    }
-    if (e.key === "Escape") {
-      addressBar.blur();
-    }
-  });
-  clearAddressBtn.onclick = () => {
-    addressBar.value = "";
-    clearAddressBtn.style.display = "none";
-    addressBar.focus();
   };
 }
 
@@ -496,12 +825,19 @@ function setupNavEvents() {
 //  WEBVIEW EVENTS
 // ═══════════════════════════════════════════════════════════
 
-function setupWebviewEvents() {
-  browserFrame.addEventListener(
+function setupWebviewEvents(wv) {
+  if (!wv || webviewsWithListeners.has(wv)) return;
+  webviewsWithListeners.add(wv);
+
+  wv.addEventListener(
     "dom-ready",
     () => {
-      applyZoom(zoomLevel);
-      browserFrame
+      try {
+        wv.setZoomLevel(zoomLevel);
+      } catch {
+        /* ignore */
+      }
+      wv
         .insertCSS(
           `::-webkit-scrollbar{display:none!important}*{scrollbar-width:none!important}`,
         )
@@ -510,31 +846,34 @@ function setupWebviewEvents() {
     { once: true },
   );
 
-  browserFrame.addEventListener("did-start-loading", () => {
+  wv.addEventListener("did-start-loading", () => {
+    if (!isActiveWebview(wv)) return;
     setLoading(true);
     hideError();
-    browserFrame
+    wv
       .insertCSS(
         `::-webkit-scrollbar{display:none!important}*{scrollbar-width:none!important}`,
       )
       .catch(() => {});
   });
 
-  browserFrame.addEventListener("did-stop-loading", () => {
+  wv.addEventListener("did-stop-loading", () => {
+    if (!isActiveWebview(wv)) return;
     setLoading(false);
     updateNavButtons();
   });
 
-  browserFrame.addEventListener("did-finish-load", () => {
-    setLoading(false);
-    updateNavButtons();
-    browserFrame
+  wv.addEventListener("did-finish-load", () => {
+    if (isActiveWebview(wv)) {
+      setLoading(false);
+      updateNavButtons();
+    }
+    wv
       .insertCSS(
         `::-webkit-scrollbar{display:none!important}*{scrollbar-width:none!important}`,
       )
       .catch(() => {});
-    // Fallback: read favicon from <link> tags if page-favicon-updated didn't fire
-    browserFrame
+    wv
       .executeJavaScript(
         `(function() {
           const links = [...document.querySelectorAll('link[rel*="icon"]')];
@@ -543,64 +882,86 @@ function setupWebviewEvents() {
         })()`,
       )
       .then((faviconUrl) => {
-        const tab = getTab(activeTabId);
-        if (tab && faviconUrl && !tab.favicon) {
-          tab.favicon = faviconUrl;
+        const tid = Number(wv.dataset.orionTabId);
+        const t = getTab(tid);
+        if (t && faviconUrl && !t.favicon) {
+          t.favicon = faviconUrl;
           renderTabs();
         }
       })
       .catch(() => {});
   });
 
-  browserFrame.addEventListener("did-navigate", (e) => {
-    const url = e.url || browserFrame.getURL();
-    addressBar.value = url;
-    clearAddressBtn.style.display = url ? "flex" : "none";
-    const tab = getTab(activeTabId);
-    if (tab) {
-      tab.url = url;
-      tab.favicon = null; // clear stale favicon on navigation
+  wv.addEventListener("did-navigate", (e) => {
+    const url = e.url || wv.getURL();
+    const tid = Number(wv.dataset.orionTabId);
+    const t = getTab(tid);
+    if (t) {
+      t.url = url;
+      t.favicon = null;
     }
-    updateNavButtons();
-    updateSecurityIcon(url);
-    hideError();
+    if (url && currentProfile) {
+      const title = (t && t.title) || url;
+      addHistoryEntry(url, title);
+      if (isActiveWebview(wv)) updateBookmarkStar(url);
+    }
+    if (isActiveWebview(wv)) {
+      if (addressBar) addressBar.value = url;
+      if (clearAddressBtn) clearAddressBtn.style.display = url ? "flex" : "none";
+      updateNavButtons();
+      updateSecurityIcon(url);
+      hideError();
+    }
   });
 
-  browserFrame.addEventListener("did-navigate-in-page", (e) => {
-    const url = e.url || browserFrame.getURL();
-    addressBar.value = url;
-    clearAddressBtn.style.display = url ? "flex" : "none";
-    const tab = getTab(activeTabId);
-    if (tab) {
-      tab.url = url;
+  wv.addEventListener("did-navigate-in-page", (e) => {
+    const url = e.url || wv.getURL();
+    const tid = Number(wv.dataset.orionTabId);
+    const t = getTab(tid);
+    if (t) t.url = url;
+    if (isActiveWebview(wv)) {
+      if (addressBar) addressBar.value = url;
+      if (clearAddressBtn) clearAddressBtn.style.display = url ? "flex" : "none";
+      updateNavButtons();
     }
-    updateNavButtons();
   });
 
-  browserFrame.addEventListener("page-title-updated", (e) => {
-    const tab = getTab(activeTabId);
-    if (tab && e.title) {
-      tab.title = e.title;
+  wv.addEventListener("page-title-updated", (e) => {
+    const tid = Number(wv.dataset.orionTabId);
+    const t = getTab(tid);
+    if (t && e.title) {
+      t.title = e.title;
+      renderTabs();
+    }
+    const url = wv.getURL ? wv.getURL() : "";
+    if (url && e.title && currentProfile) {
+      const p = getProfile();
+      const h = p.history.find((x) => x.url === url);
+      if (h) {
+        h.title = e.title;
+        saveProfile();
+      }
+    }
+  });
+
+  wv.addEventListener("page-favicon-updated", (e) => {
+    const tid = Number(wv.dataset.orionTabId);
+    const t = getTab(tid);
+    if (t && e.favicons && e.favicons.length > 0) {
+      t.favicon = e.favicons[0];
       renderTabs();
     }
   });
 
-  browserFrame.addEventListener("page-favicon-updated", (e) => {
-    const tab = getTab(activeTabId);
-    if (tab && e.favicons && e.favicons.length > 0) {
-      tab.favicon = e.favicons[0];
-      renderTabs();
-    }
-  });
-
-  browserFrame.addEventListener("did-fail-load", (e) => {
-    // -3 = ERR_ABORTED (user navigated away), ignore
+  wv.addEventListener("did-fail-load", (e) => {
     if (e.errorCode === -3) return;
+    if (!isActiveWebview(wv)) return;
     setLoading(false);
     showError(`${e.errorDescription} (${e.errorCode})`);
   });
 
-  browserFrame.addEventListener("crashed", () => {
+  wv.addEventListener("crashed", () => {
+    if (!isActiveWebview(wv)) return;
     setLoading(false);
     showError("The page crashed. Click Try Again to reload.");
     addBotMessage(
@@ -608,14 +969,24 @@ function setupWebviewEvents() {
     );
   });
 
-  browserFrame.addEventListener("update-target-url", (e) => {
-    statusText.textContent = e.url || "";
+  wv.addEventListener("update-target-url", (e) => {
+    if (isActiveWebview(wv)) statusText.textContent = e.url || "";
   });
 
-  // New window requests — open in new tab instead of external window
-  browserFrame.addEventListener("new-window", (e) => {
+  wv.addEventListener("new-window", (e) => {
     e.preventDefault();
     createTab(e.url);
+  });
+
+  wv.addEventListener("found-in-page", (e) => {
+    if (!isActiveWebview(wv)) return;
+    const { activeMatchOrdinal, matches } = e.result;
+    const text = matches > 0 ? `${activeMatchOrdinal}/${matches}` : "No results";
+    findMatchDisplay = text;
+    if (!USE_REACT_NAV_UI && findCount) {
+      findCount.textContent = text;
+      findCount.style.color = matches > 0 ? "var(--accent)" : "var(--danger)";
+    }
   });
 }
 
@@ -671,10 +1042,21 @@ async function getCaptureScale(img) {
 // ── Screenshot dropdown ──────────────────────────────────────
 let screenshotMenuOpen = false;
 
-screenshotBtn.onclick = (e) => {
-  e.stopPropagation();
-  toggleScreenshotMenu();
-};
+if (screenshotBtn) {
+  screenshotBtn.onclick = (e) => {
+    e.stopPropagation();
+    toggleScreenshotMenu();
+  };
+}
+
+function getScreenshotMenuAnchor() {
+  const reactBtn = document.getElementById("reactScreenshotNavBtn");
+  if (reactBtn) {
+    const r = reactBtn.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) return reactBtn;
+  }
+  return screenshotBtn || null;
+}
 
 function toggleScreenshotMenu() {
   const existing = document.getElementById("screenshotMenu");
@@ -702,11 +1084,17 @@ function toggleScreenshotMenu() {
       Select Area
     </button>`;
 
-  // Position below the screenshot button
-  const btnRect = screenshotBtn.getBoundingClientRect();
-  menu.style.top = btnRect.bottom + 6 + "px";
-  menu.style.left = btnRect.left - 60 + "px";
   document.body.appendChild(menu);
+  const anchor = getScreenshotMenuAnchor();
+  const btnRect = anchor
+    ? anchor.getBoundingClientRect()
+    : { left: 12, bottom: 56, width: 0, height: 0 };
+  const menuWidth = menu.offsetWidth || 220;
+  let left = btnRect.left;
+  if (left + menuWidth > window.innerWidth - 8) left = Math.max(8, window.innerWidth - menuWidth - 8);
+  if (left < 8) left = 8;
+  menu.style.top = `${Math.min(btnRect.bottom + 6, window.innerHeight - 120)}px`;
+  menu.style.left = `${left}px`;
 
   document.getElementById("ssViewport").onclick = () => {
     closeScreenshotMenu();
@@ -852,22 +1240,32 @@ function takeScreenshotSelect() {
 // ═══════════════════════════════════════════════════════════
 
 function setupZoom() {
-  zoomInBtn.onclick = () => applyZoom(zoomLevel + 1);
-  zoomOutBtn.onclick = () => applyZoom(zoomLevel - 1);
-  // Show correct % in UI immediately
-  zoomLevelEl.textContent = Math.round(100 * Math.pow(1.2, zoomLevel)) + "%";
+  if (!USE_REACT_NAV_UI) {
+    zoomInBtn.onclick = () => applyZoom(zoomLevel + 1);
+    zoomOutBtn.onclick = () => applyZoom(zoomLevel - 1);
+    // Show correct % in UI immediately
+    zoomLevelEl.textContent = Math.round(100 * Math.pow(1.2, zoomLevel)) + "%";
+  }
 }
 
 function applyZoom(level) {
   zoomLevel = Math.max(-5, Math.min(5, level));
-  localStorage.setItem("zoomLevel", zoomLevel);
-  try {
-    browserFrame.setZoomLevel(zoomLevel);
-  } catch {}
+  localStorage.setItem("zoomLevel", String(zoomLevel));
+  tabs.forEach((t) => {
+    if (t.webview) {
+      try {
+        t.webview.setZoomLevel(zoomLevel);
+      } catch {
+        /* ignore */
+      }
+    }
+  });
   const pct = Math.round(100 * Math.pow(1.2, zoomLevel));
-  zoomLevelEl.textContent = pct + "%";
-  zoomLevelEl.classList.add("zoom-pop");
-  setTimeout(() => zoomLevelEl.classList.remove("zoom-pop"), 300);
+  if (zoomLevelEl) {
+    zoomLevelEl.textContent = pct + "%";
+    zoomLevelEl.classList.add("zoom-pop");
+    setTimeout(() => zoomLevelEl.classList.remove("zoom-pop"), 300);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -875,6 +1273,8 @@ function applyZoom(level) {
 // ═══════════════════════════════════════════════════════════
 
 function setupFindBar() {
+  if (USE_REACT_NAV_UI) return;
+
   findBtn.onclick = toggleFind;
   findClose.onclick = closeFind;
 
@@ -903,30 +1303,41 @@ function setupFindBar() {
         findNext: true,
       });
   };
-
-  browserFrame.addEventListener("found-in-page", (e) => {
-    const { activeMatchOrdinal, matches } = e.result;
-    findCount.textContent =
-      matches > 0 ? `${activeMatchOrdinal}/${matches}` : "No results";
-    findCount.style.color = matches > 0 ? "var(--accent)" : "var(--danger)";
-  });
 }
 
 function toggleFind() {
   findActive = !findActive;
-  findBar.style.display = findActive ? "flex" : "none";
+  if (!USE_REACT_NAV_UI) {
+    findBar.style.display = findActive ? "flex" : "none";
+  }
   if (findActive) {
-    findInput.focus();
-    findInput.select();
+    if (!USE_REACT_NAV_UI) {
+      findInput.focus();
+      findInput.select();
+    } else {
+      window.dispatchEvent(new CustomEvent("react-nav-focus-find"));
+    }
   } else closeFind();
 }
 
 function closeFind() {
   findActive = false;
-  findBar.style.display = "none";
-  findCount.textContent = "";
-  findInput.value = "";
-  browserFrame.stopFindInPage("clearSelection");
+  if (!USE_REACT_NAV_UI) {
+    findBar.style.display = "none";
+    findCount.textContent = "";
+    findInput.value = "";
+  }
+  lastFindQuery = "";
+  findMatchDisplay = "";
+  tabs.forEach((t) => {
+    if (t.webview) {
+      try {
+        t.webview.stopFindInPage("clearSelection");
+      } catch {
+        /* ignore */
+      }
+    }
+  });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -984,8 +1395,8 @@ function setupSettings() {
     settingsOverlay.style.display = "none";
   };
 
-  settingsBtn.onclick = openSettings;
-  settingsBtnChat.onclick = openSettings;
+  if (settingsBtn) settingsBtn.onclick = openSettings;
+  if (settingsBtnChat) settingsBtnChat.onclick = openSettings;
   closeSettingsBtn.onclick = closeSettings;
   settingsOverlay.onclick = closeSettings;
 
@@ -1214,12 +1625,18 @@ function setupKeyboardShortcuts() {
     }
     if (ctrl && e.key === "l") {
       e.preventDefault();
-      addressBar.focus();
-      addressBar.select();
+      if (USE_REACT_NAV_UI) {
+        window.dispatchEvent(new CustomEvent("react-nav-focus-address"));
+      } else {
+        addressBar.focus();
+        addressBar.select();
+      }
     }
     if (ctrl && e.key === "f") {
       e.preventDefault();
-      if (!findActive) toggleFind();
+      if (USE_REACT_NAV_UI) {
+        window.dispatchEvent(new CustomEvent("react-nav-toggle-find"));
+      } else if (!findActive) toggleFind();
       else findInput.focus();
     }
     if ((ctrl && e.key === "r") || e.key === "F5") {
@@ -1249,18 +1666,28 @@ function setupKeyboardShortcuts() {
     }
     if (e.key === "F12") {
       e.preventDefault();
-      devtoolsBtn.click();
+      if (USE_REACT_NAV_UI) {
+        if (browserFrame.isDevToolsOpened()) browserFrame.closeDevTools();
+        else browserFrame.openDevTools();
+      } else {
+        devtoolsBtn.click();
+      }
     }
     if (e.altKey && e.key === "ArrowLeft") {
       e.preventDefault();
-      backBtn.click();
+      if (USE_REACT_NAV_UI) browserFrame.canGoBack() && browserFrame.goBack();
+      else backBtn.click();
     }
     if (e.altKey && e.key === "ArrowRight") {
       e.preventDefault();
-      forwardBtn.click();
+      if (USE_REACT_NAV_UI) browserFrame.canGoForward() && browserFrame.goForward();
+      else forwardBtn.click();
     }
     if (e.key === "Escape" && findActive) {
       closeFind();
+      if (USE_REACT_NAV_UI) {
+        window.dispatchEvent(new CustomEvent("react-nav-close-find"));
+      }
     }
     if (e.key === "Escape") {
       TOOLS.filter((t) => t.active).forEach((t) => deactivateTool(t.id));
@@ -1398,210 +1825,49 @@ function submitChat() {
   processCommand(text);
 }
 
+function getKernelAutomationContext() {
+  return {
+    getBrowserFrame: () => browserFrame,
+    navigateTo,
+    resolveInput,
+    reload: () => {
+      if (browserFrame) {
+        browserFrame.reload();
+        setLoading(true);
+      }
+    },
+    goBack: () => {
+      if (browserFrame && browserFrame.canGoBack()) browserFrame.goBack();
+    },
+    goForward: () => {
+      if (browserFrame && browserFrame.canGoForward()) browserFrame.goForward();
+    },
+    createTab: (url) => {
+      if (url) createTab(url);
+      else createTab();
+    },
+    switchTab,
+    closeTabById: (id) => closeTab(id),
+    getTabs: () =>
+      tabs.map((t) => ({
+        id: t.id,
+        title: t.title || "New Tab",
+        url: t.url || "",
+      })),
+    getActiveTabId: () => activeTabId,
+    applyZoom,
+    getZoomLevel: () => zoomLevel,
+    takeScreenshot,
+  };
+}
+
 async function processCommand(text) {
-  const t = text.toLowerCase().trim();
-
-  if (
-    t.startsWith("go to ") ||
-    t.startsWith("navigate to ") ||
-    t.startsWith("open ")
-  ) {
-    const raw = text.replace(/^(go to|navigate to|open)\s+/i, "").trim();
-    const url = resolveInput(raw);
-    navigateTo(url);
-    return addBotMessage("Navigating to **" + url + "**");
-  }
-
-  if (t === "screenshot" || t === "take screenshot" || t === "capture") {
+  const result = await dispatchAutomationLine(text, getKernelAutomationContext());
+  if (result.op === "screenshot" && result.success) {
     await takeScreenshot("viewport");
     return;
   }
-
-  if (t.startsWith("scroll")) {
-    const dir = t.includes("up") ? -600 : 600;
-    await browserFrame.executeJavaScript(
-      "window.scrollBy({top:" + dir + ",behavior:'smooth'})",
-    );
-    return addBotMessage("Scrolled " + (dir > 0 ? "down" : "up") + ".");
-  }
-
-  const clickMatch = text.match(/^click\s+(.+)$/i);
-  if (clickMatch) {
-    const selector = clickMatch[1].trim();
-    try {
-      const result = await browserFrame.executeJavaScript(
-        `(function(){
-          function doClick(el) {
-            var r = el.getBoundingClientRect();
-            var inView = r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth;
-            if (!inView) el.scrollIntoView({ block: 'center', behavior: 'instant' });
-            el.focus();
-            var r2 = el.getBoundingClientRect();
-            var cx = r2.left + r2.width / 2;
-            var cy = r2.top + r2.height / 2;
-            var opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
-            el.dispatchEvent(new PointerEvent('pointerover', opts));
-            el.dispatchEvent(new PointerEvent('pointerenter', Object.assign({}, opts, { bubbles: false })));
-            el.dispatchEvent(new MouseEvent('mouseover', opts));
-            el.dispatchEvent(new PointerEvent('pointermove', opts));
-            el.dispatchEvent(new MouseEvent('mousemove', opts));
-            el.dispatchEvent(new PointerEvent('pointerdown', opts));
-            el.dispatchEvent(new MouseEvent('mousedown', opts));
-            el.dispatchEvent(new PointerEvent('pointerup', opts));
-            el.dispatchEvent(new MouseEvent('mouseup', opts));
-            el.click();
-            return { success: true, tag: el.tagName.toLowerCase() };
-          }
-          // 1. Try as CSS selector
-          try {
-            var el = document.querySelector(${JSON.stringify(selector)});
-            if (el) return doClick(el);
-          } catch(e) {}
-          // 2. Text / aria / title / placeholder match
-          var q = ${JSON.stringify(selector.toLowerCase())};
-          var nodes = document.querySelectorAll(
-            'a,button,input,select,textarea,label,summary,' +
-            '[role=button],[role=link],[role=menuitem],[role=option],[role=tab],[role=checkbox],[role=radio],[tabindex]'
-          );
-          for (var i = 0; i < nodes.length; i++) {
-            var n = nodes[i];
-            var tx = (n.innerText || n.textContent || '').replace(/\\s+/g,' ').trim().toLowerCase();
-            var extras = [
-              n.value || '', n.getAttribute('aria-label') || '',
-              n.getAttribute('title') || '', n.getAttribute('placeholder') || ''
-            ].join(' ').toLowerCase();
-            if (tx === q || tx.indexOf(q) !== -1 || extras.indexOf(q) !== -1)
-              return doClick(n);
-          }
-          return { success: false };
-        })()`,
-      );
-      if (result && result.success)
-        addBotMessage(
-          "\u2705 Clicked **" + selector + "** (" + result.tag + ")",
-        );
-      else addBotMessage("\u274c Could not find element: **" + selector + "**");
-    } catch (err) {
-      addBotMessage("\u274c Click failed: " + err.message);
-    }
-    return;
-  }
-
-  const fillMatch = text.match(
-    /^(?:fill|type into|type in)\s+(.+?)\s+with\s+(.+)$/i,
-  );
-  if (fillMatch) {
-    await fillElement(fillMatch[1].trim(), fillMatch[2].trim());
-    return;
-  }
-
-  const typeMatch = text.match(/^type\s+(.+)$/i);
-  if (typeMatch) {
-    const value = typeMatch[1].trim();
-    try {
-      const result = await browserFrame.executeJavaScript(
-        "(function(){var el=document.activeElement;if(!el||el===document.body)return{success:false};" +
-          "var val=" +
-          JSON.stringify(value) +
-          ";" +
-          "if(el.isContentEditable){el.textContent=val;}" +
-          "else{var p=el.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype;" +
-          "var s=Object.getOwnPropertyDescriptor(p,'value');if(s)s.set.call(el,val);else el.value=val;}" +
-          "['input','change'].forEach(function(t){el.dispatchEvent(new Event(t,{bubbles:true}));});" +
-          "return{success:true,tag:el.tagName.toLowerCase()};})()",
-      );
-      if (result.success)
-        addBotMessage(
-          "\u2705 Typed into **" + result.tag + '**: "' + value + '"',
-        );
-      else
-        addBotMessage(
-          "\u274c No focused element. Use **fill [field] with [value]** instead.",
-        );
-    } catch (err) {
-      addBotMessage("\u274c Type failed: " + err.message);
-    }
-    return;
-  }
-
-  if (t === "get text" || t === "read page" || t === "page text") {
-    try {
-      const txt = await browserFrame.executeJavaScript(
-        "document.body.innerText.slice(0,500)",
-      );
-      addBotMessage("\ud83d\udcc4 Page text (first 500 chars):\n\n" + txt);
-    } catch {
-      addBotMessage("\u274c Could not read page text.");
-    }
-    return;
-  }
-
-  if (t === "url" || t === "current url" || t === "what url")
-    return addBotMessage(
-      "\ud83d\udd17 Current URL: **" + browserFrame.getURL() + "**",
-    );
-
-  if (t === "reload" || t === "refresh") {
-    browserFrame.reload();
-    setLoading(true);
-    return addBotMessage("\ud83d\udd04 Reloading page...");
-  }
-
-  if (t === "back" || t === "go back") {
-    if (browserFrame.canGoBack()) {
-      browserFrame.goBack();
-      addBotMessage("\u2b05 Going back.");
-    } else addBotMessage("\u274c No page to go back to.");
-    return;
-  }
-  if (t === "forward" || t === "go forward") {
-    if (browserFrame.canGoForward()) {
-      browserFrame.goForward();
-      addBotMessage("\u27a1 Going forward.");
-    } else addBotMessage("\u274c No page to go forward to.");
-    return;
-  }
-
-  if (t === "zoom in") {
-    applyZoom(zoomLevel + 1);
-    return addBotMessage("\ud83d\udd0d Zoomed in.");
-  }
-  if (t === "zoom out") {
-    applyZoom(zoomLevel - 1);
-    return addBotMessage("\ud83d\udd0d Zoomed out.");
-  }
-  if (t === "zoom reset") {
-    applyZoom(0);
-    return addBotMessage("\ud83d\udd0d Zoom reset to 100%.");
-  }
-
-  if (t === "new tab") {
-    createTab();
-    return addBotMessage("\u2705 Opened new tab.");
-  }
-
-  if (t === "help") {
-    return addBotMessage(
-      "Here's what I can do:\n\n" +
-        "\u2022 **go to [url/search]** \u2014 navigate\n" +
-        "\u2022 **click [selector or text]** \u2014 click element\n" +
-        "\u2022 **fill [field] with [value]** \u2014 fill input, textarea, select\n" +
-        "\u2022 **type [text]** \u2014 type into the currently focused element\n" +
-        "\u2022 **scroll down / scroll up** \u2014 scroll page\n" +
-        "\u2022 **screenshot** \u2014 capture page\n" +
-        "\u2022 **get text** \u2014 read page content\n" +
-        "\u2022 **reload** \u2014 refresh page\n" +
-        "\u2022 **back / forward** \u2014 navigate history\n" +
-        "\u2022 **zoom in / zoom out / zoom reset**\n" +
-        "\u2022 **new tab** \u2014 open new tab\n" +
-        "\u2022 **url** \u2014 show current URL\n\n" +
-        "\ud83d\udca1 Use the **\ud83c\udfaf Element Picker** tool to click any element and get instant action buttons.",
-    );
-  }
-
-  addBotMessage(
-    "I don't understand that command yet. Type **help** to see what I can do.",
-  );
+  if (result.message) addBotMessage(result.message);
 }
 // ── Message helpers ───────────────────────────────────────────
 
@@ -1748,10 +2014,56 @@ function setupChatPanel() {
   closeChatBtn.onclick = () => setChatOpen(false);
 }
 
+/** Chat markdown renders `<a href>`; default navigation replaces the whole Electron window. */
+function setupChatPanelLinks() {
+  const panel = document.getElementById("chatSection");
+  if (!panel) return;
+  panel.addEventListener(
+    "click",
+    (e) => {
+      const t = e.target;
+      const a = t && t.closest ? t.closest("a") : null;
+      if (!a || !panel.contains(a)) return;
+      const href = a.getAttribute("href");
+      if (!href || href === "#" || /^\s*javascript:/i.test(href)) {
+        e.preventDefault();
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      const trimmed = href.trim();
+      if (/^mailto:/i.test(trimmed) || /^tel:/i.test(trimmed)) {
+        void window.electronAPI?.openExternal?.(trimmed);
+        return;
+      }
+      if (/^https?:\/\//i.test(trimmed)) {
+        window.legacyBrowser?.createTabWithUrl?.(trimmed);
+        return;
+      }
+      try {
+        const abs = new URL(trimmed, window.location.href).href;
+        if (/^https?:\/\//i.test(abs)) {
+          window.legacyBrowser?.createTabWithUrl?.(abs);
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+      void window.electronAPI?.openExternal?.(trimmed);
+    },
+    true,
+  );
+}
+
 function setChatOpen(open) {
   chatOpen = open;
   chatWrapper.classList.toggle("chat-closed", !open);
   aiChatToggleBtn.classList.toggle("active", open);
+  if (USE_REACT_CHAT_RESIZE) {
+    window.dispatchEvent(
+      new CustomEvent("legacy-chat-open", { detail: { open } }),
+    );
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1760,6 +2072,14 @@ function setChatOpen(open) {
 
 let toastTimer = null;
 function showToast(msg, duration = 3000) {
+  if (USE_REACT_TOAST) {
+    window.dispatchEvent(
+      new CustomEvent("legacy-toast", {
+        detail: { msg, duration },
+      }),
+    );
+    return;
+  }
   toast.textContent = msg;
   toast.classList.add("show");
   if (toastTimer) clearTimeout(toastTimer);
@@ -2646,11 +2966,12 @@ async function setupProfileModal() {
   async function refreshList() {
     const profiles = await window.electronAPI.profileList();
     listEl.innerHTML = "";
-    if (!profiles.length) {
-      listEl.innerHTML = '<div class="modal-empty">No profiles yet</div>';
+    const visible = profiles.filter((name) => name.toLowerCase() !== "default");
+    if (!visible.length) {
+      listEl.innerHTML = '<div class="modal-empty">No saved profiles yet</div>';
       return;
     }
-    profiles.forEach((name) => {
+    visible.forEach((name) => {
       const row = document.createElement("div");
       row.className = "modal-profile-row";
       row.innerHTML = `
@@ -2669,7 +2990,11 @@ async function setupProfileModal() {
   }
 
   createBtn.onclick = async () => {
-    const name = nameInput.value.trim() || "default";
+    const name = nameInput.value.trim();
+    if (!name) {
+      showToast("Enter a profile name");
+      return;
+    }
     currentProfile = { name, bookmarks: [], history: [], passwords: [] };
     await saveProfile();
     overlay.style.display = "none";
@@ -2732,6 +3057,7 @@ function updateBookmarkStar(url) {
 }
 
 function renderBookmarks(filter) {
+  if (USE_REACT_SIDE_PANELS) return;
   const list = document.getElementById("bookmarksList");
   if (!list) return;
   const q = (
@@ -2789,6 +3115,7 @@ function addHistoryEntry(url, title) {
 }
 
 function renderHistory(filter) {
+  if (USE_REACT_SIDE_PANELS) return;
   const list = document.getElementById("historyList");
   if (!list) return;
   const q = (
@@ -2836,6 +3163,7 @@ function renderHistory(filter) {
 // ═══════════════════════════════════════════════════════════
 
 function renderPasswords(filter) {
+  if (USE_REACT_SIDE_PANELS) return;
   const list = document.getElementById("passwordsList");
   if (!list) return;
   const q = (
@@ -2905,18 +3233,90 @@ function renderPasswords(filter) {
 //  SIDE PANEL CONTROLS
 // ═══════════════════════════════════════════════════════════
 
+const SIDE_PANEL_OPEN_CLASS = "side-panel--open";
+let sidePanelOpenTimer = null;
+
+function syncSidePanelDismissLayer() {
+  const open = !!document.querySelector(".side-panel.side-panel--open");
+  document
+    .getElementById("sidePanelWebviewShield")
+    ?.classList.toggle("is-active", open);
+  document.querySelectorAll("webview").forEach((wv) => {
+    wv.style.pointerEvents = open ? "none" : "";
+  });
+}
+
+function syncRailPanelActive() {
+  const map = {
+    bookmarksPanel: "bookmarksBtn",
+    historyPanel: "historyBtn",
+    passwordsPanel: "passwordsBtn",
+  };
+  document.querySelectorAll("#leftToolRail .rail-btn").forEach((b) => {
+    b.classList.remove("rail-btn-active");
+  });
+  for (const pid of ["bookmarksPanel", "historyPanel", "passwordsPanel"]) {
+    const p = document.getElementById(pid);
+    if (p && p.classList.contains(SIDE_PANEL_OPEN_CLASS)) {
+      const bid = map[pid];
+      document.getElementById(bid)?.classList.add("rail-btn-active");
+      return;
+    }
+  }
+}
+
 function closeSidePanels() {
+  if (sidePanelOpenTimer) {
+    window.clearTimeout(sidePanelOpenTimer);
+    sidePanelOpenTimer = null;
+  }
   ["bookmarksPanel", "historyPanel", "passwordsPanel"].forEach((id) => {
     const el = document.getElementById(id);
-    if (el) el.style.display = "none";
+    if (el) {
+      el.classList.remove(SIDE_PANEL_OPEN_CLASS);
+      el.setAttribute("aria-hidden", "true");
+    }
   });
+  syncRailPanelActive();
+  syncSidePanelDismissLayer();
 }
 
 function toggleSidePanel(id) {
   const panel = document.getElementById(id);
-  const isOpen = panel.style.display !== "none";
-  closeSidePanels();
-  if (!isOpen) panel.style.display = "flex";
+  if (!panel) return;
+
+  if (sidePanelOpenTimer) {
+    window.clearTimeout(sidePanelOpenTimer);
+    sidePanelOpenTimer = null;
+  }
+
+  if (panel.classList.contains(SIDE_PANEL_OPEN_CLASS)) {
+    panel.classList.remove(SIDE_PANEL_OPEN_CLASS);
+    panel.setAttribute("aria-hidden", "true");
+    syncRailPanelActive();
+    syncSidePanelDismissLayer();
+    return;
+  }
+
+  const prev = document.querySelector(".side-panel.side-panel--open");
+  if (prev && prev !== panel) {
+    prev.classList.remove(SIDE_PANEL_OPEN_CLASS);
+    prev.setAttribute("aria-hidden", "true");
+    syncRailPanelActive();
+    syncSidePanelDismissLayer();
+    sidePanelOpenTimer = window.setTimeout(() => {
+      sidePanelOpenTimer = null;
+      panel.classList.add(SIDE_PANEL_OPEN_CLASS);
+      panel.setAttribute("aria-hidden", "false");
+      syncRailPanelActive();
+      syncSidePanelDismissLayer();
+    }, 100);
+  } else {
+    panel.classList.add(SIDE_PANEL_OPEN_CLASS);
+    panel.setAttribute("aria-hidden", "false");
+    syncRailPanelActive();
+    syncSidePanelDismissLayer();
+  }
 }
 
 function initDataPanels() {
@@ -2927,8 +3327,13 @@ function initDataPanels() {
 
 // ── Browser Import ────────────────────────────────────────
 async function runBrowserImport(target) {
+  if (USE_REACT_MODALS) {
+    window.dispatchEvent(
+      new CustomEvent("browser-import-busy", { detail: { busy: true } }),
+    );
+  }
   const overlay = document.getElementById("importOverlay");
-  overlay.style.display = "flex";
+  if (overlay && !USE_REACT_MODALS) overlay.style.display = "flex";
   try {
     const result = await window.electronAPI.browserImport();
     const p = getProfile();
@@ -2976,7 +3381,12 @@ async function runBrowserImport(target) {
   } catch (err) {
     showToast("❌ Import failed: " + err.message);
   } finally {
-    overlay.style.display = "none";
+    if (USE_REACT_MODALS) {
+      window.dispatchEvent(
+        new CustomEvent("browser-import-busy", { detail: { busy: false } }),
+      );
+    }
+    if (overlay) overlay.style.display = "none";
   }
 }
 
@@ -3077,28 +3487,18 @@ function setupDataPanelButtons() {
     showToast("🔑 Password saved");
   };
 
-  // Close panels on outside click
-  document.addEventListener("click", (e) => {
-    ["bookmarksPanel", "historyPanel", "passwordsPanel"].forEach((id) => {
-      const panel = document.getElementById(id);
-      if (
-        panel &&
-        panel.style.display !== "none" &&
-        !panel.contains(e.target) &&
-        ![
-          "bookmarksBtn",
-          "historyBtn",
-          "passwordsBtn",
-          "bookmarkStarBtn",
-        ].includes(e.target.id) &&
-        !e.target.closest(
-          "#bookmarksBtn,#historyBtn,#passwordsBtn,#bookmarkStarBtn",
-        )
-      ) {
-        panel.style.display = "none";
-      }
-    });
-  });
+  // Dismiss data panels on outside mousedown (capture: runs before controls; webview uses shield + pointer-events)
+  document.addEventListener(
+    "mousedown",
+    (e) => {
+      if (!document.querySelector(".side-panel.side-panel--open")) return;
+      const t = e.target;
+      if (t.closest("#bookmarksPanel,#historyPanel,#passwordsPanel")) return;
+      if (t.closest("#leftToolRail")) return;
+      closeSidePanels();
+    },
+    true,
+  );
 
   // Ctrl+D to bookmark
   document.addEventListener("keydown", (e) => {
@@ -3109,25 +3509,282 @@ function setupDataPanelButtons() {
   });
 }
 
-// ── Hook into navigation events to record history + update star ──
-const _origNavigateTo = navigateTo;
-// Patch did-navigate to record history
-browserFrame.addEventListener("did-navigate", (e) => {
-  const url = e.url || (browserFrame.getURL ? browserFrame.getURL() : "");
-  if (url && currentProfile) {
-    const title = getTab(activeTabId)?.title || url;
-    addHistoryEntry(url, title);
-    updateBookmarkStar(url);
+function reloadOrStopNav() {
+  if (isLoading) {
+    browserFrame.stop();
+    setLoading(false);
+  } else {
+    browserFrame.reload();
+    setLoading(true);
   }
-});
-browserFrame.addEventListener("page-title-updated", (e) => {
-  const url = browserFrame.getURL ? browserFrame.getURL() : "";
-  if (url && e.title && currentProfile) {
-    const p = getProfile();
-    const h = p.history.find((x) => x.url === url);
-    if (h) {
-      h.title = e.title;
-      saveProfile();
+}
+
+function bridgeFindInPageQuery(q) {
+  lastFindQuery = q || "";
+  if (lastFindQuery) browserFrame.findInPage(lastFindQuery);
+  else browserFrame.stopFindInPage("clearSelection");
+}
+
+function bridgeFindNext() {
+  if (!lastFindQuery) return;
+  browserFrame.findInPage(lastFindQuery, { forward: true, findNext: true });
+}
+
+function bridgeFindPrev() {
+  if (!lastFindQuery) return;
+  browserFrame.findInPage(lastFindQuery, { forward: false, findNext: true });
+}
+
+function getNavState() {
+  if (!browserFrame) {
+    let addr = "";
+    try {
+      addr = addressBar && addressBar.value ? addressBar.value : "";
+    } catch {
+      /* ignore */
     }
+    return {
+      address: addr,
+      canGoBack: false,
+      canGoForward: false,
+      isLoading,
+      zoomPercent: Math.round(100 * Math.pow(1.2, zoomLevel)),
+      zoomLevel,
+      findActive,
+      findQuery: lastFindQuery,
+      findMatchText: findMatchDisplay,
+      securityIconClass: "security-icon",
+      statusSecurityText: statusSecurity && statusSecurity.textContent ? statusSecurity.textContent : "",
+      isBookmarked: false,
+    };
   }
-});
+  let url = "";
+  try {
+    url = browserFrame.getURL ? browserFrame.getURL() : "";
+  } catch {
+    /* ignore */
+  }
+  const addr = addressBar ? addressBar.value : url;
+  let canBack = false;
+  let canForward = false;
+  try {
+    canBack = browserFrame.canGoBack();
+    canForward = browserFrame.canGoForward();
+  } catch {
+    /* ignore */
+  }
+  const pct = Math.round(100 * Math.pow(1.2, zoomLevel));
+  let secClass = "security-icon";
+  try {
+    const u = url || addr;
+    if (u && u.startsWith("https://")) secClass += " secure";
+    else if (u && (u.startsWith("about:") || u.startsWith("file://"))) secClass += " local";
+    else if (u) secClass += " insecure";
+  } catch {
+    /* ignore */
+  }
+  let isBookmarked = false;
+  try {
+    const tab = getTab(activeTabId);
+    let live = "";
+    try {
+      live = browserFrame.getURL ? browserFrame.getURL() : "";
+    } catch {
+      /* ignore */
+    }
+    const tabUrl = tab && tab.url && tab.url !== "about:blank" ? tab.url : "";
+    const bookmarkCheckUrl = tabUrl || live;
+    isBookmarked =
+      !!bookmarkCheckUrl &&
+      bookmarkCheckUrl !== "about:blank" &&
+      getProfile().bookmarks.some((b) => b.url === bookmarkCheckUrl);
+  } catch {
+    /* ignore */
+  }
+  return {
+    address: addr,
+    canGoBack: canBack,
+    canGoForward: canForward,
+    isLoading,
+    zoomPercent: pct,
+    zoomLevel,
+    findActive,
+    findQuery: lastFindQuery,
+    findMatchText: findMatchDisplay,
+    securityIconClass: secClass,
+    statusSecurityText: statusSecurity ? statusSecurity.textContent : "",
+    isBookmarked,
+  };
+}
+
+// Transitional compatibility bridge (keep in sync with src/types/global.d.ts):
+// React consumes imperative tab/nav/profile/modal/chat helpers while core tab + webview
+// logic remains here until state moves into src/renderer/state.
+window.legacyBrowser = {
+  newTab: () => createTab(),
+  createTabWithUrl: (url) => {
+    if (!url || !String(url).trim()) {
+      createTab();
+      return;
+    }
+    const u = resolveInput(String(url).trim());
+    createTab(u || homePage);
+  },
+  navigate: (url) => navigateTo(url),
+  back: () => browserFrame && browserFrame.canGoBack() && browserFrame.goBack(),
+  forward: () => browserFrame && browserFrame.canGoForward() && browserFrame.goForward(),
+  reload: () => browserFrame && browserFrame.reload(),
+  reloadOrStop: () => reloadOrStopNav(),
+  goHome: () => navigateTo(homePage),
+  getWebviewElement: () => browserFrame,
+  clickUi: (id) => {
+    const el = document.getElementById(id);
+    if (el) el.click();
+  },
+  openDevTools: () => {
+    if (!browserFrame) return;
+    if (browserFrame.isDevToolsOpened()) browserFrame.closeDevTools();
+    else browserFrame.openDevTools();
+  },
+  openScreenshotMenu: () => toggleScreenshotMenu(),
+  getNavState,
+  findInPageQuery: (q) => bridgeFindInPageQuery(q),
+  findNext: () => bridgeFindNext(),
+  findPrev: () => bridgeFindPrev(),
+  toggleFind: () => toggleFind(),
+  closeFind: () => closeFind(),
+  zoomIn: () => applyZoom(zoomLevel + 1),
+  zoomOut: () => applyZoom(zoomLevel - 1),
+  zoomReset: () => applyZoom(0),
+  getTabs: () =>
+    tabs.map((t) => ({
+      id: t.id,
+      title: t.title || "New Tab",
+      url: t.url,
+      loading: !!t.loading,
+      favicon: t.favicon,
+    })),
+  switchTabById: (id) => switchTab(id),
+  closeTabById: (id) => closeTab(id),
+  reorderTabs: (movedId, targetId, side) => reorderTabs(movedId, targetId, side),
+  getState: () => {
+    let activeUrl = "";
+    let canGoBack = false;
+    let canGoForward = false;
+    try {
+      if (browserFrame) {
+        activeUrl = browserFrame.getURL ? browserFrame.getURL() : "";
+        canGoBack = browserFrame.canGoBack ? browserFrame.canGoBack() : false;
+        canGoForward = browserFrame.canGoForward ? browserFrame.canGoForward() : false;
+      }
+    } catch {
+      /* ignore */
+    }
+    return {
+    activeTabId,
+    tabCount: tabs.length,
+    activeUrl,
+    canGoBack,
+    canGoForward,
+    isLoading,
+    useReactTabsUi: USE_REACT_TABS_UI,
+    useReactNavUi: USE_REACT_NAV_UI,
+    useReactSidePanelsUi: USE_REACT_SIDE_PANELS,
+    useReactModalsUi: USE_REACT_MODALS,
+    useReactToastUi: USE_REACT_TOAST,
+    useReactChatResizeUi: USE_REACT_CHAT_RESIZE,
+  };
+  },
+  getProfileSnapshot: () => {
+    const p = getProfile();
+    return {
+      name: p.name,
+      bookmarks: [...p.bookmarks],
+      history: [...p.history],
+      passwords: [...p.passwords],
+    };
+  },
+  navigateToUrl: (url) => navigateTo(url),
+  closeSidePanels: () => closeSidePanels(),
+  toggleSidePanel: (panelId) => toggleSidePanel(panelId),
+  showToast: (msg, duration = 3000) => showToast(msg, duration),
+  removeBookmarkByUrl: (url) => removeBookmark(url),
+  clearAllHistory: () => {
+    if (!confirm("Clear all history?")) return;
+    getProfile().history = [];
+    saveProfile();
+    renderHistory();
+    showToast("🗑 History cleared");
+  },
+  deletePasswordEntry: (url, username) => {
+    const p = getProfile();
+    const idx = p.passwords.findIndex((pw) => pw.url === url && pw.username === username);
+    if (idx > -1) {
+      p.passwords.splice(idx, 1);
+      saveProfile();
+      renderPasswords();
+    }
+  },
+  getHomePage: () => homePage,
+  setHomePage: (url) => {
+    const val = (url || "").trim();
+    if (!val) return;
+    homePage = val;
+    localStorage.setItem("homePage", val);
+  },
+  applyTheme: (name) => applyTheme(name),
+  initDataPanels: () => initDataPanels(),
+  loadProfileByName: async (name) => {
+    await loadProfile(name);
+  },
+  createProfileFromName: async (name) => {
+    const n = (name || "").trim();
+    if (!n) return;
+    currentProfile = { name: n, bookmarks: [], history: [], passwords: [] };
+    await saveProfile();
+    initDataPanels();
+    showToast(`✅ Profile "${n}" created`);
+  },
+  runBrowserImportTarget: (target) => runBrowserImport(target),
+  getChatOpen: () => chatOpen,
+  setChatPanelOpen: (open) => setChatOpen(!!open),
+  runAutomationCommand: async (cmd) => runAutomationCommand(cmd, getKernelAutomationContext()),
+  dispatchAutomationLine: async (line) => dispatchAutomationLine(line, getKernelAutomationContext()),
+};
+
+  setupTitleBar();
+  setupTheme();
+  if (USE_REACT_MODALS) {
+    hideLegacyModalContainers();
+    wireReactSettingsButtons();
+  } else {
+    setupSettings();
+  }
+  setupKeyboardShortcuts();
+  setupNavEvents();
+  setupFindBar();
+  setupZoom();
+  setupChat();
+  setupChatPanel();
+  setupChatPanelLinks();
+  setupToolsPanel();
+  if (!USE_REACT_CHAT_RESIZE) setupResizeHandle();
+  setupDataPanelButtons();
+  if (!USE_REACT_MODALS) setupImportWizard();
+  if (USE_REACT_MODALS) {
+    window.addEventListener(
+      "profile-gate-complete",
+      () => {
+        if (tabs.length === 0) createTab(homePage);
+      },
+      { once: true },
+    );
+  } else {
+    createTab(homePage);
+  }
+  if (!USE_REACT_MODALS) loadSystemInfo();
+  if (!USE_REACT_MODALS) {
+    setupProfileModal();
+    checkFirstRun();
+  }
+}

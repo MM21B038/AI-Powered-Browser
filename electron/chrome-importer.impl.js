@@ -261,8 +261,18 @@ class ChromeImporter {
 
   // ── Stats (fast — no full import) ─────────────────────────────────────────
 
-  async getImportStats() {
-    const profile = await this.findDefaultProfile();
+  async getImportStats(profilePath) {
+    let profile;
+    if (profilePath) {
+      try {
+        await fs.access(profilePath);
+        profile = { path: profilePath, browser: "chrome" };
+      } catch {
+        profile = null;
+      }
+    } else {
+      profile = await this.findDefaultProfile();
+    }
     if (!profile) return { available: false, bookmarks: 0, history: 0, cookies: 0, passwords: 0, autofill: 0, browser: null };
 
     const p = profile.path;
