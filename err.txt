@@ -1,0 +1,16 @@
+d:\app\backend\Autonomus Browser\main.js:78
+app.whenReady().then(async () => {
+    ^
+
+TypeError: Cannot read properties of undefined (reading 'whenReady')
+    at Object.<anonymous> (d:\app\backend\Autonomus Browser\main.js:78:5)
+    at Module._compile (node:internal/modules/cjs/loader:1820:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1953:10)
+    at Module.load (node:internal/modules/cjs/loader:1540:32)
+    at Module._load (node:internal/modules/cjs/loader:1342:12)
+    at c._load (node:electron/js2c/node_init:2:18047)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:262:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:169:5)
+    at node:internal/main/run_main_module:33:47
+
+Node.js v24.14.0

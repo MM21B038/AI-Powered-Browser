@@ -1,87 +1,497 @@
+// @ts-nocheck
+/* eslint-disable -- legacy kernel port from renderer.js; refactor into modules incrementally */
+import { dispatchAutomationLine, runAutomationCommand } from "./automation/router";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
+import { SPOTLIGHT_ICON_SVGS } from "../shared/spotlightIconSvgs";
+import { QUICK_COMMAND_ENTRIES } from "../shared/quick-command-entries";
+
+/**
+ * Browser kernel: tab/webview/profile/chat/tools. Call initBrowserKernel() after the shell DOM
+ * (BrowserShell) has mounted so getElementById finds nodes.
+ */
+let kernelInitDone = false;
+export function initBrowserKernel(): void {
+  if (kernelInitDone) {
+    ensureReactPortalHostsAfterShellChange();
+    return;
+  }
+  kernelInitDone = true;
+
 // ═══════════════════════════════════════════════════════════
 //  ORION BROWSER — Renderer Process
 // ═══════════════════════════════════════════════════════════
+
+// ── Feature flags ─────────────────────────────────────────────
+/** When true, tab strip is rendered by React; legacy renderTabs skips DOM. */
+const USE_REACT_TABS_UI = true;
+/** When true, nav bar + find bar are rendered by React; legacy controls hidden. */
+const USE_REACT_NAV_UI = true;
+/** When true, bookmarks/history/passwords lists are rendered by React; legacy render* skips DOM. */
+const USE_REACT_SIDE_PANELS = true;
+/** Settings, first-run, profile, import wizard, import overlay — React ModalsBridge. */
+const USE_REACT_MODALS = true;
+/** Toast host driven by React + legacy-toast events. */
+const USE_REACT_TOAST = true;
+/** Chat panel resize drag handled in ChatShellBridge (single listener set). */
+const USE_REACT_CHAT_RESIZE = true;
+
+/** Per-<webview> lifecycle listeners (one Electron <webview> per tab). */
+const webviewsWithListeners = new WeakSet();
+
+window.__FEATURE_FLAGS__ = {
+  USE_REACT_MODALS,
+  USE_REACT_TOAST,
+  USE_REACT_CHAT_RESIZE,
+};
+
+/** Last find-in-page result label for React nav (e.g. "1/5" / "No results"). */
+let findMatchDisplay = "";
+/** Last find query for find-next/prev when React owns the find UI. */
+let lastFindQuery = "";
 
 // ── State ────────────────────────────────────────────────────
 let tabs = [];
 let activeTabId = null;
 let tabCounter = 0;
+
+function generatePublicTabId() {
+  // 5-digit, human-friendly, no leading zeros.
+  // Keep unique among currently-open tabs.
+  let n = 0;
+  for (let i = 0; i < 50; i++) {
+    n = Math.floor(10000 + Math.random() * 90000);
+    if (!tabs.some((t) => String(t.publicId) === String(n))) return n;
+  }
+  // Fallback: deterministic-ish from time; still 5 digits.
+  return Number(String(Date.now()).slice(-5));
+}
 let zoomLevel = parseFloat(localStorage.getItem("zoomLevel") ?? "-1");
 let isLoading = false;
 let loadingTimer = null;
 let findActive = false;
-let homePage = localStorage.getItem("homePage") || "https://www.duckduckgo.com";
+function normalizeHomePageUrl(stored) {
+  const fallback = "https://duckduckgo.com";
+  const s = (stored || "").trim();
+  if (!s) return fallback;
+  try {
+    const u = new URL(s);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return fallback;
+    return u.href;
+  } catch {
+    return fallback;
+  }
+}
 
-// ── DOM Refs ─────────────────────────────────────────────────
-const tabScrollArea = document.getElementById("tabScrollArea");
+let homePage = normalizeHomePageUrl(localStorage.getItem("homePage"));
+
+let profileGateBackdropOn = false;
+
+function setProfileGateBackdrop(on) {
+  profileGateBackdropOn = !!on;
+  if (browserFrame) {
+    browserFrame.style.opacity = profileGateBackdropOn ? "0" : "";
+  }
+  if (loadingOverlay) {
+    if (profileGateBackdropOn) {
+      const st = loadingOverlay.querySelector(".loading-spotlight-stage");
+      if (st) shuffleLoadingSpotlightStage(st);
+      loadingOverlay.style.display = "flex";
+    } else {
+      // If an actual navigation load is happening, keep the overlay managed by setLoading().
+      if (!isLoading) loadingOverlay.style.display = "none";
+    }
+  }
+}
+
+// ── DOM Refs (re-read after shell reinject / React StrictMode remount) ──
+let tabScrollArea;
+let tabBarEl;
+let browserSectionEl;
+let browserFrame;
+let addressBar;
+let clearAddressBtn;
+let addressWrapper;
+let securityIcon;
+let backBtn;
+let forwardBtn;
+let reloadBtn;
+let homeBtn;
+let screenshotBtn;
+let findBtn;
+let zoomInBtn;
+let zoomOutBtn;
+let zoomLevelEl;
+let devtoolsBtn;
+let settingsBtn;
+let settingsBtnChat;
+let bookmarksBtn;
+let historyBtn;
+let settingsPanel;
+let settingsOverlay;
+let closeSettingsBtn;
+let loadingOverlay;
+let errorPage;
+let errorDesc;
+let errorRetryBtn;
+let statusText;
+let statusSecurity;
+let statusSecurityChip;
+let findBar;
+let findInput;
+let findCount;
+let findPrev;
+let findNext;
+let findClose;
+let browserSelect;
+let importBookmarks;
+let importHistory;
+let importCookies;
+let importStats;
+let chromeStats;
+let firefoxStats;
+let checkImportBtn;
+let startImportBtn;
+let importProgress;
+let progressFill;
+let progressText;
+let chatMessages;
+let chatInput;
+let sendBtn;
+let clearChatBtn;
+let toast;
+let tbMinimize;
+let tbMaximize;
+let tbClose;
+let homePageInput;
+let chatSection;
+let chatWrapper;
+let aiChatToggleBtn;
+let closeChatBtn;
+let firstRunOverlay;
+let chromePreview;
+let firefoxPreview;
+let skipImportBtn;
+let importOptionBtns;
+
+function hydrateLoadingSpotlightStage(stageEl) {
+  if (!stageEl) return;
+  const beats = stageEl.querySelectorAll(".loading-spotlight-beat");
+  beats.forEach((beat, i) => {
+    const wrap = beat.querySelector(".loading-spotlight-icon-wrap");
+    if (wrap && SPOTLIGHT_ICON_SVGS[i]) wrap.innerHTML = SPOTLIGHT_ICON_SVGS[i];
+  });
+}
+
+function shuffleLoadingSpotlightStage(stage) {
+  if (!stage) return;
+  const beats = Array.from(stage.querySelectorAll(".loading-spotlight-beat"));
+  for (let i = beats.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [beats[i], beats[j]] = [beats[j], beats[i]];
+  }
+  beats.forEach((b) => stage.appendChild(b));
+}
+
+function hydrateLoadingSpotlightShellStages() {
+  hydrateLoadingSpotlightStage(
+    document.querySelector("#loadingOverlay .loading-spotlight-stage"),
+  );
+  hydrateLoadingSpotlightStage(
+    document.querySelector("#importOverlay .loading-spotlight-stage"),
+  );
+}
+
+function refreshDomRefsFromDocument() {
+  tabScrollArea = document.getElementById("tabScrollArea");
+  tabBarEl = document.getElementById("tabBar");
+  browserSectionEl = document.getElementById("browserSection");
+  browserFrame = document.getElementById("browserFrame");
+  addressBar = document.getElementById("addressBar");
+  clearAddressBtn = document.getElementById("clearAddressBtn");
+  addressWrapper = document.getElementById("addressBarWrapper");
+  securityIcon = document.getElementById("securityIcon");
+  backBtn = document.getElementById("backBtn");
+  forwardBtn = document.getElementById("forwardBtn");
+  reloadBtn = document.getElementById("reloadBtn");
+  homeBtn = document.getElementById("homeBtn");
+  screenshotBtn = document.getElementById("screenshotBtn");
+  findBtn = document.getElementById("findBtn");
+  zoomInBtn = document.getElementById("zoomInBtn");
+  zoomOutBtn = document.getElementById("zoomOutBtn");
+  zoomLevelEl = document.getElementById("zoomLevel");
+  devtoolsBtn = document.getElementById("devtoolsBtn");
+  settingsBtn = document.getElementById("settingsBtn");
+  settingsBtnChat = document.getElementById("settingsBtnChat");
+  bookmarksBtn = document.getElementById("bookmarksBtn");
+  historyBtn = document.getElementById("historyBtn");
+  settingsPanel = document.getElementById("settingsPanel");
+  settingsOverlay = document.getElementById("settingsOverlay");
+  closeSettingsBtn = document.getElementById("closeSettingsBtn");
+  loadingOverlay = document.getElementById("loadingOverlay");
+  errorPage = document.getElementById("errorPage");
+  errorDesc = document.getElementById("errorDesc");
+  errorRetryBtn = document.getElementById("errorRetryBtn");
+  statusText = document.getElementById("statusText");
+  statusSecurity = document.getElementById("statusSecurity");
+  statusSecurityChip = document.getElementById("statusSecurityChip");
+  findBar = document.getElementById("findBar");
+  findInput = document.getElementById("findInput");
+  findCount = document.getElementById("findCount");
+  findPrev = document.getElementById("findPrev");
+  findNext = document.getElementById("findNext");
+  findClose = document.getElementById("findClose");
+  browserSelect = document.getElementById("browserSelect");
+  importBookmarks = document.getElementById("importBookmarks");
+  importHistory = document.getElementById("importHistory");
+  importCookies = document.getElementById("importCookies");
+  importStats = document.getElementById("importStats");
+  chromeStats = document.getElementById("chromeStats");
+  firefoxStats = document.getElementById("firefoxStats");
+  checkImportBtn = document.getElementById("checkImportBtn");
+  startImportBtn = document.getElementById("startImportBtn");
+  importProgress = document.getElementById("importProgress");
+  progressFill = document.getElementById("progressFill");
+  progressText = document.getElementById("progressText");
+  chatMessages = document.getElementById("chatMessages");
+  chatInput = document.getElementById("chatInput");
+  sendBtn = document.getElementById("sendBtn");
+  clearChatBtn = document.getElementById("clearChatBtn");
+  toast = document.getElementById("toast");
+  tbMinimize = document.getElementById("tbMinimize");
+  tbMaximize = document.getElementById("tbMaximize");
+  tbClose = document.getElementById("tbClose");
+  homePageInput = document.getElementById("homePageInput");
+  chatSection = document.getElementById("chatSection");
+  chatWrapper = document.getElementById("chatWrapper");
+  aiChatToggleBtn = document.getElementById("aiChatToggleBtn");
+  closeChatBtn = document.getElementById("closeChatBtn");
+  firstRunOverlay = document.getElementById("firstRunOverlay");
+  chromePreview = document.getElementById("chromePreview");
+  firefoxPreview = document.getElementById("firefoxPreview");
+  skipImportBtn = document.getElementById("skipImportBtn");
+  importOptionBtns = document.querySelectorAll(".import-option-btn");
+}
+
+function setupReactPortalHosts() {
+  const tb = tabBarEl;
+  const tsa = tabScrollArea;
+  const bsec = browserSectionEl;
+  if (USE_REACT_TABS_UI && tsa && tb) {
+    tsa.style.cssText =
+      "display:none;width:0;height:0;overflow:hidden;padding:0;margin:0;border:0;min-height:0;flex:0;min-width:0;";
+    let reactTabStripHost = document.getElementById("reactTabStripHost");
+    if (!reactTabStripHost) {
+      reactTabStripHost = document.createElement("div");
+      reactTabStripHost.id = "reactTabStripHost";
+      reactTabStripHost.className = "tab-scroll-area";
+      tb.appendChild(reactTabStripHost);
+    }
+  }
+  if (USE_REACT_NAV_UI && bsec && tb) {
+    const legacyNavBar = bsec.querySelector(".nav-bar");
+    if (legacyNavBar) legacyNavBar.style.display = "none";
+    const fb = document.getElementById("findBar");
+    if (fb) fb.style.display = "none";
+    const pageFrame = document.getElementById("browserPageFrame");
+    const mainCol = document.getElementById("browserMainColumn");
+    const navParent = pageFrame ?? mainCol;
+    if (!navParent) return;
+    const crumbBar = document.getElementById("crumbBar");
+    let reactNavHost = document.getElementById("reactNavHost");
+    if (!reactNavHost) {
+      reactNavHost = document.createElement("div");
+      reactNavHost.id = "reactNavHost";
+      reactNavHost.className = "nav-bar";
+      if (crumbBar && crumbBar.parentElement === navParent) crumbBar.after(reactNavHost);
+      else navParent.insertBefore(reactNavHost, navParent.firstChild);
+    } else if (reactNavHost.parentElement !== navParent) {
+      if (crumbBar && crumbBar.parentElement === navParent) crumbBar.after(reactNavHost);
+      else navParent.insertBefore(reactNavHost, navParent.firstChild);
+    } else if (crumbBar && crumbBar.parentElement === navParent && crumbBar.nextElementSibling !== reactNavHost) {
+      crumbBar.after(reactNavHost);
+    }
+    let reactFindHost = document.getElementById("reactFindHost");
+    if (!reactFindHost) {
+      reactFindHost = document.createElement("div");
+      reactFindHost.id = "reactFindHost";
+      reactNavHost.after(reactFindHost);
+    } else if (
+      reactFindHost.parentElement !== navParent ||
+      reactFindHost.previousElementSibling !== reactNavHost
+    ) {
+      reactNavHost.after(reactFindHost);
+    }
+  }
+}
+
+type TopSurface =
+  | "webview"
+  | "bookmarks"
+  | "history"
+  | "passwords"
+  | "toolsHub"
+  | "settings"
+  | "networkWorkbench";
+
+let lastToolsHubCrumbs: string[] = ["Tool Hub"];
+
+function setAddressCrumbText(text: string): void {
+  const t = (text || "").trim();
+  const ids = ["reactAddressBarWrapper", "addressBarWrapper"];
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (!t) el.removeAttribute("data-crumb");
+    else el.setAttribute("data-crumb", t);
+  }
+}
+
+function setCrumbParts(parts: string[]): void {
+  const host = document.getElementById("crumbBar");
+  const safeParts = parts.map((p) => String(p ?? "").trim()).filter(Boolean);
+  const crumbLine = safeParts.length ? `> ${safeParts.join(" > ")}` : "";
+  setAddressCrumbText(crumbLine);
+
+  if (!host) return;
+  if (!parts.length) {
+    host.innerHTML = "";
+    host.setAttribute("aria-hidden", "true");
+    return;
+  }
+  host.setAttribute("aria-hidden", "false");
+  const safe = safeParts.map((p) => escapeHtml(p));
+  host.innerHTML = safe
+    .map(
+      (p, i) =>
+        (i ? `<span class="crumb-sep" aria-hidden="true">&gt;</span>` : "") +
+        `<span class="crumb-part">${p}</span>`,
+    )
+    .join("");
+}
+
+function syncTopChromeForSurface(): void {
+  const bsec = document.getElementById("browserSection");
+  if (!bsec) return;
+
+  const hub = document.getElementById("toolsHubRoot");
+  const hubOpen = !!(hub && hub.classList.contains("tools-hub--open"));
+  const settingsOpen = !!document
+    .getElementById("webviewContainer")
+    ?.hasAttribute("data-settings-open");
+  const workbenchOpen = !!document
+    .getElementById("webviewContainer")
+    ?.hasAttribute("data-workbench-open");
+
+  const bookmarksOpen = !!document.getElementById("bookmarksPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
+  const historyOpen = !!document.getElementById("historyPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
+  const passwordsOpen = !!document.getElementById("passwordsPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
+
+  let surface: TopSurface = "webview";
+  if (hubOpen) surface = "toolsHub";
+  else if (workbenchOpen) surface = "networkWorkbench";
+  else if (settingsOpen) surface = "settings";
+  else if (historyOpen) surface = "history";
+  else if (bookmarksOpen) surface = "bookmarks";
+  else if (passwordsOpen) surface = "passwords";
+
+  bsec.setAttribute("data-surface", surface);
+
+  if (surface === "webview") setCrumbParts([]);
+  else if (surface === "history") setCrumbParts(["History"]);
+  else if (surface === "bookmarks") setCrumbParts(["Bookmarks"]);
+  else if (surface === "passwords") setCrumbParts(["Saved passwords"]);
+  else if (surface === "settings") setCrumbParts(["Settings"]);
+  else if (surface === "toolsHub") setCrumbParts(lastToolsHubCrumbs.length ? lastToolsHubCrumbs : ["Tool Hub"]);
+  else if (surface === "networkWorkbench") setCrumbParts(["Network", "Workbench"]);
+}
+
+function ensureReactPortalHostsAfterShellChange() {
+  const prevFrame = browserFrame;
+  refreshDomRefsFromDocument();
+  hydrateLoadingSpotlightShellStages();
+  setupReactPortalHosts();
+  refreshDomRefsFromDocument();
+  if (USE_REACT_MODALS) wireReactSettingsButtons();
+  if (!browserFrame) return;
+  if (prevFrame !== browserFrame || (prevFrame && !prevFrame.isConnected)) {
+    webviewReady = false;
+    if (browserFrame) setupWebviewEvents(browserFrame);
+    const t = getTab(activeTabId);
+    if (t) {
+      t.initialized = false;
+      switchTab(activeTabId);
+    }
+  }
+}
+
+refreshDomRefsFromDocument();
+hydrateLoadingSpotlightShellStages();
+setupReactPortalHosts();
 // addTabBtn is rendered dynamically inside renderTabs()
-const browserFrame = document.getElementById("browserFrame");
-const addressBar = document.getElementById("addressBar");
-const clearAddressBtn = document.getElementById("clearAddressBtn");
-const addressWrapper = document.getElementById("addressBarWrapper");
-const securityIcon = document.getElementById("securityIcon");
-const backBtn = document.getElementById("backBtn");
-const forwardBtn = document.getElementById("forwardBtn");
-const reloadBtn = document.getElementById("reloadBtn");
-const homeBtn = document.getElementById("homeBtn");
-const screenshotBtn = document.getElementById("screenshotBtn");
-const findBtn = document.getElementById("findBtn");
-const zoomInBtn = document.getElementById("zoomInBtn");
-const zoomOutBtn = document.getElementById("zoomOutBtn");
-const zoomLevelEl = document.getElementById("zoomLevel");
-const devtoolsBtn = document.getElementById("devtoolsBtn");
-const settingsBtn = document.getElementById("settingsBtn");
-const settingsBtnChat = document.getElementById("settingsBtnChat");
-const settingsPanel = document.getElementById("settingsPanel");
-const settingsOverlay = document.getElementById("settingsOverlay");
-const closeSettingsBtn = document.getElementById("closeSettingsBtn");
-const loadingBar = document.getElementById("loadingBar");
-const loadingOverlay = document.getElementById("loadingOverlay");
-const errorPage = document.getElementById("errorPage");
-const errorDesc = document.getElementById("errorDesc");
-const errorRetryBtn = document.getElementById("errorRetryBtn");
-const statusText = document.getElementById("statusText");
-const statusSecurity = document.getElementById("statusSecurity");
-const findBar = document.getElementById("findBar");
-const findInput = document.getElementById("findInput");
-const findCount = document.getElementById("findCount");
-const findPrev = document.getElementById("findPrev");
-const findNext = document.getElementById("findNext");
-const findClose = document.getElementById("findClose");
-const chatMessages = document.getElementById("chatMessages");
-const chatInput = document.getElementById("chatInput");
-const sendBtn = document.getElementById("sendBtn");
-const clearChatBtn = document.getElementById("clearChatBtn");
-const toast = document.getElementById("toast");
-const tbMinimize = document.getElementById("tbMinimize");
-const tbMaximize = document.getElementById("tbMaximize");
-const tbClose = document.getElementById("tbClose");
-const homePageInput = document.getElementById("homePageInput");
-const chatSection = document.getElementById("chatSection");
-const chatWrapper = document.getElementById("chatWrapper");
-const aiChatToggleBtn = document.getElementById("aiChatToggleBtn");
-const closeChatBtn = document.getElementById("closeChatBtn");
+
+// If the app is waiting on profile selection, keep the loading spotlight behind modals
+// and hide the blank webview until the first tab is created.
+setProfileGateBackdrop(USE_REACT_MODALS && tabs.length === 0);
+
 let chatOpen = true;
 
 // ── Init ─────────────────────────────────────────────────────
-document.addEventListener("DOMContentLoaded", () => {
-  setupTitleBar();
-  setupTheme();
-  setupSettings();
-  setupKeyboardShortcuts();
-  setupWebviewEvents();
-  setupNavEvents();
-  setupFindBar();
-  setupZoom();
-  setupChat();
-  setupChatPanel();
-  setupToolsPanel();
-  setupResizeHandle();
-  setupDataPanelButtons();
-  createTab(homePage);
-  loadSystemInfo();
-  setupProfileModal();
-});
+function hideLegacyModalContainers() {
+  [
+    "settingsOverlay",
+    "settingsPanel",
+    "firstRunOverlay",
+    "profileOverlay",
+    "importWizard",
+    "importOverlay",
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = "none";
+  });
+}
+
+/** Clears settings DOM state and notifies React — call after the next surface is visible when possible. */
+function leaveSettingsSurfaceSync() {
+  document.getElementById("webviewContainer")?.removeAttribute("data-settings-open");
+  window.dispatchEvent(new CustomEvent("react-close-settings"));
+}
+
+function wireReactSettingsButtons() {
+  const s = document.getElementById("settingsBtn");
+  const open = () => {
+    closeSidePanels();
+    const hub = document.getElementById("toolsHubRoot");
+    const hubWasOpen = !!(hub && hub.classList.contains("tools-hub--open"));
+    document.getElementById("webviewContainer")?.setAttribute("data-settings-open", "");
+    window.dispatchEvent(new CustomEvent("react-open-settings"));
+    syncRailPanelActive();
+    syncWebviewInteractionLayer();
+    if (hubWasOpen) {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        window.removeEventListener("react-settings-mounted", onMounted);
+        closeToolsHub();
+      };
+      const onMounted = () => finish();
+      window.addEventListener("react-settings-mounted", onMounted);
+      window.setTimeout(finish, 250);
+    }
+  };
+  if (s) s.onclick = open;
+}
+
+function showWebviewOnly() {
+  closeSidePanels();
+  closeToolsHub();
+  document.getElementById("webviewContainer")?.removeAttribute("data-workbench-open");
+  window.dispatchEvent(new CustomEvent("react-close-workbench"));
+  leaveSettingsSurfaceSync();
+  syncRailPanelActive();
+  syncWebviewInteractionLayer();
+}
 
 // -----------------------------------------------------------
 //  TAB MANAGEMENT
@@ -89,14 +499,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function createTab(url = homePage) {
   const id = ++tabCounter;
+  let resolved = url;
+  if (resolved == null || String(resolved).trim() === "") resolved = homePage;
+  else resolved = String(resolved).trim();
+  if (!resolved) resolved = homePage;
   tabs.push({
     id,
-    url,
+    publicId: generatePublicTabId(),
+    url: resolved,
     title: "New Tab",
     favicon: null,
     loading: false,
     _new: true,
     initialized: false,
+    webview: null,
   });
   switchTab(id);
 }
@@ -118,28 +534,136 @@ function spawnTab(triggerEl) {
 
 let webviewReady = false;
 
+function urlsMatchForTabSwitch(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  try {
+    return new URL(a).href === new URL(b).href;
+  } catch {
+    return false;
+  }
+}
+
+function isActiveWebview(wv) {
+  const t = getTab(activeTabId);
+  return !!(t && t.webview === wv);
+}
+
+function ensureWebviewForTab(tab) {
+  if (tab.webview) return tab.webview;
+  const container = document.getElementById("webviewContainer");
+  if (!container) return null;
+
+  const unowned = document.getElementById("browserFrame");
+  if (
+    unowned &&
+    unowned.parentNode === container &&
+    !tabs.some((t) => t.webview === unowned)
+  ) {
+    tab.webview = unowned;
+    unowned.dataset.orionTabId = String(tab.id);
+    unowned.style.position = "absolute";
+    unowned.style.inset = "0";
+    setupWebviewEvents(unowned);
+    return unowned;
+  }
+
+  const wv = document.createElement("webview");
+  wv.className = "browser-frame";
+  wv.setAttribute("allowpopups", "");
+  wv.dataset.orionTabId = String(tab.id);
+  wv.style.cssText =
+    "position:absolute;inset:0;visibility:hidden;pointer-events:none;z-index:0;";
+  container.appendChild(wv);
+  tab.webview = wv;
+  setupWebviewEvents(wv);
+  return wv;
+}
+
 function switchTab(id) {
+  const prevActiveId = activeTabId;
+  const prevTab = prevActiveId != null ? getTab(prevActiveId) : null;
   activeTabId = id;
   const tab = getTab(id);
   if (!tab) return;
-  addressBar.value = tab.url === "about:blank" ? "" : tab.url;
-  if (!tab.initialized) {
-    tab.initialized = true;
-    if (!webviewReady) {
-      webviewReady = true;
-      browserFrame.setAttribute("src", tab.url); // bootstrap guest process
-    } else {
-      browserFrame.loadURL(tab.url);
-    }
+
+  if (prevTab && prevTab.webview) {
+    prevTab.webview.style.visibility = "hidden";
+    prevTab.webview.style.pointerEvents = "none";
+    prevTab.webview.style.zIndex = "0";
+    prevTab.webview.removeAttribute("id");
   }
-  // already-loaded tab: just update UI, don't reload
+
+  const wv = ensureWebviewForTab(tab);
+  if (!wv) {
+    if (addressBar) addressBar.value = tab.url === "about:blank" ? "" : tab.url;
+    renderTabs();
+    return;
+  }
+
+  browserFrame = wv;
+  wv.id = "browserFrame";
+  wv.style.visibility = "visible";
+  wv.style.pointerEvents = "auto";
+  wv.style.zIndex = "1";
+  wv.style.position = "absolute";
+  wv.style.inset = "0";
+
+  if (addressBar) addressBar.value = tab.url === "about:blank" ? "" : tab.url;
+
+  const targetUrl = tab.url === "about:blank" ? "about:blank" : tab.url;
+  let liveUrl = "";
+  try {
+    liveUrl = wv.getURL ? wv.getURL() : "";
+  } catch {
+    /* ignore */
+  }
+  const needsLoad =
+    !liveUrl ||
+    liveUrl === "about:blank" ||
+    !urlsMatchForTabSwitch(liveUrl, targetUrl);
+
+  if (needsLoad) {
+    webviewReady = true;
+    tab.initialized = true;
+    try {
+      wv.loadURL(targetUrl);
+    } catch {
+      try {
+        wv.src = targetUrl;
+      } catch {
+        /* ignore */
+      }
+    }
+  } else {
+    tab.initialized = true;
+    webviewReady = true;
+  }
+
+  try {
+    wv.setZoomLevel(zoomLevel);
+  } catch {
+    /* ignore */
+  }
+
   updateNavButtons();
   updateSecurityIcon(tab.url);
+  updateBookmarkStar(tab.url === "about:blank" ? "" : tab.url);
   renderTabs();
+  syncWebviewInteractionLayer();
 }
 
 function closeTab(id, e) {
   if (e) e.stopPropagation();
+  const closing = getTab(id);
+  if (closing && closing.webview) {
+    try {
+      closing.webview.remove();
+    } catch {
+      /* ignore */
+    }
+    closing.webview = null;
+  }
   tabs = tabs.filter((t) => t.id !== id);
   if (tabs.length === 0) {
     createTab();
@@ -153,7 +677,24 @@ function getTab(id) {
   return tabs.find((t) => t.id === id);
 }
 
+/**
+ * Reorder tabs (same rules as drag-drop in legacy renderTabs).
+ * @param {"left"|"right"} side drop side relative to target tab
+ */
+function reorderTabs(movedId, targetId, side) {
+  if (movedId === targetId) return;
+  const fromIdx = tabs.findIndex((t) => t.id === movedId);
+  const toIdx = tabs.findIndex((t) => t.id === targetId);
+  if (fromIdx < 0 || toIdx < 0) return;
+  const [moved] = tabs.splice(fromIdx, 1);
+  const insertAt = side === "left" ? toIdx : toIdx + 1;
+  const at = fromIdx < toIdx ? insertAt - 1 : insertAt;
+  tabs.splice(at, 0, moved);
+  renderTabs();
+}
+
 function renderTabs() {
+  if (USE_REACT_TABS_UI) return;
   tabScrollArea.innerHTML = "";
   tabs.forEach((tab, index) => {
     const isLast = index === tabs.length - 1;
@@ -347,16 +888,19 @@ function navigateTo(raw) {
   if (!url) return;
   const tab = getTab(activeTabId);
   if (!tab) return;
+  const wv = tab.webview || ensureWebviewForTab(tab);
+  if (!wv) return;
   tab.url = url;
-  tab.initialized = true; // mark so switchTab won't re-load on next switch
-  addressBar.value = url;
-  browserFrame.loadURL(url);
+  tab.initialized = true;
+  if (addressBar) addressBar.value = url;
+  wv.loadURL(url);
   setLoading(true);
   updateSecurityIcon(url);
   hideError();
 }
 
 function updateNavButtons() {
+  if (USE_REACT_NAV_UI) return;
   try {
     backBtn.disabled = !browserFrame.canGoBack();
     forwardBtn.disabled = !browserFrame.canGoForward();
@@ -373,17 +917,23 @@ function setLoading(on) {
     renderTabs();
   }
   if (on) {
-    loadingBar.classList.add("loading");
-    loadingOverlay.style.display = "flex";
-    reloadBtn.classList.add("stop-mode");
-    reloadBtn.title = "Stop (Esc)";
-    reloadBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+    if (loadingOverlay) {
+      const st = loadingOverlay.querySelector(".loading-spotlight-stage");
+      if (st) shuffleLoadingSpotlightStage(st);
+      loadingOverlay.style.display = "flex";
+    }
+    if (!USE_REACT_NAV_UI && reloadBtn) {
+      reloadBtn.classList.add("stop-mode");
+      reloadBtn.title = "Stop (Esc)";
+      reloadBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+    }
   } else {
-    loadingBar.classList.remove("loading");
-    loadingOverlay.style.display = "none";
-    reloadBtn.classList.remove("stop-mode");
-    reloadBtn.title = "Reload (F5)";
-    reloadBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.657 6A6 6 0 1 0 12 11.196" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M14 2.5V6.5H10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    if (loadingOverlay) loadingOverlay.style.display = "none";
+    if (!USE_REACT_NAV_UI && reloadBtn) {
+      reloadBtn.classList.remove("stop-mode");
+      reloadBtn.title = "Reload (F5)";
+      reloadBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.657 6A6 6 0 1 0 12 11.196" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M14 2.5V6.5H10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    }
   }
 }
 
@@ -391,18 +941,29 @@ function updateSecurityIcon(url) {
   const isSecure = url && url.startsWith("https://");
   const isLocal =
     url && (url.startsWith("about:") || url.startsWith("file://"));
-  securityIcon.className =
-    "security-icon" + (isSecure ? " secure" : isLocal ? " local" : " insecure");
-  securityIcon.title = isSecure
+  const tip = isSecure
     ? "Secure connection"
     : isLocal
       ? "Local page"
       : "Not secure";
-  statusSecurity.textContent = isSecure
-    ? "🔒 Secure"
-    : isLocal
-      ? ""
-      : "⚠ Not Secure";
+  if (securityIcon) {
+    securityIcon.className =
+      "security-icon" + (isSecure ? " secure" : isLocal ? " local" : " insecure");
+    securityIcon.title = tip;
+  }
+  if (statusSecurity) {
+    statusSecurity.textContent = isSecure
+      ? "Secure"
+      : isLocal
+        ? ""
+        : "Not secure";
+  }
+  if (statusSecurityChip) {
+    const state = isSecure ? "secure" : isLocal ? "local" : "insecure";
+    statusSecurityChip.dataset.connection = state;
+    statusSecurityChip.hidden = Boolean(isLocal);
+    statusSecurityChip.title = tip;
+  }
 }
 
 function showError(desc) {
@@ -417,52 +978,54 @@ function hideError() {
 }
 
 function setupNavEvents() {
-  backBtn.onclick = () => browserFrame.canGoBack() && browserFrame.goBack();
-  forwardBtn.onclick = () =>
-    browserFrame.canGoForward() && browserFrame.goForward();
+  if (!USE_REACT_NAV_UI) {
+    backBtn.onclick = () => browserFrame.canGoBack() && browserFrame.goBack();
+    forwardBtn.onclick = () =>
+      browserFrame.canGoForward() && browserFrame.goForward();
 
-  reloadBtn.onclick = () => {
-    if (isLoading) {
-      browserFrame.stop();
-      setLoading(false);
-    } else {
-      browserFrame.reload();
-      setLoading(true);
-    }
-  };
+    reloadBtn.onclick = () => {
+      if (isLoading) {
+        browserFrame.stop();
+        setLoading(false);
+      } else {
+        browserFrame.reload();
+        setLoading(true);
+      }
+    };
 
-  homeBtn.onclick = () => navigateTo(homePage);
+    homeBtn.onclick = () => navigateTo(homePage);
+
+    // Address bar
+    addressBar.addEventListener("focus", () => {
+      addressBar.select();
+      addressWrapper.classList.add("focused");
+    });
+    addressBar.addEventListener("blur", () => {
+      addressWrapper.classList.remove("focused");
+    });
+    addressBar.addEventListener("input", () => {
+      clearAddressBtn.style.display = addressBar.value ? "flex" : "none";
+    });
+    addressBar.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        navigateTo(addressBar.value);
+        addressBar.blur();
+      }
+      if (e.key === "Escape") {
+        addressBar.blur();
+      }
+    });
+    clearAddressBtn.onclick = () => {
+      addressBar.value = "";
+      clearAddressBtn.style.display = "none";
+      addressBar.focus();
+    };
+  }
 
   errorRetryBtn.onclick = () => {
     hideError();
     browserFrame.reload();
     setLoading(true);
-  };
-
-  // Address bar
-  addressBar.addEventListener("focus", () => {
-    addressBar.select();
-    addressWrapper.classList.add("focused");
-  });
-  addressBar.addEventListener("blur", () => {
-    addressWrapper.classList.remove("focused");
-  });
-  addressBar.addEventListener("input", () => {
-    clearAddressBtn.style.display = addressBar.value ? "flex" : "none";
-  });
-  addressBar.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      navigateTo(addressBar.value);
-      addressBar.blur();
-    }
-    if (e.key === "Escape") {
-      addressBar.blur();
-    }
-  });
-  clearAddressBtn.onclick = () => {
-    addressBar.value = "";
-    clearAddressBtn.style.display = "none";
-    addressBar.focus();
   };
 }
 
@@ -470,12 +1033,43 @@ function setupNavEvents() {
 //  WEBVIEW EVENTS
 // ═══════════════════════════════════════════════════════════
 
-function setupWebviewEvents() {
-  browserFrame.addEventListener(
+function setupWebviewEvents(wv) {
+  if (!wv || webviewsWithListeners.has(wv)) return;
+  webviewsWithListeners.add(wv);
+
+  wv.addEventListener(
     "dom-ready",
     () => {
-      applyZoom(zoomLevel);
-      browserFrame
+      try {
+        wv.setZoomLevel(zoomLevel);
+      } catch {
+        /* ignore */
+      }
+      const tid = Number(wv.dataset.orionTabId);
+      const tab = getTab(tid);
+      if (tab && tab.url && tab.url !== "about:blank") {
+        window.setTimeout(() => {
+          if (!isActiveWebview(wv)) return;
+          let cur = "";
+          try {
+            cur = wv.getURL ? wv.getURL() : "";
+          } catch {
+            /* ignore */
+          }
+          if ((!cur || cur === "about:blank") && tab.url && tab.url !== "about:blank") {
+            try {
+              wv.loadURL(tab.url);
+            } catch {
+              try {
+                wv.src = tab.url;
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+        }, 120);
+      }
+      wv
         .insertCSS(
           `::-webkit-scrollbar{display:none!important}*{scrollbar-width:none!important}`,
         )
@@ -484,31 +1078,34 @@ function setupWebviewEvents() {
     { once: true },
   );
 
-  browserFrame.addEventListener("did-start-loading", () => {
+  wv.addEventListener("did-start-loading", () => {
+    if (!isActiveWebview(wv)) return;
     setLoading(true);
     hideError();
-    browserFrame
+    wv
       .insertCSS(
         `::-webkit-scrollbar{display:none!important}*{scrollbar-width:none!important}`,
       )
       .catch(() => {});
   });
 
-  browserFrame.addEventListener("did-stop-loading", () => {
+  wv.addEventListener("did-stop-loading", () => {
+    if (!isActiveWebview(wv)) return;
     setLoading(false);
     updateNavButtons();
   });
 
-  browserFrame.addEventListener("did-finish-load", () => {
-    setLoading(false);
-    updateNavButtons();
-    browserFrame
+  wv.addEventListener("did-finish-load", () => {
+    if (isActiveWebview(wv)) {
+      setLoading(false);
+      updateNavButtons();
+    }
+    wv
       .insertCSS(
         `::-webkit-scrollbar{display:none!important}*{scrollbar-width:none!important}`,
       )
       .catch(() => {});
-    // Fallback: read favicon from <link> tags if page-favicon-updated didn't fire
-    browserFrame
+    wv
       .executeJavaScript(
         `(function() {
           const links = [...document.querySelectorAll('link[rel*="icon"]')];
@@ -517,64 +1114,86 @@ function setupWebviewEvents() {
         })()`,
       )
       .then((faviconUrl) => {
-        const tab = getTab(activeTabId);
-        if (tab && faviconUrl && !tab.favicon) {
-          tab.favicon = faviconUrl;
+        const tid = Number(wv.dataset.orionTabId);
+        const t = getTab(tid);
+        if (t && faviconUrl && !t.favicon) {
+          t.favicon = faviconUrl;
           renderTabs();
         }
       })
       .catch(() => {});
   });
 
-  browserFrame.addEventListener("did-navigate", (e) => {
-    const url = e.url || browserFrame.getURL();
-    addressBar.value = url;
-    clearAddressBtn.style.display = url ? "flex" : "none";
-    const tab = getTab(activeTabId);
-    if (tab) {
-      tab.url = url;
-      tab.favicon = null; // clear stale favicon on navigation
+  wv.addEventListener("did-navigate", (e) => {
+    const url = e.url || wv.getURL();
+    const tid = Number(wv.dataset.orionTabId);
+    const t = getTab(tid);
+    if (t) {
+      t.url = url;
+      t.favicon = null;
     }
-    updateNavButtons();
-    updateSecurityIcon(url);
-    hideError();
+    if (url && currentProfile) {
+      const title = (t && t.title) || url;
+      addHistoryEntry(url, title);
+      if (isActiveWebview(wv)) updateBookmarkStar(url);
+    }
+    if (isActiveWebview(wv)) {
+      if (addressBar) addressBar.value = url;
+      if (clearAddressBtn) clearAddressBtn.style.display = url ? "flex" : "none";
+      updateNavButtons();
+      updateSecurityIcon(url);
+      hideError();
+    }
   });
 
-  browserFrame.addEventListener("did-navigate-in-page", (e) => {
-    const url = e.url || browserFrame.getURL();
-    addressBar.value = url;
-    clearAddressBtn.style.display = url ? "flex" : "none";
-    const tab = getTab(activeTabId);
-    if (tab) {
-      tab.url = url;
+  wv.addEventListener("did-navigate-in-page", (e) => {
+    const url = e.url || wv.getURL();
+    const tid = Number(wv.dataset.orionTabId);
+    const t = getTab(tid);
+    if (t) t.url = url;
+    if (isActiveWebview(wv)) {
+      if (addressBar) addressBar.value = url;
+      if (clearAddressBtn) clearAddressBtn.style.display = url ? "flex" : "none";
+      updateNavButtons();
     }
-    updateNavButtons();
   });
 
-  browserFrame.addEventListener("page-title-updated", (e) => {
-    const tab = getTab(activeTabId);
-    if (tab && e.title) {
-      tab.title = e.title;
+  wv.addEventListener("page-title-updated", (e) => {
+    const tid = Number(wv.dataset.orionTabId);
+    const t = getTab(tid);
+    if (t && e.title) {
+      t.title = e.title;
+      renderTabs();
+    }
+    const url = wv.getURL ? wv.getURL() : "";
+    if (url && e.title && currentProfile) {
+      const p = getProfile();
+      const h = p.history.find((x) => x.url === url);
+      if (h) {
+        h.title = e.title;
+        saveProfile();
+      }
+    }
+  });
+
+  wv.addEventListener("page-favicon-updated", (e) => {
+    const tid = Number(wv.dataset.orionTabId);
+    const t = getTab(tid);
+    if (t && e.favicons && e.favicons.length > 0) {
+      t.favicon = e.favicons[0];
       renderTabs();
     }
   });
 
-  browserFrame.addEventListener("page-favicon-updated", (e) => {
-    const tab = getTab(activeTabId);
-    if (tab && e.favicons && e.favicons.length > 0) {
-      tab.favicon = e.favicons[0];
-      renderTabs();
-    }
-  });
-
-  browserFrame.addEventListener("did-fail-load", (e) => {
-    // -3 = ERR_ABORTED (user navigated away), ignore
+  wv.addEventListener("did-fail-load", (e) => {
     if (e.errorCode === -3) return;
+    if (!isActiveWebview(wv)) return;
     setLoading(false);
     showError(`${e.errorDescription} (${e.errorCode})`);
   });
 
-  browserFrame.addEventListener("crashed", () => {
+  wv.addEventListener("crashed", () => {
+    if (!isActiveWebview(wv)) return;
     setLoading(false);
     showError("The page crashed. Click Try Again to reload.");
     addBotMessage(
@@ -582,14 +1201,24 @@ function setupWebviewEvents() {
     );
   });
 
-  browserFrame.addEventListener("update-target-url", (e) => {
-    statusText.textContent = e.url || "";
+  wv.addEventListener("update-target-url", (e) => {
+    if (isActiveWebview(wv)) statusText.textContent = e.url || "";
   });
 
-  // New window requests — open in new tab instead of external window
-  browserFrame.addEventListener("new-window", (e) => {
+  wv.addEventListener("new-window", (e) => {
     e.preventDefault();
     createTab(e.url);
+  });
+
+  wv.addEventListener("found-in-page", (e) => {
+    if (!isActiveWebview(wv)) return;
+    const { activeMatchOrdinal, matches } = e.result;
+    const text = matches > 0 ? `${activeMatchOrdinal}/${matches}` : "No results";
+    findMatchDisplay = text;
+    if (!USE_REACT_NAV_UI && findCount) {
+      findCount.textContent = text;
+      findCount.style.color = matches > 0 ? "var(--accent)" : "var(--danger)";
+    }
   });
 }
 
@@ -645,10 +1274,21 @@ async function getCaptureScale(img) {
 // ── Screenshot dropdown ──────────────────────────────────────
 let screenshotMenuOpen = false;
 
-screenshotBtn.onclick = (e) => {
-  e.stopPropagation();
-  toggleScreenshotMenu();
-};
+if (screenshotBtn) {
+  screenshotBtn.onclick = (e) => {
+    e.stopPropagation();
+    toggleScreenshotMenu();
+  };
+}
+
+function getScreenshotMenuAnchor() {
+  const reactBtn = document.getElementById("reactScreenshotNavBtn");
+  if (reactBtn) {
+    const r = reactBtn.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) return reactBtn;
+  }
+  return screenshotBtn || null;
+}
 
 function toggleScreenshotMenu() {
   const existing = document.getElementById("screenshotMenu");
@@ -676,11 +1316,17 @@ function toggleScreenshotMenu() {
       Select Area
     </button>`;
 
-  // Position below the screenshot button
-  const btnRect = screenshotBtn.getBoundingClientRect();
-  menu.style.top = btnRect.bottom + 6 + "px";
-  menu.style.left = btnRect.left - 60 + "px";
   document.body.appendChild(menu);
+  const anchor = getScreenshotMenuAnchor();
+  const btnRect = anchor
+    ? anchor.getBoundingClientRect()
+    : { left: 12, bottom: 56, width: 0, height: 0 };
+  const menuWidth = menu.offsetWidth || 220;
+  let left = btnRect.left;
+  if (left + menuWidth > window.innerWidth - 8) left = Math.max(8, window.innerWidth - menuWidth - 8);
+  if (left < 8) left = 8;
+  menu.style.top = `${Math.min(btnRect.bottom + 6, window.innerHeight - 120)}px`;
+  menu.style.left = `${left}px`;
 
   document.getElementById("ssViewport").onclick = () => {
     closeScreenshotMenu();
@@ -826,22 +1472,32 @@ function takeScreenshotSelect() {
 // ═══════════════════════════════════════════════════════════
 
 function setupZoom() {
-  zoomInBtn.onclick = () => applyZoom(zoomLevel + 1);
-  zoomOutBtn.onclick = () => applyZoom(zoomLevel - 1);
-  // Show correct % in UI immediately
-  zoomLevelEl.textContent = Math.round(100 * Math.pow(1.2, zoomLevel)) + "%";
+  if (!USE_REACT_NAV_UI) {
+    zoomInBtn.onclick = () => applyZoom(zoomLevel + 1);
+    zoomOutBtn.onclick = () => applyZoom(zoomLevel - 1);
+    // Show correct % in UI immediately
+    zoomLevelEl.textContent = Math.round(100 * Math.pow(1.2, zoomLevel)) + "%";
+  }
 }
 
 function applyZoom(level) {
   zoomLevel = Math.max(-5, Math.min(5, level));
-  localStorage.setItem("zoomLevel", zoomLevel);
-  try {
-    browserFrame.setZoomLevel(zoomLevel);
-  } catch {}
+  localStorage.setItem("zoomLevel", String(zoomLevel));
+  tabs.forEach((t) => {
+    if (t.webview) {
+      try {
+        t.webview.setZoomLevel(zoomLevel);
+      } catch {
+        /* ignore */
+      }
+    }
+  });
   const pct = Math.round(100 * Math.pow(1.2, zoomLevel));
-  zoomLevelEl.textContent = pct + "%";
-  zoomLevelEl.classList.add("zoom-pop");
-  setTimeout(() => zoomLevelEl.classList.remove("zoom-pop"), 300);
+  if (zoomLevelEl) {
+    zoomLevelEl.textContent = pct + "%";
+    zoomLevelEl.classList.add("zoom-pop");
+    setTimeout(() => zoomLevelEl.classList.remove("zoom-pop"), 300);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -849,6 +1505,8 @@ function applyZoom(level) {
 // ═══════════════════════════════════════════════════════════
 
 function setupFindBar() {
+  if (USE_REACT_NAV_UI) return;
+
   findBtn.onclick = toggleFind;
   findClose.onclick = closeFind;
 
@@ -877,30 +1535,41 @@ function setupFindBar() {
         findNext: true,
       });
   };
-
-  browserFrame.addEventListener("found-in-page", (e) => {
-    const { activeMatchOrdinal, matches } = e.result;
-    findCount.textContent =
-      matches > 0 ? `${activeMatchOrdinal}/${matches}` : "No results";
-    findCount.style.color = matches > 0 ? "var(--accent)" : "var(--danger)";
-  });
 }
 
 function toggleFind() {
   findActive = !findActive;
-  findBar.style.display = findActive ? "flex" : "none";
+  if (!USE_REACT_NAV_UI) {
+    findBar.style.display = findActive ? "flex" : "none";
+  }
   if (findActive) {
-    findInput.focus();
-    findInput.select();
+    if (!USE_REACT_NAV_UI) {
+      findInput.focus();
+      findInput.select();
+    } else {
+      window.dispatchEvent(new CustomEvent("react-nav-focus-find"));
+    }
   } else closeFind();
 }
 
 function closeFind() {
   findActive = false;
-  findBar.style.display = "none";
-  findCount.textContent = "";
-  findInput.value = "";
-  browserFrame.stopFindInPage("clearSelection");
+  if (!USE_REACT_NAV_UI) {
+    findBar.style.display = "none";
+    findCount.textContent = "";
+    findInput.value = "";
+  }
+  lastFindQuery = "";
+  findMatchDisplay = "";
+  tabs.forEach((t) => {
+    if (t.webview) {
+      try {
+        t.webview.stopFindInPage("clearSelection");
+      } catch {
+        /* ignore */
+      }
+    }
+  });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -958,8 +1627,8 @@ function setupSettings() {
     settingsOverlay.style.display = "none";
   };
 
-  settingsBtn.onclick = openSettings;
-  settingsBtnChat.onclick = openSettings;
+  if (settingsBtn) settingsBtn.onclick = openSettings;
+  if (settingsBtnChat) settingsBtnChat.onclick = openSettings;
   closeSettingsBtn.onclick = closeSettings;
   settingsOverlay.onclick = closeSettings;
 
@@ -970,10 +1639,193 @@ function setupSettings() {
   homePageInput.addEventListener("change", () => {
     const val = homePageInput.value.trim();
     if (val) {
-      homePage = val;
-      localStorage.setItem("homePage", val);
+      homePage = normalizeHomePageUrl(val);
+      localStorage.setItem("homePage", homePage);
+      homePageInput.value = homePage;
     }
   });
+
+  // Import functionality
+  checkImportBtn.onclick = checkAvailableData;
+  startImportBtn.onclick = startImport;
+  browserSelect.onchange = updateImportUI;
+}
+
+async function checkAvailableData() {
+  try {
+    checkImportBtn.disabled = true;
+    checkImportBtn.textContent = "Checking...";
+
+    const stats = await window.electronAPI.getBrowserStats();
+
+    chromeStats.textContent = stats.chrome.available
+      ? `${stats.chrome.bookmarks} bookmarks, ${stats.chrome.history} history, ${stats.chrome.cookies} cookies`
+      : "Not found";
+
+    firefoxStats.textContent = stats.firefox.available
+      ? `${stats.firefox.bookmarks} bookmarks, ${stats.firefox.history} history, ${stats.firefox.cookies} cookies`
+      : "Not found";
+
+    importStats.style.display = "block";
+    startImportBtn.disabled = false;
+
+  } catch (error) {
+    console.error("Failed to check browser data:", error);
+    showToast("Failed to check browser data", "error");
+  } finally {
+    checkImportBtn.disabled = false;
+    checkImportBtn.textContent = "Check Available Data";
+  }
+}
+
+async function startImport() {
+  const browser = browserSelect.value;
+  if (!browser) {
+    showToast("Please select a browser", "warning");
+    return;
+  }
+
+  const dataTypes = [];
+  if (importBookmarks.checked) dataTypes.push("bookmarks");
+  if (importHistory.checked) dataTypes.push("history");
+  if (importCookies.checked) dataTypes.push("cookies");
+
+  if (dataTypes.length === 0) {
+    showToast("Please select at least one data type", "warning");
+    return;
+  }
+
+  try {
+    startImportBtn.disabled = true;
+    importProgress.style.display = "block";
+    progressFill.style.width = "0%";
+    progressText.textContent = "Starting import...";
+
+    // Simulate progress updates
+    const progressSteps = [
+      "Preparing import...",
+      "Reading browser data...",
+      "Processing bookmarks...",
+      "Processing history...",
+      "Processing cookies...",
+      "Saving data...",
+      "Import complete!"
+    ];
+
+    for (let i = 0; i < progressSteps.length; i++) {
+      progressText.textContent = progressSteps[i];
+      progressFill.style.width = `${((i + 1) / progressSteps.length) * 100}%`;
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    const result = await window.electronAPI.importBrowserData({ browser, dataTypes });
+
+    if (result.success) {
+      showToast(`Successfully imported ${result.results.bookmarks + result.results.history + result.results.cookies} items`, "success");
+      importProgress.style.display = "none";
+      startImportBtn.disabled = false;
+    } else {
+      throw new Error(result.error);
+    }
+
+  } catch (error) {
+    console.error("Import failed:", error);
+    showToast("Import failed: " + error.message, "error");
+    importProgress.style.display = "none";
+    startImportBtn.disabled = false;
+  }
+}
+
+function updateImportUI() {
+  const browser = browserSelect.value;
+  startImportBtn.disabled = !browser;
+  if (browser) {
+    importStats.style.display = "none";
+  }
+}
+
+// ── First Run Wizard ──────────────────────────────────────────
+async function checkFirstRun() {
+  const hasRunBefore = localStorage.getItem("hasRunBefore");
+  if (!hasRunBefore) {
+    await showFirstRunWizard();
+    localStorage.setItem("hasRunBefore", "true");
+  }
+}
+
+async function showFirstRunWizard() {
+  try {
+    // Check available browser data
+    const stats = await window.electronAPI.getBrowserStats();
+
+    chromePreview.textContent = stats.chrome.available
+      ? `${stats.chrome.bookmarks} bookmarks, ${stats.chrome.history} history items`
+      : "Chrome not found or no data available";
+
+    firefoxPreview.textContent = stats.firefox.available
+      ? `${stats.firefox.bookmarks} bookmarks, ${stats.firefox.history} history items`
+      : "Firefox not found or no data available";
+
+    // Show the wizard
+    firstRunOverlay.style.display = "flex";
+
+    // Setup event listeners
+    importOptionBtns.forEach(btn => {
+      btn.onclick = () => quickImport(btn.dataset.browser);
+    });
+
+    skipImportBtn.onclick = () => {
+      firstRunOverlay.style.display = "none";
+    };
+
+  } catch (error) {
+    console.error("Failed to show first-run wizard:", error);
+    // Continue without wizard if there's an error
+  }
+}
+
+async function quickImport(browser) {
+  try {
+    // Disable all buttons
+    importOptionBtns.forEach(btn => btn.disabled = true);
+    skipImportBtn.disabled = true;
+
+    // Show progress on the selected button
+    const selectedBtn = document.querySelector(`[data-browser="${browser}"] .import-option-btn`);
+    selectedBtn.textContent = "Importing...";
+    selectedBtn.style.background = "var(--text3)";
+
+    // Perform import with all data types
+    const result = await window.electronAPI.importBrowserData({
+      browser,
+      dataTypes: ["bookmarks", "history", "cookies"]
+    });
+
+    if (result.success) {
+      selectedBtn.textContent = "Import Complete!";
+      selectedBtn.style.background = "var(--success)";
+
+      // Close wizard after a delay
+      setTimeout(() => {
+        firstRunOverlay.style.display = "none";
+        showToast(`Successfully imported ${result.results.bookmarks + result.results.history + result.results.cookies} items from ${browser}`, "success");
+      }, 2000);
+    } else {
+      throw new Error(result.error);
+    }
+
+  } catch (error) {
+    console.error("Quick import failed:", error);
+    showToast("Import failed: " + error.message, "error");
+
+    // Re-enable buttons
+    importOptionBtns.forEach(btn => {
+      btn.disabled = false;
+      btn.textContent = `Import from ${btn.dataset.browser === 'chrome' ? 'Chrome' : 'Firefox'}`;
+      btn.style.background = "";
+    });
+    skipImportBtn.disabled = false;
+  }
 }
 
 async function loadSystemInfo() {
@@ -996,6 +1848,15 @@ function setupKeyboardShortcuts() {
   document.addEventListener("keydown", (e) => {
     const ctrl = e.ctrlKey || e.metaKey;
 
+    if (e.key === "Escape") {
+      const hub = document.getElementById("toolsHubRoot");
+      if (hub && hub.classList.contains("tools-hub--open")) {
+        closeToolsHub();
+        e.preventDefault();
+        return;
+      }
+    }
+
     if (ctrl && e.key === "t") {
       e.preventDefault();
       createTab();
@@ -1006,12 +1867,18 @@ function setupKeyboardShortcuts() {
     }
     if (ctrl && e.key === "l") {
       e.preventDefault();
-      addressBar.focus();
-      addressBar.select();
+      if (USE_REACT_NAV_UI) {
+        window.dispatchEvent(new CustomEvent("react-nav-focus-address"));
+      } else {
+        addressBar.focus();
+        addressBar.select();
+      }
     }
     if (ctrl && e.key === "f") {
       e.preventDefault();
-      if (!findActive) toggleFind();
+      if (USE_REACT_NAV_UI) {
+        window.dispatchEvent(new CustomEvent("react-nav-toggle-find"));
+      } else if (!findActive) toggleFind();
       else findInput.focus();
     }
     if ((ctrl && e.key === "r") || e.key === "F5") {
@@ -1041,18 +1908,28 @@ function setupKeyboardShortcuts() {
     }
     if (e.key === "F12") {
       e.preventDefault();
-      devtoolsBtn.click();
+      if (USE_REACT_NAV_UI) {
+        if (browserFrame.isDevToolsOpened()) browserFrame.closeDevTools();
+        else browserFrame.openDevTools();
+      } else {
+        devtoolsBtn.click();
+      }
     }
     if (e.altKey && e.key === "ArrowLeft") {
       e.preventDefault();
-      backBtn.click();
+      if (USE_REACT_NAV_UI) browserFrame.canGoBack() && browserFrame.goBack();
+      else backBtn.click();
     }
     if (e.altKey && e.key === "ArrowRight") {
       e.preventDefault();
-      forwardBtn.click();
+      if (USE_REACT_NAV_UI) browserFrame.canGoForward() && browserFrame.goForward();
+      else forwardBtn.click();
     }
     if (e.key === "Escape" && findActive) {
       closeFind();
+      if (USE_REACT_NAV_UI) {
+        window.dispatchEvent(new CustomEvent("react-nav-close-find"));
+      }
     }
     if (e.key === "Escape") {
       TOOLS.filter((t) => t.active).forEach((t) => deactivateTool(t.id));
@@ -1132,48 +2009,6 @@ function setupChat() {
     chatMessages.innerHTML = "";
     addBotMessage("Chat cleared. How can I help?");
   };
-
-  document.querySelectorAll(".qc-btn").forEach((btn) => {
-    btn.onclick = () => {
-      const qp = document.getElementById("quickPanel");
-      const qb = document.getElementById("quickPanelBtn");
-      if (qp) qp.style.display = "none";
-      if (qb) qb.classList.remove("tools-open");
-
-      const cmd = btn.dataset.command;
-      // click/fill: activate picker so user can point at the element
-      if (cmd === "click" || cmd === "fill") {
-        const pickerTool = TOOLS.find((t) => t.id === "picker");
-        if (pickerTool && !pickerTool.active) {
-          pickerTool.active = true;
-          pickerTool.toggle(true);
-          const list = document.getElementById("toolsList");
-          if (list) {
-            const card = list.querySelector(`[data-tool-id="picker"]`);
-            if (card) card.classList.add("tool-active");
-          }
-        }
-        return;
-      }
-
-      const templates = {
-        navigate: "go to ",
-        screenshot: "screenshot",
-        scroll: "scroll down",
-        help: "help",
-      };
-      const val = templates[cmd] || "";
-      const chatInputEl = document.getElementById("chatInput");
-      const chatInputMd = document.getElementById("chatInputMd");
-      chatInputMd.style.display = "none";
-      chatInputEl.style.display = "block";
-      chatInputEl.value = val;
-      chatInputEl.style.height = "auto";
-      chatInputEl.style.height = Math.min(chatInputEl.scrollHeight, 160) + "px";
-      chatInputEl.focus();
-      chatInputEl.setSelectionRange(val.length, val.length);
-    };
-  });
 }
 
 function submitChat() {
@@ -1190,210 +2025,50 @@ function submitChat() {
   processCommand(text);
 }
 
+function getKernelAutomationContext() {
+  return {
+    getBrowserFrame: () => browserFrame,
+    navigateTo,
+    resolveInput,
+    reload: () => {
+      if (browserFrame) {
+        browserFrame.reload();
+        setLoading(true);
+      }
+    },
+    goBack: () => {
+      if (browserFrame && browserFrame.canGoBack()) browserFrame.goBack();
+    },
+    goForward: () => {
+      if (browserFrame && browserFrame.canGoForward()) browserFrame.goForward();
+    },
+    createTab: (url) => {
+      if (url) createTab(url);
+      else createTab();
+    },
+    switchTab,
+    closeTabById: (id) => closeTab(id),
+    getTabs: () =>
+      tabs.map((t) => ({
+        id: t.id,
+        publicId: t.publicId,
+        title: t.title || "New Tab",
+        url: t.url || "",
+      })),
+    getActiveTabId: () => activeTabId,
+    applyZoom,
+    getZoomLevel: () => zoomLevel,
+    takeScreenshot,
+  };
+}
+
 async function processCommand(text) {
-  const t = text.toLowerCase().trim();
-
-  if (
-    t.startsWith("go to ") ||
-    t.startsWith("navigate to ") ||
-    t.startsWith("open ")
-  ) {
-    const raw = text.replace(/^(go to|navigate to|open)\s+/i, "").trim();
-    const url = resolveInput(raw);
-    navigateTo(url);
-    return addBotMessage("Navigating to **" + url + "**");
-  }
-
-  if (t === "screenshot" || t === "take screenshot" || t === "capture") {
+  const result = await dispatchAutomationLine(text, getKernelAutomationContext());
+  if (result.op === "screenshot" && result.success) {
     await takeScreenshot("viewport");
     return;
   }
-
-  if (t.startsWith("scroll")) {
-    const dir = t.includes("up") ? -600 : 600;
-    await browserFrame.executeJavaScript(
-      "window.scrollBy({top:" + dir + ",behavior:'smooth'})",
-    );
-    return addBotMessage("Scrolled " + (dir > 0 ? "down" : "up") + ".");
-  }
-
-  const clickMatch = text.match(/^click\s+(.+)$/i);
-  if (clickMatch) {
-    const selector = clickMatch[1].trim();
-    try {
-      const result = await browserFrame.executeJavaScript(
-        `(function(){
-          function doClick(el) {
-            var r = el.getBoundingClientRect();
-            var inView = r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth;
-            if (!inView) el.scrollIntoView({ block: 'center', behavior: 'instant' });
-            el.focus();
-            var r2 = el.getBoundingClientRect();
-            var cx = r2.left + r2.width / 2;
-            var cy = r2.top + r2.height / 2;
-            var opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
-            el.dispatchEvent(new PointerEvent('pointerover', opts));
-            el.dispatchEvent(new PointerEvent('pointerenter', Object.assign({}, opts, { bubbles: false })));
-            el.dispatchEvent(new MouseEvent('mouseover', opts));
-            el.dispatchEvent(new PointerEvent('pointermove', opts));
-            el.dispatchEvent(new MouseEvent('mousemove', opts));
-            el.dispatchEvent(new PointerEvent('pointerdown', opts));
-            el.dispatchEvent(new MouseEvent('mousedown', opts));
-            el.dispatchEvent(new PointerEvent('pointerup', opts));
-            el.dispatchEvent(new MouseEvent('mouseup', opts));
-            el.click();
-            return { success: true, tag: el.tagName.toLowerCase() };
-          }
-          // 1. Try as CSS selector
-          try {
-            var el = document.querySelector(${JSON.stringify(selector)});
-            if (el) return doClick(el);
-          } catch(e) {}
-          // 2. Text / aria / title / placeholder match
-          var q = ${JSON.stringify(selector.toLowerCase())};
-          var nodes = document.querySelectorAll(
-            'a,button,input,select,textarea,label,summary,' +
-            '[role=button],[role=link],[role=menuitem],[role=option],[role=tab],[role=checkbox],[role=radio],[tabindex]'
-          );
-          for (var i = 0; i < nodes.length; i++) {
-            var n = nodes[i];
-            var tx = (n.innerText || n.textContent || '').replace(/\\s+/g,' ').trim().toLowerCase();
-            var extras = [
-              n.value || '', n.getAttribute('aria-label') || '',
-              n.getAttribute('title') || '', n.getAttribute('placeholder') || ''
-            ].join(' ').toLowerCase();
-            if (tx === q || tx.indexOf(q) !== -1 || extras.indexOf(q) !== -1)
-              return doClick(n);
-          }
-          return { success: false };
-        })()`,
-      );
-      if (result && result.success)
-        addBotMessage(
-          "\u2705 Clicked **" + selector + "** (" + result.tag + ")",
-        );
-      else addBotMessage("\u274c Could not find element: **" + selector + "**");
-    } catch (err) {
-      addBotMessage("\u274c Click failed: " + err.message);
-    }
-    return;
-  }
-
-  const fillMatch = text.match(
-    /^(?:fill|type into|type in)\s+(.+?)\s+with\s+(.+)$/i,
-  );
-  if (fillMatch) {
-    await fillElement(fillMatch[1].trim(), fillMatch[2].trim());
-    return;
-  }
-
-  const typeMatch = text.match(/^type\s+(.+)$/i);
-  if (typeMatch) {
-    const value = typeMatch[1].trim();
-    try {
-      const result = await browserFrame.executeJavaScript(
-        "(function(){var el=document.activeElement;if(!el||el===document.body)return{success:false};" +
-          "var val=" +
-          JSON.stringify(value) +
-          ";" +
-          "if(el.isContentEditable){el.textContent=val;}" +
-          "else{var p=el.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype;" +
-          "var s=Object.getOwnPropertyDescriptor(p,'value');if(s)s.set.call(el,val);else el.value=val;}" +
-          "['input','change'].forEach(function(t){el.dispatchEvent(new Event(t,{bubbles:true}));});" +
-          "return{success:true,tag:el.tagName.toLowerCase()};})()",
-      );
-      if (result.success)
-        addBotMessage(
-          "\u2705 Typed into **" + result.tag + '**: "' + value + '"',
-        );
-      else
-        addBotMessage(
-          "\u274c No focused element. Use **fill [field] with [value]** instead.",
-        );
-    } catch (err) {
-      addBotMessage("\u274c Type failed: " + err.message);
-    }
-    return;
-  }
-
-  if (t === "get text" || t === "read page" || t === "page text") {
-    try {
-      const txt = await browserFrame.executeJavaScript(
-        "document.body.innerText.slice(0,500)",
-      );
-      addBotMessage("\ud83d\udcc4 Page text (first 500 chars):\n\n" + txt);
-    } catch {
-      addBotMessage("\u274c Could not read page text.");
-    }
-    return;
-  }
-
-  if (t === "url" || t === "current url" || t === "what url")
-    return addBotMessage(
-      "\ud83d\udd17 Current URL: **" + browserFrame.getURL() + "**",
-    );
-
-  if (t === "reload" || t === "refresh") {
-    browserFrame.reload();
-    setLoading(true);
-    return addBotMessage("\ud83d\udd04 Reloading page...");
-  }
-
-  if (t === "back" || t === "go back") {
-    if (browserFrame.canGoBack()) {
-      browserFrame.goBack();
-      addBotMessage("\u2b05 Going back.");
-    } else addBotMessage("\u274c No page to go back to.");
-    return;
-  }
-  if (t === "forward" || t === "go forward") {
-    if (browserFrame.canGoForward()) {
-      browserFrame.goForward();
-      addBotMessage("\u27a1 Going forward.");
-    } else addBotMessage("\u274c No page to go forward to.");
-    return;
-  }
-
-  if (t === "zoom in") {
-    applyZoom(zoomLevel + 1);
-    return addBotMessage("\ud83d\udd0d Zoomed in.");
-  }
-  if (t === "zoom out") {
-    applyZoom(zoomLevel - 1);
-    return addBotMessage("\ud83d\udd0d Zoomed out.");
-  }
-  if (t === "zoom reset") {
-    applyZoom(0);
-    return addBotMessage("\ud83d\udd0d Zoom reset to 100%.");
-  }
-
-  if (t === "new tab") {
-    createTab();
-    return addBotMessage("\u2705 Opened new tab.");
-  }
-
-  if (t === "help") {
-    return addBotMessage(
-      "Here's what I can do:\n\n" +
-        "\u2022 **go to [url/search]** \u2014 navigate\n" +
-        "\u2022 **click [selector or text]** \u2014 click element\n" +
-        "\u2022 **fill [field] with [value]** \u2014 fill input, textarea, select\n" +
-        "\u2022 **type [text]** \u2014 type into the currently focused element\n" +
-        "\u2022 **scroll down / scroll up** \u2014 scroll page\n" +
-        "\u2022 **screenshot** \u2014 capture page\n" +
-        "\u2022 **get text** \u2014 read page content\n" +
-        "\u2022 **reload** \u2014 refresh page\n" +
-        "\u2022 **back / forward** \u2014 navigate history\n" +
-        "\u2022 **zoom in / zoom out / zoom reset**\n" +
-        "\u2022 **new tab** \u2014 open new tab\n" +
-        "\u2022 **url** \u2014 show current URL\n\n" +
-        "\ud83d\udca1 Use the **\ud83c\udfaf Element Picker** tool to click any element and get instant action buttons.",
-    );
-  }
-
-  addBotMessage(
-    "I don't understand that command yet. Type **help** to see what I can do.",
-  );
+  if (result.message) addBotMessage(result.message);
 }
 // ── Message helpers ───────────────────────────────────────────
 
@@ -1488,42 +2163,72 @@ function escapeHtml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function normalizeCodeLang(rawLang) {
+  const l = (rawLang || "").trim().toLowerCase();
+  if (!l) return "";
+  // Conservative: keep simple token; drop anything that could break attributes.
+  return l.replace(/[^a-z0-9_+-]/g, "");
+}
+
+function buildMarkedRenderer() {
+  const r = new marked.Renderer();
+
+  // Ensure links keep the md-link class (we intercept clicks elsewhere).
+  r.link = function (tok) {
+    const safeHref = tok && typeof tok.href === "string" ? tok.href : "";
+    const safeTitle = tok && typeof tok.title === "string" ? tok.title : "";
+    const titleAttr = safeTitle ? ` title="${escapeHtml(safeTitle)}"` : "";
+    // Render link text via marked inline parser (handles emphasis/code inside links).
+    const inner =
+      tok && tok.tokens && this && this.parser && this.parser.parseInline
+        ? this.parser.parseInline(tok.tokens)
+        : escapeHtml(tok && typeof tok.text === "string" ? tok.text : "");
+    // Keep href; DOMPurify will sanitize protocols/attrs.
+    return `<a class="md-link" href="${escapeHtml(safeHref)}"${titleAttr}>${inner}</a>`;
+  };
+
+  // Wrap fenced code blocks so we can add a copy button.
+  // marked@17 passes a token object: { text, lang, escaped }.
+  r.code = (tok) => {
+    const text = typeof tok === "string" ? tok : tok && typeof tok.text === "string" ? tok.text : String(tok ?? "");
+    const langRaw = tok && typeof tok.lang === "string" ? tok.lang : "";
+    const lang = normalizeCodeLang(langRaw);
+    const label = lang ? lang : "code";
+    const codeEsc = escapeHtml(String(text ?? "")).replace(/\n$/, "");
+    const langClass = lang ? ` language-${lang}` : "";
+    const langAttr = lang ? ` data-lang="${lang}"` : "";
+    return `
+      <div class="md-codeblock"${langAttr}>
+        <div class="md-codeblock-head">
+          <span class="md-codeblock-lang">${escapeHtml(label)}</span>
+          <button type="button" class="md-codecopy" aria-label="Copy code">Copy</button>
+        </div>
+        <pre><code class="${langClass}">${codeEsc}</code></pre>
+      </div>
+    `.trim();
+  };
+
+  return r;
+}
+
 function mdToHtml(text) {
-  let h = escapeHtml(text);
-  // fenced code blocks
-  h = h.replace(
-    /```(\w*)\n?([\s\S]*?)```/g,
-    (_, lang, code) =>
-      `<pre><code${lang ? ` class="lang-${lang}"` : ""}>${code.trimEnd()}</code></pre>`,
-  );
-  // inline code
-  h = h.replace(/`([^`]+)`/g, "<code>$1</code>");
-  // headings
-  h = h.replace(/^### (.+)$/gm, "<strong><em>$1</em></strong>");
-  h = h.replace(/^## (.+)$/gm, "<strong>$1</strong>");
-  h = h.replace(/^# (.+)$/gm, '<strong style="font-size:1.1em">$1</strong>');
-  // bold + italic
-  h = h.replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>");
-  h = h.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  h = h.replace(/\*(.+?)\*/g, "<em>$1</em>");
-  // strikethrough
-  h = h.replace(/~~(.+?)~~/g, "<del>$1</del>");
-  // unordered list items
-  h = h.replace(/^[\-\*] (.+)$/gm, '<span class="md-li">• $1</span>');
-  // ordered list items
-  h = h.replace(/^\d+\. (.+)$/gm, '<span class="md-li">$1</span>');
-  // blockquote
-  h = h.replace(/^&gt; (.+)$/gm, '<span class="md-bq">$1</span>');
-  // horizontal rule
-  h = h.replace(/^---$/gm, '<hr class="md-hr">');
-  // links
-  h = h.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    '<a href="$2" class="md-link">$1</a>',
-  );
-  // newlines (skip inside pre)
-  h = h.replace(/\n/g, "<br>");
-  return h;
+  const raw = String(text ?? "");
+
+  const html = marked.parse(raw, {
+    gfm: true,
+    breaks: true,
+    headerIds: false,
+    mangle: false,
+    renderer: buildMarkedRenderer(),
+  });
+
+  // Sanitize: disallow raw HTML and any dangerous attributes.
+  return DOMPurify.sanitize(String(html ?? ""), {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ["style", "script", "iframe", "object", "embed"],
+    FORBID_ATTR: ["style", "onerror", "onload", "onclick"],
+    ALLOW_UNKNOWN_PROTOCOLS: false,
+  });
 }
 
 function formatMessage(text) {
@@ -1540,10 +2245,100 @@ function setupChatPanel() {
   closeChatBtn.onclick = () => setChatOpen(false);
 }
 
+/** Chat markdown renders `<a href>`; default navigation replaces the whole Electron window. */
+function setupChatPanelLinks() {
+  const panel = document.getElementById("chatSection");
+  if (!panel) return;
+  panel.addEventListener(
+    "click",
+    (e) => {
+      const t = e.target;
+      const copyBtn = t && t.closest ? t.closest("button.md-codecopy") : null;
+      if (copyBtn && panel.contains(copyBtn)) {
+        e.preventDefault();
+        e.stopPropagation();
+        const block = copyBtn.closest(".md-codeblock");
+        const codeEl = block ? block.querySelector("pre code") : null;
+        const codeText = codeEl ? codeEl.textContent ?? "" : "";
+        if (!codeText) return;
+
+        const setLabel = (txt) => {
+          try {
+            copyBtn.textContent = txt;
+            window.clearTimeout(copyBtn.__copyTimer);
+            copyBtn.__copyTimer = window.setTimeout(() => {
+              copyBtn.textContent = "Copy";
+            }, 1200);
+          } catch {
+            /* ignore */
+          }
+        };
+
+        navigator.clipboard
+          .writeText(codeText)
+          .then(() => setLabel("Copied"))
+          .catch(() => {
+            try {
+              // Fallback selection copy.
+              const ta = document.createElement("textarea");
+              ta.value = codeText;
+              ta.setAttribute("readonly", "true");
+              ta.style.position = "fixed";
+              ta.style.top = "-1000px";
+              ta.style.left = "-1000px";
+              document.body.appendChild(ta);
+              ta.select();
+              document.execCommand("copy");
+              ta.remove();
+              setLabel("Copied");
+            } catch {
+              setLabel("Failed");
+            }
+          });
+        return;
+      }
+      const a = t && t.closest ? t.closest("a") : null;
+      if (!a || !panel.contains(a)) return;
+      const href = a.getAttribute("href");
+      if (!href || href === "#" || /^\s*javascript:/i.test(href)) {
+        e.preventDefault();
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      const trimmed = href.trim();
+      if (/^mailto:/i.test(trimmed) || /^tel:/i.test(trimmed)) {
+        void window.electronAPI?.openExternal?.(trimmed);
+        return;
+      }
+      if (/^https?:\/\//i.test(trimmed)) {
+        window.legacyBrowser?.createTabWithUrl?.(trimmed);
+        return;
+      }
+      try {
+        const abs = new URL(trimmed, window.location.href).href;
+        if (/^https?:\/\//i.test(abs)) {
+          window.legacyBrowser?.createTabWithUrl?.(abs);
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+      void window.electronAPI?.openExternal?.(trimmed);
+    },
+    true,
+  );
+}
+
 function setChatOpen(open) {
   chatOpen = open;
   chatWrapper.classList.toggle("chat-closed", !open);
   aiChatToggleBtn.classList.toggle("active", open);
+  if (USE_REACT_CHAT_RESIZE) {
+    window.dispatchEvent(
+      new CustomEvent("legacy-chat-open", { detail: { open } }),
+    );
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1552,6 +2347,14 @@ function setChatOpen(open) {
 
 let toastTimer = null;
 function showToast(msg, duration = 3000) {
+  if (USE_REACT_TOAST) {
+    window.dispatchEvent(
+      new CustomEvent("legacy-toast", {
+        detail: { msg, duration },
+      }),
+    );
+    return;
+  }
   toast.textContent = msg;
   toast.classList.add("show");
   if (toastTimer) clearTimeout(toastTimer);
@@ -1595,6 +2398,117 @@ function setupResizeHandle() {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  BROWSER IMPORT WIZARD
+// ═══════════════════════════════════════════════════════════
+
+async function setupImportWizard() {
+  const wizard = document.getElementById("importWizard");
+  const browserList = document.getElementById("importBrowserList");
+  const skipBtn = document.getElementById("importSkipBtn");
+  const startBtn = document.getElementById("importStartBtn");
+
+  // Check if first run
+  const hasImported = localStorage.getItem("hasImported");
+  if (hasImported) return; // Skip if already imported
+
+  try {
+    // Get browser stats
+    const stats = await window.electronAPI.getBrowserStats();
+
+    // Clear existing
+    browserList.innerHTML = "";
+
+    // Add Chrome option
+    if (stats.chrome.available) {
+      const chromeCard = createBrowserCard("chrome", "Chrome", "🌐", stats.chrome);
+      browserList.appendChild(chromeCard);
+    }
+
+    // Add Firefox option
+    if (stats.firefox.available) {
+      const firefoxCard = createBrowserCard("firefox", "Firefox", "🦊", stats.firefox);
+      browserList.appendChild(firefoxCard);
+    }
+
+    // Show wizard if browsers available
+    if (browserList.children.length > 0) {
+      wizard.style.display = "flex";
+    }
+
+  } catch (error) {
+    console.error("Failed to setup import wizard:", error);
+  }
+
+  // Event listeners
+  skipBtn.onclick = () => {
+    wizard.style.display = "none";
+    localStorage.setItem("hasImported", "true");
+  };
+
+  startBtn.onclick = async () => {
+    const selectedCards = browserList.querySelectorAll(".browser-import-card.selected");
+    if (selectedCards.length === 0) return;
+
+    const selectedCard = selectedCards[0];
+    const browser = selectedCard.dataset.browser;
+
+    startBtn.disabled = true;
+    startBtn.textContent = "Importing...";
+
+    try {
+      const result = await window.electronAPI.browserImport();
+
+      if (result.sources.length > 0) {
+        startBtn.textContent = "Import Complete!";
+        startBtn.style.background = "var(--success)";
+
+        setTimeout(() => {
+          wizard.style.display = "none";
+          localStorage.setItem("hasImported", "true");
+          showToast(`Successfully imported ${result.bookmarks.length} bookmarks, ${result.history.length} history items, and ${result.cookies.length} cookies`, "success");
+        }, 2000);
+      } else {
+        throw new Error("No data imported");
+      }
+    } catch (error) {
+      console.error("Import failed:", error);
+      showToast("Import failed: " + error.message, "error");
+      startBtn.disabled = false;
+      startBtn.textContent = "Import Selected";
+    }
+  };
+}
+
+function createBrowserCard(browser, name, icon, stats) {
+  const card = document.createElement("div");
+  card.className = "browser-import-card";
+  card.dataset.browser = browser;
+
+  card.innerHTML = `
+    <div class="browser-icon">${icon}</div>
+    <div class="browser-info">
+      <h3>${name}</h3>
+      <p>Import bookmarks, history, and cookies</p>
+    </div>
+    <div class="browser-stats">
+      <div class="stat"><strong>${stats.bookmarks}</strong> bookmarks</div>
+      <div class="stat"><strong>${stats.history}</strong> history</div>
+      <div class="stat"><strong>${stats.cookies}</strong> cookies</div>
+    </div>
+  `;
+
+  card.onclick = () => {
+    // Remove selection from others
+    document.querySelectorAll(".browser-import-card").forEach(c => c.classList.remove("selected"));
+    // Select this one
+    card.classList.add("selected");
+    document.getElementById("importStartBtn").disabled = false;
+  };
+
+  return card;
+}
+
+// ═══════════════════════════════════════════════════════════
 //  PUBLIC API
 // ═══════════════════════════════════════════════════════════
 
@@ -1621,7 +2535,18 @@ const TOOLS = [
     desc: "Click to get a unique CSS selector",
     active: false,
     toggle(on) {
-      if (on) startElementPicker();
+      if (on) startElementPicker("any");
+      else stopElementPicker();
+    },
+  },
+  {
+    id: "pickerInteractive",
+    icon: "🧲",
+    name: "Interactive Picker",
+    desc: "Pick the nearest clickable/input element",
+    active: false,
+    toggle(on) {
+      if (on) startElementPicker("interactive");
       else stopElementPicker();
     },
   },
@@ -1678,6 +2603,20 @@ function setupToolsPanel() {
   }
 
   renderTools();
+
+  const quickList = document.querySelector("#quickPanel .quick-list");
+  if (quickList) {
+    quickList.innerHTML = "";
+    QUICK_COMMAND_ENTRIES.forEach(({ command, label }) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "qc-btn";
+      btn.dataset.command = command;
+      btn.textContent = label;
+      btn.onclick = () => runQuickCommand(command);
+      quickList.appendChild(btn);
+    });
+  }
 
   panelBtn.onclick = (e) => {
     e.stopPropagation();
@@ -1968,17 +2907,24 @@ async function fillElement(sel, value) {
 
 let pickerActive = false;
 
-function startElementPicker() {
+function startElementPicker(mode = "any") {
   if (pickerActive) {
     stopElementPicker();
     return;
   }
   pickerActive = true;
 
-  syncToolState("picker", true);
-  showToast("🎯 Click any element on the page to pick its selector...");
+  const toolId = mode === "interactive" ? "pickerInteractive" : "picker";
+  syncToolState(toolId, true);
+  showToast(
+    mode === "interactive"
+      ? "🎯 Click an interactive element (button/input/link) to pick it..."
+      : "🎯 Click any element on the page to pick its selector...",
+  );
   addBotMessage(
-    "🎯 **Picker active** — click any element on the page. Press Esc to cancel.",
+    mode === "interactive"
+      ? "🎯 **Interactive Picker active** — click a button/input/link. Press Esc to cancel."
+      : "🎯 **Picker active** — click any element on the page. Press Esc to cancel.",
   );
 
   browserFrame
@@ -1987,6 +2933,7 @@ function startElementPicker() {
     (function() {
       if (window.__orionPicker) return;
       window.__orionPicker = true;
+      window.__orionPickerMode = ${JSON.stringify(mode)};
 
       const overlay = document.createElement('div');
       overlay.id = '__orion_highlight';
@@ -1998,61 +2945,95 @@ function startElementPicker() {
       label.style.cssText = 'position:fixed;z-index:2147483647;background:#7c6af7;color:#fff;font:bold 11px/1 monospace;padding:3px 7px;border-radius:4px;pointer-events:none;white-space:nowrap;max-width:400px;overflow:hidden;text-overflow:ellipsis;';
       document.body.appendChild(label);
 
-      function getBestSelector(el) {
-        if (el.id && !/^\\d/.test(el.id)) {
-          if (document.querySelectorAll('#' + CSS.escape(el.id)).length === 1)
-            return '#' + el.id;
-        }
+      function isInteractive(el) {
+        if (!el || el.nodeType !== 1) return false;
         const tag = el.tagName.toLowerCase();
-        if (el.name) {
-          const s = tag + '[name=' + JSON.stringify(el.name) + ']';
-          if (document.querySelectorAll(s).length === 1) return s;
+        if (tag === 'button' || tag === 'a' || tag === 'select' || tag === 'textarea') return true;
+        if (tag === 'input') return true;
+        const role = (el.getAttribute('role') || '').toLowerCase();
+        if (['button','link','menuitem','option','tab','checkbox','radio','combobox','switch'].includes(role)) return true;
+        if (el.hasAttribute('aria-haspopup')) return true;
+        if (el.hasAttribute('tabindex') && el.tabIndex >= 0) return true;
+        return false;
+      }
+      function closestInteractive(el) {
+        let cur = el;
+        while (cur && cur !== document.body) {
+          if (isInteractive(cur)) return cur;
+          cur = cur.parentElement;
         }
-        if (el.placeholder) {
-          const s = tag + '[placeholder=' + JSON.stringify(el.placeholder) + ']';
-          if (document.querySelectorAll(s).length === 1) return s;
+        return el;
+      }
+      function unique(sel) {
+        try { return document.querySelectorAll(sel).length === 1; } catch { return false; }
+      }
+      function escAttr(v){ return JSON.stringify(String(v)); }
+      function buildSelector(el) {
+        const tag = el.tagName.toLowerCase();
+        // 1) id
+        if (el.id && !/^\\d/.test(el.id)) {
+          const s = '#' + CSS.escape(el.id);
+          if (unique(s)) return s;
+        }
+        // 2) stable data attrs
+        const dataKeys = ['data-testid','data-test','data-qa','data-cy'];
+        for (const k of dataKeys) {
+          const v = el.getAttribute(k);
+          if (v) { const s = tag + '[' + k + '=' + escAttr(v) + ']'; if (unique(s)) return s; }
+        }
+        // 3) name / aria-label
+        if (el.getAttribute('name')) {
+          const v = el.getAttribute('name');
+          const s = tag + '[name=' + escAttr(v) + ']';
+          if (unique(s)) return s;
         }
         const al = el.getAttribute('aria-label');
         if (al) {
-          const s = tag + '[aria-label=' + JSON.stringify(al) + ']';
-          if (document.querySelectorAll(s).length === 1) return s;
+          const s = tag + '[aria-label=' + escAttr(al) + ']';
+          if (unique(s)) return s;
         }
-        for (const attr of el.attributes) {
-          if (attr.name.startsWith('data-') && attr.value) {
-            const s = tag + '[' + attr.name + '=' + JSON.stringify(attr.value) + ']';
-            if (document.querySelectorAll(s).length === 1) return s;
+        // 4) role + aria-label
+        const role = el.getAttribute('role');
+        if (role && al) {
+          const s = '[role=' + escAttr(role) + '][aria-label=' + escAttr(al) + ']';
+          if (unique(s)) return s;
+        }
+        // 5) fallback: short ancestor chain with nth-of-type
+        let cur = el;
+        const parts = [];
+        for (let depth = 0; cur && cur !== document.body && depth < 4; depth++) {
+          const t = cur.tagName.toLowerCase();
+          let part = t;
+          const pid = cur.id && !/^\\d/.test(cur.id) ? '#' + CSS.escape(cur.id) : '';
+          if (pid) part += pid;
+          else {
+            const sibs = Array.from(cur.parentElement ? cur.parentElement.children : []).filter(x => x.tagName === cur.tagName);
+            if (sibs.length > 1) {
+              const idx = sibs.indexOf(cur) + 1;
+              part += ':nth-of-type(' + idx + ')';
+            }
           }
-        }
-        if (el.type) {
-          const s = tag + '[type=' + JSON.stringify(el.type) + ']';
-          if (document.querySelectorAll(s).length === 1) return s;
-        }
-        if (el.className && typeof el.className === 'string') {
-          const cls = el.className.trim().split(/\\s+/).filter(c => /^[a-zA-Z_-]/.test(c));
-          if (cls.length) {
-            const s = tag + '.' + cls.join('.');
-            try { if (document.querySelectorAll(s).length === 1) return s; } catch {}
-          }
-        }
-        let path = tag, cur = el;
-        while (cur.parentElement && cur.parentElement !== document.body) {
-          const siblings = [...cur.parentElement.children].filter(c => c.tagName === cur.tagName);
-          const idx = [...cur.parentElement.children].indexOf(cur) + 1;
-          path = cur.tagName.toLowerCase() + (siblings.length > 1 ? ':nth-child(' + idx + ')' : '') + ' > ' + path;
+          parts.unshift(part);
+          const s = parts.join(' > ');
+          if (unique(s)) return s;
           cur = cur.parentElement;
         }
-        return path;
+        return parts.join(' > ') || tag;
+      }
+      function pickTarget(el) {
+        const mode = window.__orionPickerMode || 'any';
+        return mode === 'interactive' ? closestInteractive(el) : el;
       }
 
       function onMove(e) {
-        const el = e.target;
+        const el = pickTarget(e.target);
         if (el.id === '__orion_highlight' || el.id === '__orion_label') return;
         const r = el.getBoundingClientRect();
         overlay.style.left   = r.left   + 'px';
         overlay.style.top    = r.top    + 'px';
         overlay.style.width  = r.width  + 'px';
         overlay.style.height = r.height + 'px';
-        label.textContent = getBestSelector(el);
+        label.textContent = buildSelector(el);
         label.style.left = r.left + 'px';
         label.style.top  = Math.max(0, r.top - 22) + 'px';
       }
@@ -2060,7 +3041,8 @@ function startElementPicker() {
       function onClick(e) {
         e.preventDefault();
         e.stopPropagation();
-        window.__orionPickedSelector = getBestSelector(e.target);
+        const el = pickTarget(document.elementFromPoint(e.clientX, e.clientY) || e.target);
+        window.__orionPickedSelector = buildSelector(el);
         cleanup();
       }
 
@@ -2075,6 +3057,7 @@ function startElementPicker() {
         overlay.remove();
         label.remove();
         delete window.__orionPicker;
+        delete window.__orionPickerMode;
       }
 
       document.addEventListener('mousemove', onMove, true);
@@ -2135,6 +3118,7 @@ function startElementPicker() {
 function stopElementPicker() {
   pickerActive = false;
   syncToolState("picker", false);
+  syncToolState("pickerInteractive", false);
   browserFrame
     .executeJavaScript(
       `
@@ -2327,11 +3311,12 @@ async function setupProfileModal() {
   async function refreshList() {
     const profiles = await window.electronAPI.profileList();
     listEl.innerHTML = "";
-    if (!profiles.length) {
-      listEl.innerHTML = '<div class="modal-empty">No profiles yet</div>';
+    const visible = profiles.filter((name) => name.toLowerCase() !== "default");
+    if (!visible.length) {
+      listEl.innerHTML = '<div class="modal-empty">No saved profiles yet</div>';
       return;
     }
-    profiles.forEach((name) => {
+    visible.forEach((name) => {
       const row = document.createElement("div");
       row.className = "modal-profile-row";
       row.innerHTML = `
@@ -2350,7 +3335,11 @@ async function setupProfileModal() {
   }
 
   createBtn.onclick = async () => {
-    const name = nameInput.value.trim() || "default";
+    const name = nameInput.value.trim();
+    if (!name) {
+      showToast("Enter a profile name");
+      return;
+    }
     currentProfile = { name, bookmarks: [], history: [], passwords: [] };
     await saveProfile();
     overlay.style.display = "none";
@@ -2413,6 +3402,7 @@ function updateBookmarkStar(url) {
 }
 
 function renderBookmarks(filter) {
+  if (USE_REACT_SIDE_PANELS) return;
   const list = document.getElementById("bookmarksList");
   if (!list) return;
   const q = (
@@ -2435,14 +3425,16 @@ function renderBookmarks(filter) {
   list.innerHTML = "";
   items.forEach((b) => {
     const row = document.createElement("div");
-    row.className = "side-item";
+    row.className = "side-item side-item--bookmark";
+    const added = b.addedAt ? new Date(b.addedAt).toLocaleDateString() : "";
     row.innerHTML = `
       <img class="side-favicon" src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(new URL(b.url).hostname)}&sz=16" onerror="this.style.display='none'" width="14" height="14"/>
       <div class="side-item-info">
         <div class="side-item-title">${escapeHtml(b.title)}</div>
         <div class="side-item-url">${escapeHtml(b.url)}</div>
       </div>
-      <button class="side-item-del" title="Remove">✕</button>`;
+      ${added ? `<span class="side-item-date">${added}</span>` : ""}
+      <button class="side-item-del" title="Remove bookmark" aria-label="Remove bookmark">✕</button>`;
     row.querySelector(".side-item-info").onclick = () => {
       navigateTo(b.url);
       closeSidePanels();
@@ -2470,6 +3462,7 @@ function addHistoryEntry(url, title) {
 }
 
 function renderHistory(filter) {
+  if (USE_REACT_SIDE_PANELS) return;
   const list = document.getElementById("historyList");
   if (!list) return;
   const q = (
@@ -2489,27 +3482,51 @@ function renderHistory(filter) {
     return;
   }
   list.innerHTML = "";
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+
+  const labelForTs = (ts) => {
+    if (ts >= startOfToday) return "Today";
+    if (ts >= startOfYesterday) return "Yesterday";
+    return new Date(ts).toLocaleDateString();
+  };
+
+  const groups = new Map();
   items.slice(0, 300).forEach((h) => {
-    const row = document.createElement("div");
-    row.className = "side-item";
-    const date = new Date(h.visitedAt).toLocaleDateString();
-    let hostname = "";
-    try {
-      hostname = new URL(h.url).hostname;
-    } catch {}
-    row.innerHTML = `
-      <img class="side-favicon" src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=16" onerror="this.style.display='none'" width="14" height="14"/>
-      <div class="side-item-info">
-        <div class="side-item-title">${escapeHtml(h.title)}</div>
-        <div class="side-item-url">${escapeHtml(h.url)}</div>
-      </div>
-      <span class="side-item-date">${date}</span>`;
-    row.querySelector(".side-item-info").onclick = () => {
-      navigateTo(h.url);
-      closeSidePanels();
-    };
-    list.appendChild(row);
+    const label = labelForTs(h.visitedAt);
+    const arr = groups.get(label) || [];
+    arr.push(h);
+    groups.set(label, arr);
   });
+
+  for (const [label, entries] of groups.entries()) {
+    const header = document.createElement("div");
+    header.className = "side-group-header";
+    header.textContent = label;
+    list.appendChild(header);
+
+    entries.forEach((h) => {
+      const row = document.createElement("div");
+      row.className = "side-item side-item--history";
+      let hostname = "";
+      try {
+        hostname = new URL(h.url).hostname;
+      } catch {}
+      row.innerHTML = `
+        <img class="side-favicon" src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=16" onerror="this.style.display='none'" width="14" height="14"/>
+        <div class="side-item-info">
+          <div class="side-item-title">${escapeHtml(h.title)}</div>
+          <div class="side-item-url">${escapeHtml(h.url)}</div>
+        </div>`;
+      row.querySelector(".side-item-info").onclick = () => {
+        navigateTo(h.url);
+        closeSidePanels();
+      };
+      list.appendChild(row);
+    });
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2517,6 +3534,7 @@ function renderHistory(filter) {
 // ═══════════════════════════════════════════════════════════
 
 function renderPasswords(filter) {
+  if (USE_REACT_SIDE_PANELS) return;
   const list = document.getElementById("passwordsList");
   if (!list) return;
   const q = (
@@ -2542,21 +3560,27 @@ function renderPasswords(filter) {
     const isEncrypted =
       pw.password.startsWith("[encrypted") || pw.password.startsWith("[");
     const row = document.createElement("div");
-    row.className = "side-item pw-item";
+    row.className = "side-item pw-item pw-card";
     row.innerHTML = `
-      <div class="pw-icon">🔑</div>
-      <div class="side-item-info">
-        <div class="side-item-title">${escapeHtml(pw.url || "Unknown site")}</div>
-        <div class="side-item-url">${escapeHtml(pw.username)}</div>
+      <div class="pw-main">
+        <div class="pw-top">
+          <div class="pw-site">${escapeHtml(pw.url || "Unknown site")}</div>
+          ${
+            isEncrypted
+              ? `<span class="pw-badge" title="Encrypted by OS">Encrypted</span>`
+              : ""
+          }
+        </div>
+        <div class="pw-user">${escapeHtml(pw.username)}</div>
         ${pw.note ? `<div class="pw-note">${escapeHtml(pw.note)}</div>` : ""}
       </div>
-      <div class="pw-actions">
+      <div class="pw-actions" aria-label="Password actions">
         ${
           !isEncrypted
             ? `
-          <button class="pw-copy-btn" data-type="user"  title="Copy username">👤</button>
-          <button class="pw-copy-btn" data-type="pass"  title="Copy password">🔒</button>
-          <button class="pw-del-btn"                    title="Delete">✕</button>`
+          <button class="pw-copy-btn" data-type="user"  title="Copy username">User</button>
+          <button class="pw-copy-btn" data-type="pass"  title="Copy password">Pass</button>
+          <button class="pw-del-btn"                    title="Delete">Delete</button>`
             : ""
         }
       </div>`;
@@ -2586,18 +3610,229 @@ function renderPasswords(filter) {
 //  SIDE PANEL CONTROLS
 // ═══════════════════════════════════════════════════════════
 
+const SIDE_PANEL_OPEN_CLASS = "side-panel--open";
+/** Skip enter/exit transitions so bookmarks ↔ history ↔ passwords swaps feel instant. */
+const SIDE_PANEL_INSTANT_CLASS = "side-panel--instant";
+
+function syncWebviewInteractionLayer() {
+  const sideOpen = !!document.querySelector(".side-panel.side-panel--open");
+  const hub = document.getElementById("toolsHubRoot");
+  const hubOpen = !!(hub && hub.classList.contains("tools-hub--open"));
+  const settingsOpen = !!document
+    .getElementById("webviewContainer")
+    ?.hasAttribute("data-settings-open");
+  const workbenchOpen = !!document
+    .getElementById("webviewContainer")
+    ?.hasAttribute("data-workbench-open");
+  const blockWebview = sideOpen || hubOpen || settingsOpen || workbenchOpen;
+  document
+    .getElementById("sidePanelWebviewShield")
+    ?.classList.toggle("is-active", sideOpen);
+  document.querySelectorAll("webview").forEach((wv) => {
+    wv.style.pointerEvents = blockWebview ? "none" : "";
+  });
+  syncTopChromeForSurface();
+}
+
+function syncRailPanelActive() {
+  const map = {
+    bookmarksPanel: "bookmarksBtn",
+    historyPanel: "historyBtn",
+    passwordsPanel: "passwordsBtn",
+  };
+  document.querySelectorAll("#leftToolRail .rail-btn").forEach((b) => {
+    b.classList.remove("rail-btn-active");
+  });
+  const hub = document.getElementById("toolsHubRoot");
+  if (hub && hub.classList.contains("tools-hub--open")) {
+    document.getElementById("toolsHubBtn")?.classList.add("rail-btn-active");
+    return;
+  }
+  if (document.getElementById("webviewContainer")?.hasAttribute("data-workbench-open")) {
+    document.getElementById("networkWorkbenchBtn")?.classList.add("rail-btn-active");
+    return;
+  }
+  if (document.getElementById("webviewContainer")?.hasAttribute("data-settings-open")) {
+    document.getElementById("settingsBtn")?.classList.add("rail-btn-active");
+    return;
+  }
+  for (const pid of ["bookmarksPanel", "historyPanel", "passwordsPanel"]) {
+    const p = document.getElementById(pid);
+    if (p && p.classList.contains(SIDE_PANEL_OPEN_CLASS)) {
+      const bid = map[pid];
+      document.getElementById(bid)?.classList.add("rail-btn-active");
+      return;
+    }
+  }
+  document.getElementById("railWebviewBtn")?.classList.add("rail-btn-active");
+}
+
 function closeSidePanels() {
   ["bookmarksPanel", "historyPanel", "passwordsPanel"].forEach((id) => {
     const el = document.getElementById(id);
-    if (el) el.style.display = "none";
+    if (el) {
+      el.classList.remove(SIDE_PANEL_OPEN_CLASS);
+      el.setAttribute("aria-hidden", "true");
+    }
   });
+  syncRailPanelActive();
+  syncWebviewInteractionLayer();
+}
+
+function closeToolsHub() {
+  const hub = document.getElementById("toolsHubRoot");
+  if (!hub) return;
+  hub.classList.remove("tools-hub--open");
+  hub.style.display = "none";
+  hub.setAttribute("aria-hidden", "true");
+  syncRailPanelActive();
+  syncWebviewInteractionLayer();
+}
+
+function openToolsHub() {
+  closeSidePanels();
+  const hub = document.getElementById("toolsHubRoot");
+  if (!hub) return;
+  hub.classList.add("tools-hub--open");
+  hub.style.display = "flex";
+  hub.setAttribute("aria-hidden", "false");
+  leaveSettingsSurfaceSync();
+  syncRailPanelActive();
+  syncWebviewInteractionLayer();
+  window.dispatchEvent(new CustomEvent("tools-hub-open"));
+}
+
+function toggleToolsHub() {
+  const hub = document.getElementById("toolsHubRoot");
+  if (!hub) return;
+  if (hub.classList.contains("tools-hub--open")) closeToolsHub();
+  else openToolsHub();
 }
 
 function toggleSidePanel(id) {
   const panel = document.getElementById(id);
-  const isOpen = panel.style.display !== "none";
-  closeSidePanels();
-  if (!isOpen) panel.style.display = "flex";
+  if (!panel) return;
+
+  if (panel.classList.contains(SIDE_PANEL_OPEN_CLASS)) {
+    panel.classList.remove(SIDE_PANEL_OPEN_CLASS);
+    panel.setAttribute("aria-hidden", "true");
+    syncRailPanelActive();
+    syncWebviewInteractionLayer();
+    return;
+  }
+
+  const settingsWasOpen = !!document
+    .getElementById("webviewContainer")
+    ?.hasAttribute("data-settings-open");
+  const hub = document.getElementById("toolsHubRoot");
+  const hubWasOpen = !!(hub && hub.classList.contains("tools-hub--open"));
+
+  const prev = document.querySelector(".side-panel.side-panel--open");
+  if (prev && prev !== panel) {
+    panel.classList.add(SIDE_PANEL_INSTANT_CLASS);
+    prev.classList.add(SIDE_PANEL_INSTANT_CLASS);
+    panel.classList.add(SIDE_PANEL_OPEN_CLASS);
+    panel.setAttribute("aria-hidden", "false");
+    prev.classList.remove(SIDE_PANEL_OPEN_CLASS);
+    prev.setAttribute("aria-hidden", "true");
+    window.requestAnimationFrame(() => {
+      prev.classList.remove(SIDE_PANEL_INSTANT_CLASS);
+      panel.classList.remove(SIDE_PANEL_INSTANT_CLASS);
+    });
+    if (settingsWasOpen) window.requestAnimationFrame(() => leaveSettingsSurfaceSync());
+    else leaveSettingsSurfaceSync();
+    if (hubWasOpen) window.requestAnimationFrame(() => closeToolsHub());
+    else {
+      syncRailPanelActive();
+      syncWebviewInteractionLayer();
+    }
+    return;
+  }
+
+  panel.classList.add(SIDE_PANEL_OPEN_CLASS);
+  panel.setAttribute("aria-hidden", "false");
+  // If we're coming from the tools hub, the panel's first "open" frame can still be near-transparent
+  // (transition start). Force it to be instantly visible for a frame to avoid a webview flash.
+  if (hubWasOpen || settingsWasOpen) {
+    panel.classList.add(SIDE_PANEL_INSTANT_CLASS);
+    window.requestAnimationFrame(() => panel.classList.remove(SIDE_PANEL_INSTANT_CLASS));
+  }
+  if (settingsWasOpen) window.requestAnimationFrame(() => leaveSettingsSurfaceSync());
+  else leaveSettingsSurfaceSync();
+  if (hubWasOpen) window.requestAnimationFrame(() => closeToolsHub());
+  else {
+    syncRailPanelActive();
+    syncWebviewInteractionLayer();
+  }
+}
+
+function runQuickCommand(cmd, opts) {
+  const closeHub = opts && opts.closeHub;
+  if (!cmd) return;
+  try {
+    const qp = document.getElementById("quickPanel");
+    const qb = document.getElementById("quickPanelBtn");
+    if (qp) qp.style.display = "none";
+    if (qb) qb.classList.remove("tools-open");
+
+    if (cmd === "click" || cmd === "fill") {
+      const pickerTool = TOOLS.find((t) => t.id === "picker");
+      if (pickerTool && !pickerTool.active) {
+        pickerTool.active = true;
+        pickerTool.toggle(true);
+        const list = document.getElementById("toolsList");
+        if (list) {
+          const card = list.querySelector(`[data-tool-id="picker"]`);
+          if (card) card.classList.add("tool-active");
+        }
+      }
+      return;
+    }
+
+    if (cmd === "picker" || cmd === "pickerInteractive" || cmd === "elemshot") {
+      const tool = TOOLS.find((t) => t.id === cmd);
+      if (tool) {
+        tool.active = !tool.active;
+        tool.toggle(tool.active);
+        syncToolState(tool.id, tool.active);
+      }
+      return;
+    }
+
+    const templates = {
+      navigate: "go to ",
+      nav: "nav ",
+      tab: "tab ",
+      url: "url",
+      title: "title",
+      screenshot: "screenshot",
+      scroll: "scroll down",
+      reload: "reload",
+      back: "back",
+      forward: "forward",
+      tabs: "list tabs",
+      switchTab: "switch tab ",
+      newTab: "new tab",
+      closeTab: "close tab",
+      viewportMd: "viewport md",
+      formSchema: "form schema",
+      interactables: "interactables",
+      type: "type ",
+      wait: "wait 1000ms",
+    };
+    const val = templates[cmd] || "";
+    const chatInputEl = document.getElementById("chatInput");
+    const chatInputMd = document.getElementById("chatInputMd");
+    chatInputMd.style.display = "none";
+    chatInputEl.style.display = "block";
+    chatInputEl.value = val;
+    chatInputEl.style.height = "auto";
+    chatInputEl.style.height = Math.min(chatInputEl.scrollHeight, 160) + "px";
+    chatInputEl.focus();
+    chatInputEl.setSelectionRange(val.length, val.length);
+  } finally {
+    if (closeHub) closeToolsHub();
+  }
 }
 
 function initDataPanels() {
@@ -2608,8 +3843,13 @@ function initDataPanels() {
 
 // ── Browser Import ────────────────────────────────────────
 async function runBrowserImport(target) {
+  if (USE_REACT_MODALS) {
+    window.dispatchEvent(
+      new CustomEvent("browser-import-busy", { detail: { busy: true } }),
+    );
+  }
   const overlay = document.getElementById("importOverlay");
-  overlay.style.display = "flex";
+  if (overlay && !USE_REACT_MODALS) overlay.style.display = "flex";
   try {
     const result = await window.electronAPI.browserImport();
     const p = getProfile();
@@ -2657,19 +3897,36 @@ async function runBrowserImport(target) {
   } catch (err) {
     showToast("❌ Import failed: " + err.message);
   } finally {
-    overlay.style.display = "none";
+    if (USE_REACT_MODALS) {
+      window.dispatchEvent(
+        new CustomEvent("browser-import-busy", { detail: { busy: false } }),
+      );
+    }
+    if (overlay) overlay.style.display = "none";
   }
 }
 
 // ── Wire up all panel buttons ─────────────────────────────
 function setupDataPanelButtons() {
   // Nav bar buttons
+  document.getElementById("railWebviewBtn").onclick = () => showWebviewOnly();
   document.getElementById("bookmarksBtn").onclick = () =>
     toggleSidePanel("bookmarksPanel");
   document.getElementById("historyBtn").onclick = () =>
     toggleSidePanel("historyPanel");
   document.getElementById("passwordsBtn").onclick = () =>
     toggleSidePanel("passwordsPanel");
+  document.getElementById("networkWorkbenchBtn").onclick = () => {
+    // Close other surfaces first to avoid flashes
+    closeSidePanels();
+    closeToolsHub();
+    leaveSettingsSurfaceSync();
+    document.getElementById("webviewContainer")?.setAttribute("data-workbench-open", "");
+    window.dispatchEvent(new CustomEvent("react-open-workbench"));
+    syncRailPanelActive();
+    syncWebviewInteractionLayer();
+  };
+  document.getElementById("toolsHubBtn").onclick = () => toggleToolsHub();
 
   // Bookmark star
   document.getElementById("bookmarkStarBtn").onclick = () => {
@@ -2712,6 +3969,27 @@ function setupDataPanelButtons() {
   document
     .getElementById("passwordSearch")
     .addEventListener("input", (e) => renderPasswords(e.target.value));
+
+  // Search clear buttons
+  const wireSearchClear = (inputId, rerender) => {
+    const input = document.getElementById(inputId);
+    const btn = document.querySelector(`.side-search-clear[data-clear="${inputId}"]`);
+    if (!input || !btn) return;
+    btn.addEventListener("click", () => {
+      input.value = "";
+      input.focus();
+      rerender("");
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        input.value = "";
+        rerender("");
+      }
+    });
+  };
+  wireSearchClear("bookmarkSearch", renderBookmarks);
+  wireSearchClear("historySearch", renderHistory);
+  wireSearchClear("passwordSearch", renderPasswords);
 
   // Add password form
   const pwAddForm = document.getElementById("pwAddForm");
@@ -2758,28 +4036,18 @@ function setupDataPanelButtons() {
     showToast("🔑 Password saved");
   };
 
-  // Close panels on outside click
-  document.addEventListener("click", (e) => {
-    ["bookmarksPanel", "historyPanel", "passwordsPanel"].forEach((id) => {
-      const panel = document.getElementById(id);
-      if (
-        panel &&
-        panel.style.display !== "none" &&
-        !panel.contains(e.target) &&
-        ![
-          "bookmarksBtn",
-          "historyBtn",
-          "passwordsBtn",
-          "bookmarkStarBtn",
-        ].includes(e.target.id) &&
-        !e.target.closest(
-          "#bookmarksBtn,#historyBtn,#passwordsBtn,#bookmarkStarBtn",
-        )
-      ) {
-        panel.style.display = "none";
-      }
-    });
-  });
+  // Dismiss data panels on outside mousedown (capture: runs before controls; webview uses shield + pointer-events)
+  document.addEventListener(
+    "mousedown",
+    (e) => {
+      if (!document.querySelector(".side-panel.side-panel--open")) return;
+      const t = e.target;
+      if (t.closest("#bookmarksPanel,#historyPanel,#passwordsPanel")) return;
+      if (t.closest("#leftToolRail")) return;
+      closeSidePanels();
+    },
+    true,
+  );
 
   // Ctrl+D to bookmark
   document.addEventListener("keydown", (e) => {
@@ -2790,25 +4058,304 @@ function setupDataPanelButtons() {
   });
 }
 
-// ── Hook into navigation events to record history + update star ──
-const _origNavigateTo = navigateTo;
-// Patch did-navigate to record history
-browserFrame.addEventListener("did-navigate", (e) => {
-  const url = e.url || (browserFrame.getURL ? browserFrame.getURL() : "");
-  if (url && currentProfile) {
-    const title = getTab(activeTabId)?.title || url;
-    addHistoryEntry(url, title);
-    updateBookmarkStar(url);
+function reloadOrStopNav() {
+  if (isLoading) {
+    browserFrame.stop();
+    setLoading(false);
+  } else {
+    browserFrame.reload();
+    setLoading(true);
   }
-});
-browserFrame.addEventListener("page-title-updated", (e) => {
-  const url = browserFrame.getURL ? browserFrame.getURL() : "";
-  if (url && e.title && currentProfile) {
-    const p = getProfile();
-    const h = p.history.find((x) => x.url === url);
-    if (h) {
-      h.title = e.title;
-      saveProfile();
+}
+
+function bridgeFindInPageQuery(q) {
+  lastFindQuery = q || "";
+  if (lastFindQuery) browserFrame.findInPage(lastFindQuery);
+  else browserFrame.stopFindInPage("clearSelection");
+}
+
+function bridgeFindNext() {
+  if (!lastFindQuery) return;
+  browserFrame.findInPage(lastFindQuery, { forward: true, findNext: true });
+}
+
+function bridgeFindPrev() {
+  if (!lastFindQuery) return;
+  browserFrame.findInPage(lastFindQuery, { forward: false, findNext: true });
+}
+
+function getNavState() {
+  if (!browserFrame) {
+    let addr = "";
+    try {
+      addr = addressBar && addressBar.value ? addressBar.value : "";
+    } catch {
+      /* ignore */
     }
+    return {
+      address: addr,
+      canGoBack: false,
+      canGoForward: false,
+      isLoading,
+      zoomPercent: Math.round(100 * Math.pow(1.2, zoomLevel)),
+      zoomLevel,
+      findActive,
+      findQuery: lastFindQuery,
+      findMatchText: findMatchDisplay,
+      securityIconClass: "security-icon",
+      statusSecurityText: statusSecurity && statusSecurity.textContent ? statusSecurity.textContent : "",
+      isBookmarked: false,
+    };
   }
-});
+  let url = "";
+  try {
+    url = browserFrame.getURL ? browserFrame.getURL() : "";
+  } catch {
+    /* ignore */
+  }
+  const addr = addressBar ? addressBar.value : url;
+  let canBack = false;
+  let canForward = false;
+  try {
+    canBack = browserFrame.canGoBack();
+    canForward = browserFrame.canGoForward();
+  } catch {
+    /* ignore */
+  }
+  const pct = Math.round(100 * Math.pow(1.2, zoomLevel));
+  let secClass = "security-icon";
+  try {
+    const u = url || addr;
+    if (u && u.startsWith("https://")) secClass += " secure";
+    else if (u && (u.startsWith("about:") || u.startsWith("file://"))) secClass += " local";
+    else if (u) secClass += " insecure";
+  } catch {
+    /* ignore */
+  }
+  let isBookmarked = false;
+  try {
+    const tab = getTab(activeTabId);
+    let live = "";
+    try {
+      live = browserFrame.getURL ? browserFrame.getURL() : "";
+    } catch {
+      /* ignore */
+    }
+    const tabUrl = tab && tab.url && tab.url !== "about:blank" ? tab.url : "";
+    const bookmarkCheckUrl = tabUrl || live;
+    isBookmarked =
+      !!bookmarkCheckUrl &&
+      bookmarkCheckUrl !== "about:blank" &&
+      getProfile().bookmarks.some((b) => b.url === bookmarkCheckUrl);
+  } catch {
+    /* ignore */
+  }
+  return {
+    address: addr,
+    canGoBack: canBack,
+    canGoForward: canForward,
+    isLoading,
+    zoomPercent: pct,
+    zoomLevel,
+    findActive,
+    findQuery: lastFindQuery,
+    findMatchText: findMatchDisplay,
+    securityIconClass: secClass,
+    statusSecurityText: statusSecurity ? statusSecurity.textContent : "",
+    isBookmarked,
+  };
+}
+
+// Transitional compatibility bridge (keep in sync with src/types/global.d.ts):
+// React consumes imperative tab/nav/profile/modal/chat helpers while core tab + webview
+// logic remains here until state moves into src/renderer/state.
+window.legacyBrowser = {
+  newTab: () => createTab(),
+  createTabWithUrl: (url) => {
+    if (!url || !String(url).trim()) {
+      createTab();
+      return;
+    }
+    const u = resolveInput(String(url).trim());
+    createTab(u || homePage);
+  },
+  navigate: (url) => navigateTo(url),
+  back: () => browserFrame && browserFrame.canGoBack() && browserFrame.goBack(),
+  forward: () => browserFrame && browserFrame.canGoForward() && browserFrame.goForward(),
+  reload: () => browserFrame && browserFrame.reload(),
+  reloadOrStop: () => reloadOrStopNav(),
+  goHome: () => navigateTo(homePage),
+  getWebviewElement: () => browserFrame,
+  clickUi: (id) => {
+    const el = document.getElementById(id);
+    if (el) el.click();
+  },
+  openDevTools: () => {
+    if (!browserFrame) return;
+    if (browserFrame.isDevToolsOpened()) browserFrame.closeDevTools();
+    else browserFrame.openDevTools();
+  },
+  openScreenshotMenu: () => toggleScreenshotMenu(),
+  getNavState,
+  findInPageQuery: (q) => bridgeFindInPageQuery(q),
+  findNext: () => bridgeFindNext(),
+  findPrev: () => bridgeFindPrev(),
+  toggleFind: () => toggleFind(),
+  closeFind: () => closeFind(),
+  zoomIn: () => applyZoom(zoomLevel + 1),
+  zoomOut: () => applyZoom(zoomLevel - 1),
+  zoomReset: () => applyZoom(0),
+  getTabs: () =>
+    tabs.map((t) => ({
+      id: t.id,
+      publicId: t.publicId,
+      title: t.title || "New Tab",
+      url: t.url,
+      loading: !!t.loading,
+      favicon: t.favicon,
+    })),
+  switchTabById: (id) => switchTab(id),
+  closeTabById: (id) => closeTab(id),
+  reorderTabs: (movedId, targetId, side) => reorderTabs(movedId, targetId, side),
+  getState: () => {
+    let activeUrl = "";
+    let canGoBack = false;
+    let canGoForward = false;
+    try {
+      if (browserFrame) {
+        activeUrl = browserFrame.getURL ? browserFrame.getURL() : "";
+        canGoBack = browserFrame.canGoBack ? browserFrame.canGoBack() : false;
+        canGoForward = browserFrame.canGoForward ? browserFrame.canGoForward() : false;
+      }
+    } catch {
+      /* ignore */
+    }
+    return {
+    activeTabId,
+    tabCount: tabs.length,
+    activeUrl,
+    canGoBack,
+    canGoForward,
+    isLoading,
+    useReactTabsUi: USE_REACT_TABS_UI,
+    useReactNavUi: USE_REACT_NAV_UI,
+    useReactSidePanelsUi: USE_REACT_SIDE_PANELS,
+    useReactModalsUi: USE_REACT_MODALS,
+    useReactToastUi: USE_REACT_TOAST,
+    useReactChatResizeUi: USE_REACT_CHAT_RESIZE,
+  };
+  },
+  getProfileSnapshot: () => {
+    const p = getProfile();
+    return {
+      name: p.name,
+      bookmarks: [...p.bookmarks],
+      history: [...p.history],
+      passwords: [...p.passwords],
+    };
+  },
+  navigateToUrl: (url) => navigateTo(url),
+  closeSidePanels: () => closeSidePanels(),
+  syncRailAndWebview: () => {
+    syncRailPanelActive();
+    syncWebviewInteractionLayer();
+  },
+  toggleSidePanel: (panelId) => toggleSidePanel(panelId),
+  showToast: (msg, duration = 3000) => showToast(msg, duration),
+  removeBookmarkByUrl: (url) => removeBookmark(url),
+  clearAllHistory: () => {
+    if (!confirm("Clear all history?")) return;
+    getProfile().history = [];
+    saveProfile();
+    renderHistory();
+    showToast("🗑 History cleared");
+  },
+  deletePasswordEntry: (url, username) => {
+    const p = getProfile();
+    const idx = p.passwords.findIndex((pw) => pw.url === url && pw.username === username);
+    if (idx > -1) {
+      p.passwords.splice(idx, 1);
+      saveProfile();
+      renderPasswords();
+    }
+  },
+  getHomePage: () => homePage,
+  setHomePage: (url) => {
+    const val = (url || "").trim();
+    if (!val) return;
+    homePage = normalizeHomePageUrl(val);
+    localStorage.setItem("homePage", homePage);
+  },
+  applyTheme: (name) => applyTheme(name),
+  initDataPanels: () => initDataPanels(),
+  loadProfileByName: async (name) => {
+    await loadProfile(name);
+  },
+  createProfileFromName: async (name) => {
+    const n = (name || "").trim();
+    if (!n) return;
+    currentProfile = { name: n, bookmarks: [], history: [], passwords: [] };
+    await saveProfile();
+    initDataPanels();
+    showToast(`✅ Profile "${n}" created`);
+  },
+  runBrowserImportTarget: (target) => runBrowserImport(target),
+  getChatOpen: () => chatOpen,
+  setChatPanelOpen: (open) => setChatOpen(!!open),
+  runAutomationCommand: async (cmd) => runAutomationCommand(cmd, getKernelAutomationContext()),
+  dispatchAutomationLine: async (line) => dispatchAutomationLine(line, getKernelAutomationContext()),
+  openToolsHub: () => openToolsHub(),
+  closeToolsHub: () => closeToolsHub(),
+  toggleToolsHub: () => toggleToolsHub(),
+  runQuickCommand: (cmd, opts) => runQuickCommand(cmd, opts),
+};
+
+  setupTitleBar();
+  setupTheme();
+  if (USE_REACT_MODALS) {
+    hideLegacyModalContainers();
+    wireReactSettingsButtons();
+  } else {
+    setupSettings();
+  }
+  setupKeyboardShortcuts();
+  setupNavEvents();
+  setupFindBar();
+  setupZoom();
+  setupChat();
+  setupChatPanel();
+  setupChatPanelLinks();
+  setupToolsPanel();
+  if (!USE_REACT_CHAT_RESIZE) setupResizeHandle();
+  setupDataPanelButtons();
+  if (!USE_REACT_MODALS) setupImportWizard();
+  if (USE_REACT_MODALS) {
+    window.addEventListener(
+      "profile-gate-complete",
+      () => {
+        setProfileGateBackdrop(false);
+        if (tabs.length === 0) createTab(homePage);
+      },
+      { once: true },
+    );
+  } else {
+    createTab(homePage);
+  }
+  if (!USE_REACT_MODALS) loadSystemInfo();
+  if (!USE_REACT_MODALS) {
+    setupProfileModal();
+    checkFirstRun();
+  }
+  window.addEventListener("tools-hub-breadcrumb", (e: Event) => {
+    const d = (e as CustomEvent<{ parts?: unknown }>).detail;
+    const parts = Array.isArray(d?.parts) ? (d?.parts as unknown[]) : [];
+    const cleaned = parts
+      .map((p) => (typeof p === "string" ? p : String(p ?? "")).trim())
+      .filter(Boolean)
+      .slice(0, 6);
+    lastToolsHubCrumbs = cleaned.length ? cleaned : ["Tool Hub"];
+    syncTopChromeForSurface();
+  });
+  syncRailPanelActive();
+  syncWebviewInteractionLayer();
+}
