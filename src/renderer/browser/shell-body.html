@@ -48,14 +48,31 @@
         <!-- Tab Bar -->
         <div class="tab-bar flex min-h-0 shrink-0 items-center" id="tabBar">
           <div class="tab-scroll-area" id="tabScrollArea"></div>
+          <div class="tab-bar-collapsed" id="tabBarCollapsed" aria-hidden="true">
+            <span class="tab-bar-collapsed-pill" aria-hidden="true">Browser</span>
+          </div>
         </div>
 
         <div class="browser-body-row" id="browserBodyRow">
           <aside
             class="left-tool-rail"
             id="leftToolRail"
-            aria-label="Bookmarks, history, passwords, and settings"
+            aria-label="Page, bookmarks, history, passwords, tools hub, and settings"
           >
+            <button
+              type="button"
+              class="rail-btn rail-btn-active"
+              id="railWebviewBtn"
+              title="Page"
+              aria-label="Show page"
+            >
+              <span class="rail-btn-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
+                  <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5" />
+                  <path d="M5 6h6M5 9h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+                </svg>
+              </span>
+            </button>
             <button
               type="button"
               class="rail-btn"
@@ -122,7 +139,41 @@
                 </svg>
               </span>
             </button>
+            <button
+              type="button"
+              class="rail-btn"
+              id="networkWorkbenchBtn"
+              title="Network"
+              aria-label="Network workbench"
+            >
+              <span class="rail-btn-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
+                  <path
+                    d="M9 1L3 9h4l-1 6 7-10H9Z"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </span>
+            </button>
             <div class="rail-spacer" aria-hidden="true"></div>
+            <button
+              type="button"
+              class="rail-btn"
+              id="toolsHubBtn"
+              title="Tools &amp; commands"
+              aria-label="Tools and commands hub"
+            >
+              <span class="rail-btn-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
+                  <rect x="2" y="2" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="9" y="2" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="2" y="9" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="9" y="9" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                </svg>
+              </span>
+            </button>
             <button
               type="button"
               class="rail-btn rail-btn-settings"
@@ -146,6 +197,7 @@
 
           <div class="browser-main-column" id="browserMainColumn">
             <div class="browser-page-frame" id="browserPageFrame">
+        <div class="crumb-bar" id="crumbBar" aria-hidden="true"></div>
         <!-- Navigation Bar -->
         <div class="nav-bar">
           <div class="nav-controls">
@@ -447,13 +499,334 @@
             id="loadingOverlay"
             style="display: none"
           >
-            <div class="loading-ring"></div>
+            <div class="loading-spotlight-sky" aria-hidden="true"></div>
+            <div class="loading-spotlight-grid" aria-hidden="true"></div>
+            <div class="loading-spotlight-veil" aria-hidden="true"></div>
+            <div class="loading-spotlight" role="status" aria-label="Loading">
+              <div class="loading-spotlight-glow" aria-hidden="true"></div>
+              <div class="loading-spotlight-stage">
+                <div class="loading-spotlight-beat">
+                  <span class="loading-spotlight-inner">
+                    <span class="loading-spotlight-icon-wrap"></span>
+                  </span>
+                </div>
+                <div class="loading-spotlight-beat">
+                  <span class="loading-spotlight-inner">
+                    <span class="loading-spotlight-icon-wrap"></span>
+                  </span>
+                </div>
+                <div class="loading-spotlight-beat">
+                  <span class="loading-spotlight-inner">
+                    <span class="loading-spotlight-icon-wrap"></span>
+                  </span>
+                </div>
+                <div class="loading-spotlight-beat">
+                  <span class="loading-spotlight-inner">
+                    <span class="loading-spotlight-icon-wrap"></span>
+                  </span>
+                </div>
+                <div class="loading-spotlight-beat">
+                  <span class="loading-spotlight-inner">
+                    <span class="loading-spotlight-icon-wrap"></span>
+                  </span>
+                </div>
+                <div class="loading-spotlight-beat">
+                  <span class="loading-spotlight-inner">
+                    <span class="loading-spotlight-icon-wrap"></span>
+                  </span>
+                </div>
+                <div class="loading-spotlight-beat">
+                  <span class="loading-spotlight-inner">
+                    <span class="loading-spotlight-icon-wrap"></span>
+                  </span>
+                </div>
+                <div class="loading-spotlight-beat">
+                  <span class="loading-spotlight-inner">
+                    <span class="loading-spotlight-icon-wrap"></span>
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
           <webview
             id="browserFrame"
             class="browser-frame"
             allowpopups
           ></webview>
+          <div
+            id="toolsHubRoot"
+            class="tools-hub-root"
+            style="display: none"
+            aria-hidden="true"
+          ></div>
+          <div
+            id="networkWorkbenchRoot"
+            class="network-workbench-root"
+            style="display: none"
+            aria-hidden="true"
+          ></div>
+          <!-- Side panels (full webview overlay; open state = .side-panel--open) -->
+          <div class="side-panel" id="bookmarksPanel" aria-hidden="true">
+            <div class="side-panel-header">
+              <div class="side-panel-header-top">
+                <div class="side-panel-heading">
+                  <span class="side-panel-title">Bookmarks</span>
+                  <span class="side-panel-sub">Sites you saved</span>
+                </div>
+                <div class="side-panel-actions">
+                  <button
+                    class="icon-btn"
+                    id="importBookmarksBtn"
+                    title="Import from installed browsers"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                      <path
+                        d="M7 1v8M4 6l3 3 3-3"
+                        stroke="currentColor"
+                        stroke-width="1.4"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                      <path
+                        d="M2 11v1.5h10V11"
+                        stroke="currentColor"
+                        stroke-width="1.4"
+                        stroke-linecap="round"
+                      />
+                    </svg>
+                  </button>
+                  <button class="icon-btn" id="closeBookmarksBtn" title="Close">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <path
+                        d="M2 2L10 10M10 2L2 10"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div class="side-panel-search">
+                <div class="side-search-wrap">
+                  <span class="side-search-icon" aria-hidden="true">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                      <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.3" />
+                      <path d="M9 9L13 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+                    </svg>
+                  </span>
+                  <input
+                    type="text"
+                    id="bookmarkSearch"
+                    class="side-search-input"
+                    placeholder="Search bookmarks..."
+                    autocomplete="off"
+                  />
+                  <button class="side-search-clear" type="button" data-clear="bookmarkSearch" title="Clear search" aria-label="Clear search">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                      <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="side-panel-list" id="bookmarksList"></div>
+          </div>
+
+          <div class="side-panel" id="historyPanel" aria-hidden="true">
+            <div class="side-panel-header">
+              <div class="side-panel-header-top">
+                <div class="side-panel-heading">
+                  <span class="side-panel-title">History</span>
+                  <span class="side-panel-sub">Pages you visited</span>
+                </div>
+                <div class="side-panel-actions">
+                <button
+                  class="icon-btn"
+                  id="importHistoryBtn"
+                  title="Import from installed browsers"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path
+                      d="M7 1v8M4 6l3 3 3-3"
+                      stroke="currentColor"
+                      stroke-width="1.4"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                    <path
+                      d="M2 11v1.5h10V11"
+                      stroke="currentColor"
+                      stroke-width="1.4"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                </button>
+                <button
+                  class="icon-btn"
+                  id="clearHistoryBtn"
+                  title="Clear all history"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path
+                      d="M2 3.5h10M5 3.5V2.5C5 2 5.5 1.5 6 1.5h2c.5 0 1 .5 1 1v1M11.5 3.5l-.5 8c0 .5-.5 1-1 1H4c-.5 0-1-.5-1-1l-.5-8"
+                      stroke="currentColor"
+                      stroke-width="1.3"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
+                <button class="icon-btn" id="closeHistoryBtn" title="Close">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path
+                      d="M2 2L10 10M10 2L2 10"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                </button>
+                </div>
+              </div>
+              <div class="side-panel-search">
+                <div class="side-search-wrap">
+                  <span class="side-search-icon" aria-hidden="true">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                      <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.3" />
+                      <path d="M9 9L13 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+                    </svg>
+                  </span>
+                  <input
+                    type="text"
+                    id="historySearch"
+                    class="side-search-input"
+                    placeholder="Search history..."
+                    autocomplete="off"
+                  />
+                  <button class="side-search-clear" type="button" data-clear="historySearch" title="Clear search" aria-label="Clear search">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                      <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="side-panel-list" id="historyList"></div>
+          </div>
+
+          <div class="side-panel" id="passwordsPanel" aria-hidden="true">
+            <div class="side-panel-header">
+              <div class="side-panel-header-top">
+                <div class="side-panel-heading">
+                  <span class="side-panel-title">Passwords</span>
+                  <span class="side-panel-sub">Stored credentials</span>
+                </div>
+                <div class="side-panel-actions">
+                <button
+                  class="icon-btn"
+                  id="importPasswordsBtn"
+                  title="Import from installed browsers"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path
+                      d="M7 1v8M4 6l3 3 3-3"
+                      stroke="currentColor"
+                      stroke-width="1.4"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                    <path
+                      d="M2 11v1.5h10V11"
+                      stroke="currentColor"
+                      stroke-width="1.4"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                </button>
+                <button
+                  class="icon-btn"
+                  id="addPasswordBtn"
+                  title="Add password manually"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path
+                      d="M7 1v12M1 7h12"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                </button>
+                <button class="icon-btn" id="closePasswordsBtn" title="Close">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path
+                      d="M2 2L10 10M10 2L2 10"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                </button>
+                </div>
+              </div>
+              <div class="side-panel-search">
+                <div class="side-search-wrap">
+                  <span class="side-search-icon" aria-hidden="true">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                      <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.3" />
+                      <path d="M9 9L13 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+                    </svg>
+                  </span>
+                  <input
+                    type="text"
+                    id="passwordSearch"
+                    class="side-search-input"
+                    placeholder="Search passwords..."
+                    autocomplete="off"
+                  />
+                  <button class="side-search-clear" type="button" data-clear="passwordSearch" title="Clear search" aria-label="Clear search">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                      <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="pw-add-form" id="pwAddForm" style="display: none">
+              <input
+                type="text"
+                id="pwUrl"
+                class="side-search-input"
+                placeholder="Website URL"
+              />
+              <input
+                type="text"
+                id="pwUsername"
+                class="side-search-input"
+                placeholder="Username / Email"
+              />
+              <div class="pw-form-pass-row">
+                <input
+                  type="password"
+                  id="pwPassword"
+                  class="side-search-input"
+                  placeholder="Password"
+                />
+                <button class="pw-eye-btn" id="pwEyeBtn" title="Show/hide">ðŸ‘</button>
+              </div>
+              <div class="pw-form-actions">
+                <button class="modal-btn modal-btn-secondary" id="pwCancelBtn">
+                  Cancel
+                </button>
+                <button class="modal-btn modal-btn-primary" id="pwSaveBtn">
+                  Save
+                </button>
+              </div>
+            </div>
+            <div class="side-panel-list" id="passwordsList"></div>
+          </div>
+
           <!-- Error Page -->
           <div class="error-page" id="errorPage" style="display: none">
             <div class="error-content">
@@ -491,6 +864,7 @@
             class="side-panel-webview-shield"
             aria-hidden="true"
           ></div>
+          <div id="webviewOverlayHost" class="webview-overlay-host" aria-hidden="true"></div>
         </div>
 
         <!-- Status Bar -->
@@ -544,240 +918,7 @@
           </div>
           <!-- /browser-main-column -->
 
-          <!-- Side panels (positioned in browser-body-row; open state = .side-panel--open) -->
-          <div class="side-panel" id="bookmarksPanel" aria-hidden="true">
-            <div class="side-panel-header">
-              <div class="side-panel-heading">
-                <span class="side-panel-title">Bookmarks</span>
-                <span class="side-panel-sub">Sites you saved</span>
-              </div>
-              <div class="side-panel-actions">
-                <button
-                  class="icon-btn"
-                  id="importBookmarksBtn"
-                  title="Import from installed browsers"
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                    <path
-                      d="M7 1v8M4 6l3 3 3-3"
-                      stroke="currentColor"
-                      stroke-width="1.4"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                    <path
-                      d="M2 11v1.5h10V11"
-                      stroke="currentColor"
-                      stroke-width="1.4"
-                      stroke-linecap="round"
-                    />
-                  </svg>
-                </button>
-                <button class="icon-btn" id="closeBookmarksBtn" title="Close">
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <path
-                      d="M2 2L10 10M10 2L2 10"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linecap="round"
-                    />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <div class="side-panel-search">
-              <span class="side-search-icon" aria-hidden="true">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.3" />
-                  <path d="M9 9L13 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-                </svg>
-              </span>
-              <input
-                type="text"
-                id="bookmarkSearch"
-                class="side-search-input"
-                placeholder="Search bookmarks..."
-                autocomplete="off"
-              />
-            </div>
-            <div class="side-panel-list" id="bookmarksList"></div>
-          </div>
 
-          <div class="side-panel" id="historyPanel" aria-hidden="true">
-            <div class="side-panel-header">
-              <div class="side-panel-heading">
-                <span class="side-panel-title">History</span>
-                <span class="side-panel-sub">Pages you visited</span>
-              </div>
-              <div class="side-panel-actions">
-                <button
-                  class="icon-btn"
-                  id="importHistoryBtn"
-                  title="Import from installed browsers"
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                    <path
-                      d="M7 1v8M4 6l3 3 3-3"
-                      stroke="currentColor"
-                      stroke-width="1.4"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                    <path
-                      d="M2 11v1.5h10V11"
-                      stroke="currentColor"
-                      stroke-width="1.4"
-                      stroke-linecap="round"
-                    />
-                  </svg>
-                </button>
-                <button
-                  class="icon-btn"
-                  id="clearHistoryBtn"
-                  title="Clear all history"
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                    <path
-                      d="M2 3.5h10M5 3.5V2.5C5 2 5.5 1.5 6 1.5h2c.5 0 1 .5 1 1v1M11.5 3.5l-.5 8c0 .5-.5 1-1 1H4c-.5 0-1-.5-1-1l-.5-8"
-                      stroke="currentColor"
-                      stroke-width="1.3"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
-                </button>
-                <button class="icon-btn" id="closeHistoryBtn" title="Close">
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <path
-                      d="M2 2L10 10M10 2L2 10"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linecap="round"
-                    />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <div class="side-panel-search">
-              <span class="side-search-icon" aria-hidden="true">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.3" />
-                  <path d="M9 9L13 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-                </svg>
-              </span>
-              <input
-                type="text"
-                id="historySearch"
-                class="side-search-input"
-                placeholder="Search history..."
-                autocomplete="off"
-              />
-            </div>
-            <div class="side-panel-list" id="historyList"></div>
-          </div>
-
-          <div class="side-panel" id="passwordsPanel" aria-hidden="true">
-            <div class="side-panel-header">
-              <div class="side-panel-heading">
-                <span class="side-panel-title">Passwords</span>
-                <span class="side-panel-sub">Stored credentials</span>
-              </div>
-              <div class="side-panel-actions">
-                <button
-                  class="icon-btn"
-                  id="importPasswordsBtn"
-                  title="Import from installed browsers"
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                    <path
-                      d="M7 1v8M4 6l3 3 3-3"
-                      stroke="currentColor"
-                      stroke-width="1.4"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                    <path
-                      d="M2 11v1.5h10V11"
-                      stroke="currentColor"
-                      stroke-width="1.4"
-                      stroke-linecap="round"
-                    />
-                  </svg>
-                </button>
-                <button
-                  class="icon-btn"
-                  id="addPasswordBtn"
-                  title="Add password manually"
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                    <path
-                      d="M7 1v12M1 7h12"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linecap="round"
-                    />
-                  </svg>
-                </button>
-                <button class="icon-btn" id="closePasswordsBtn" title="Close">
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <path
-                      d="M2 2L10 10M10 2L2 10"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linecap="round"
-                    />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <div class="side-panel-search">
-              <span class="side-search-icon" aria-hidden="true">
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.3" />
-                  <path d="M9 9L13 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-                </svg>
-              </span>
-              <input
-                type="text"
-                id="passwordSearch"
-                class="side-search-input"
-                placeholder="Search passwords..."
-                autocomplete="off"
-              />
-            </div>
-            <div class="pw-add-form" id="pwAddForm" style="display: none">
-              <input
-                type="text"
-                id="pwUrl"
-                class="side-search-input"
-                placeholder="Website URL"
-              />
-              <input
-                type="text"
-                id="pwUsername"
-                class="side-search-input"
-                placeholder="Username / Email"
-              />
-              <div class="pw-form-pass-row">
-                <input
-                  type="password"
-                  id="pwPassword"
-                  class="side-search-input"
-                  placeholder="Password"
-                />
-                <button class="pw-eye-btn" id="pwEyeBtn" title="Show/hide">ðŸ‘</button>
-              </div>
-              <div class="pw-form-actions">
-                <button class="modal-btn modal-btn-secondary" id="pwCancelBtn">
-                  Cancel
-                </button>
-                <button class="modal-btn modal-btn-primary" id="pwSaveBtn">
-                  Save
-                </button>
-              </div>
-            </div>
-            <div class="side-panel-list" id="passwordsList"></div>
-          </div>
         </div>
         <!-- /browser-body-row -->
 
@@ -957,20 +1098,7 @@
                   <div class="tools-panel-header">
                     <span>Quick Commands</span>
                   </div>
-                  <div class="quick-list">
-                    <button class="qc-btn" data-command="navigate">
-                      Navigate
-                    </button>
-                    <button class="qc-btn" data-command="fill">
-                      Fill Form
-                    </button>
-                    <button class="qc-btn" data-command="click">Click</button>
-                    <button class="qc-btn" data-command="screenshot">
-                      Screenshot
-                    </button>
-                    <button class="qc-btn" data-command="scroll">Scroll</button>
-                    <button class="qc-btn" data-command="help">Help</button>
-                  </div>
+                  <div class="quick-list"></div>
                 </div>
               </div>
             </div>
@@ -1291,7 +1419,54 @@
     <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• IMPORT OVERLAY â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
     <div class="import-overlay" id="importOverlay" style="display: none">
       <div class="import-box">
-        <div class="loading-ring"></div>
+        <div class="loading-spotlight-sky loading-spotlight-sky--compact" aria-hidden="true"></div>
+        <div class="loading-spotlight-grid loading-spotlight-grid--compact" aria-hidden="true"></div>
+        <div class="loading-spotlight-veil loading-spotlight-veil--compact" aria-hidden="true"></div>
+        <div class="loading-spotlight loading-spotlight--compact" role="status" aria-label="Scanning installed browsers">
+          <div class="loading-spotlight-glow" aria-hidden="true"></div>
+          <div class="loading-spotlight-stage">
+            <div class="loading-spotlight-beat">
+              <span class="loading-spotlight-inner">
+                <span class="loading-spotlight-icon-wrap"></span>
+              </span>
+            </div>
+            <div class="loading-spotlight-beat">
+              <span class="loading-spotlight-inner">
+                <span class="loading-spotlight-icon-wrap"></span>
+              </span>
+            </div>
+            <div class="loading-spotlight-beat">
+              <span class="loading-spotlight-inner">
+                <span class="loading-spotlight-icon-wrap"></span>
+              </span>
+            </div>
+            <div class="loading-spotlight-beat">
+              <span class="loading-spotlight-inner">
+                <span class="loading-spotlight-icon-wrap"></span>
+              </span>
+            </div>
+            <div class="loading-spotlight-beat">
+              <span class="loading-spotlight-inner">
+                <span class="loading-spotlight-icon-wrap"></span>
+              </span>
+            </div>
+            <div class="loading-spotlight-beat">
+              <span class="loading-spotlight-inner">
+                <span class="loading-spotlight-icon-wrap"></span>
+              </span>
+            </div>
+            <div class="loading-spotlight-beat">
+              <span class="loading-spotlight-inner">
+                <span class="loading-spotlight-icon-wrap"></span>
+              </span>
+            </div>
+            <div class="loading-spotlight-beat">
+              <span class="loading-spotlight-inner">
+                <span class="loading-spotlight-icon-wrap"></span>
+              </span>
+            </div>
+          </div>
+        </div>
         <p>Scanning installed browsers...</p>
       </div>
     </div>

@@ -10,7 +10,14 @@ export type AutomationCommand =
   | { kind: "action"; op: "goto"; url: string }
   | { kind: "action"; op: "click"; target: string }
   | { kind: "action"; op: "fill"; selector: string; value: string }
-  | { kind: "action"; op: "type"; text: string }
+  | { kind: "action"; op: "set_date"; target: string; date: string }
+  | {
+      kind: "action";
+      op: "type";
+      text: string;
+      /** Optional: target a specific element (type into). If absent, uses focused element. */
+      selector?: string;
+    }
   | { kind: "action"; op: "scroll"; direction: "up" | "down"; amount?: number }
   | { kind: "action"; op: "select"; selector: string; by: "label" | "value" | "index"; value: string | number }
   | { kind: "action"; op: "toggle_checkbox"; selector: string; checked?: boolean }
@@ -26,6 +33,8 @@ export type AutomationCommand =
   | { kind: "action"; op: "reload" }
   | { kind: "action"; op: "back" }
   | { kind: "action"; op: "forward" }
+  | { kind: "action"; op: "nav"; direction: "back" | "forward" | "reload" }
+  | { kind: "action"; op: "tab"; action: "cycle" }
   | { kind: "action"; op: "screenshot"; mode?: "viewport" | "full" }
   | { kind: "info"; op: "get_url" }
   | { kind: "info"; op: "get_title" }

@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactElement } from "react";
 import { createPortal } from "react-dom";
-import { useUiStore } from "../state/ui-store";
 
 const POLL_MS = 200;
 const HOST_WAIT_MS = 1200;
@@ -8,8 +7,6 @@ const HOST_RETRY_MS = 32;
 
 export function NavChromeBridge(): ReactElement | null {
   const bridge = typeof window !== "undefined" ? window.legacyBrowser : undefined;
-  const workbenchOpen = useUiStore((s) => s.requestWorkbenchOpen);
-  const toggleRequestWorkbench = useUiStore((s) => s.toggleRequestWorkbench);
   const [navHost, setNavHost] = useState<HTMLElement | null>(null);
   const [findHost, setFindHost] = useState<HTMLElement | null>(null);
   const [nav, setNav] = useState<LegacyNavState | null>(null);
@@ -243,25 +240,6 @@ export function NavChromeBridge(): ReactElement | null {
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
             <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.5" />
             <path d="M10 10L14 14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          className={"nav-btn" + (workbenchOpen ? " nav-btn-workbench-active" : "")}
-          title="Request workbench — HTTP templates and replay"
-          aria-expanded={workbenchOpen}
-          aria-pressed={workbenchOpen}
-          onClick={() => toggleRequestWorkbench()}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-            <path
-              d="M3 6.5h10M3 9.5h6"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-            <rect x="2" y="3" width="12" height="10" rx="2" stroke="currentColor" strokeWidth="1.5" />
-            <path d="M11 7l2 2-2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
         <button type="button" className="nav-btn" title="Zoom Out" onClick={() => bridge.zoomOut?.()}>

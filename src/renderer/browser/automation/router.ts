@@ -2,8 +2,10 @@ import type { AutomationCommand, AutomationResult } from "../../../shared/automa
 import {
   domClick,
   domFill,
+  domTypeHuman,
   domPressKey,
   domSelectBy,
+  domSetDate,
   domToggleCheckbox,
   domToggleRadio,
   domWaitForSelector,
@@ -13,9 +15,19 @@ import { FORM_SCHEMA_SCRIPT, INTERACTABLES_SCRIPT, VIEWPORT_MARKDOWN_SCRIPT } fr
 
 export interface TabInfo {
   id: number;
+  publicId?: number;
   title: string;
   url: string;
 }
+
+type InteractableRow = {
+  kind?: string;
+  label?: string;
+  selector?: string;
+  role?: string;
+  type?: string;
+  suggestedCommand?: string;
+};
 
 export interface AutomationKernelContext {
   getBrowserFrame(): WebviewLike | null;
@@ -55,6 +67,59 @@ function finish(
     timings: partial.timings,
     retryable: partial.retryable,
   };
+}
+
+function mdEscapePipes(s: string): string {
+  return s.replace(/\|/g, "\\|").replace(/\n/g, " ");
+}
+
+function mdTable(headers: string[], rows: Array<Array<string | number | boolean>>): string {
+  const h = `| ${headers.map((x) => mdEscapePipes(String(x))).join(" | ")} |`;
+  const sep = `| ${headers.map(() => "---").join(" | ")} |`;
+  const body = rows
+    .map((r) => `| ${r.map((c) => mdEscapePipes(String(c))).join(" | ")} |`)
+    .join("\n");
+  return [h, sep, body].filter(Boolean).join("\n");
+}
+
+function toIsoDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function parseFriendlyDateToIso(input: string): string | null {
+  const t = (input || "").trim();
+  if (!t) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const low = t.toLowerCase();
+  if (low === "today") return toIsoDate(new Date());
+  if (low === "tomorrow") {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return toIsoDate(d);
+  }
+  // dd/mm/yyyy or mm/dd/yyyy
+  const m1 = t.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m1) {
+    const a = Number(m1[1]);
+    const b = Number(m1[2]);
+    const y = Number(m1[3]);
+    let mm = a;
+    let dd = b;
+    // If first part > 12, treat as DD/MM
+    if (a > 12) {
+      dd = a;
+      mm = b;
+    }
+    const d = new Date(y, mm - 1, dd);
+    if (d.getFullYear() === y && d.getMonth() === mm - 1 && d.getDate() === dd) return toIsoDate(d);
+  }
+  // Let Date.parse handle: "Mar 25 2026", "March 25, 2026", etc.
+  const d = new Date(t);
+  if (!Number.isNaN(d.getTime())) return toIsoDate(d);
+  return null;
 }
 
 export function tryParseJsonCommand(text: string): AutomationCommand | null {
@@ -117,17 +182,50 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
         }
         case "get_interactables": {
           const lim = cmd.limit ?? 40;
-          const r = (await wv!.executeJavaScript(INTERACTABLES_SCRIPT)) as { items: unknown[] };
+          const r = (await wv!.executeJavaScript(INTERACTABLES_SCRIPT)) as { items: InteractableRow[] };
           const items = (r.items || []).slice(0, lim);
-          return wrap(cmd.op, finish(cmd.op, true, { kind: "info", message: JSON.stringify(items, null, 2), data: items }));
+          const rows = items.slice(0, 25).map((it) => [
+            it.kind ?? "",
+            it.label ?? "",
+            it.selector ?? "",
+            [it.role ? `role=${it.role}` : "", it.type ? `type=${it.type}` : ""].filter(Boolean).join(" "),
+            it.suggestedCommand ?? "",
+          ]);
+          return wrap(
+            cmd.op,
+            finish(cmd.op, true, {
+              kind: "info",
+              message:
+                "**Interactables**\n\n" +
+                mdTable(["Kind", "Label", "Selector", "Role/Type", "Suggested"], rows) +
+                "\n\nFull JSON in `data`.",
+              data: { items },
+            }),
+          );
         }
         case "list_tabs": {
           const tabs = ctx.getTabs();
-          const lines = tabs.map((t) => `- **${t.id}** ${t.title} — ${t.url}`);
-          return wrap(cmd.op, finish(cmd.op, true, { kind: "info", message: lines.join("\n"), data: { tabs } }));
+          const rows = tabs.map((t) => [
+            String(t.publicId ?? ""),
+            ctx.getActiveTabId() === t.id ? "✓" : "",
+            t.title || "",
+            t.url || "",
+          ]);
+          return wrap(
+            cmd.op,
+            finish(cmd.op, true, {
+              kind: "info",
+              message:
+                "**Tabs**\n\n" +
+                mdTable(["TabId", "Active", "Title", "URL"], rows) +
+                "\n\nUse `switch tab <TabId>` (5 digits).",
+              data: { tabs },
+            }),
+          );
         }
         default:
-          return wrap(cmd.op, finish(cmd.op, false, { kind: "info", error: "unknown info op" }));
+          // Exhaustive by type; keep a safe fallback for runtime unknowns.
+          return wrap("unknown_info", finish("unknown_info", false, { kind: "info", error: "unknown info op" }));
       }
     }
 
@@ -135,6 +233,40 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
       case "goto":
         ctx.navigateTo(cmd.url);
         return wrap(cmd.op, finish(cmd.op, true, { message: `Navigating to **${ctx.resolveInput(cmd.url) || cmd.url}**` }));
+      case "nav": {
+        const d = cmd.direction;
+        if (d === "back") {
+          ctx.goBack();
+          return wrap(cmd.op, finish(cmd.op, true, { message: "Going back." }));
+        }
+        if (d === "forward") {
+          ctx.goForward();
+          return wrap(cmd.op, finish(cmd.op, true, { message: "Going forward." }));
+        }
+        ctx.reload();
+        return wrap(cmd.op, finish(cmd.op, true, { message: "Reloading…" }));
+      }
+      case "tab": {
+        if (cmd.action !== "cycle") {
+          return wrap(cmd.op, finish(cmd.op, false, { message: "Unknown tab action." }));
+        }
+        const tabsBefore = ctx.getTabs();
+        const beforeId = ctx.getActiveTabId();
+        if (!tabsBefore.length || beforeId == null) {
+          return wrap(cmd.op, finish(cmd.op, false, { message: "No active tab." }));
+        }
+        ctx.createTab();
+        const createdId = ctx.getActiveTabId();
+        const tabsAfterCreate = ctx.getTabs();
+        if (tabsAfterCreate.some((t2) => t2.id === beforeId)) ctx.switchTab(beforeId);
+        if (createdId != null && createdId !== beforeId) {
+          const tabsNow = ctx.getTabs();
+          if (tabsNow.length > 1 && tabsNow.some((t2) => t2.id === createdId)) {
+            ctx.closeTabById(createdId);
+          }
+        }
+        return wrap(cmd.op, finish(cmd.op, true, { message: "Tab cycle complete." }));
+      }
       case "click": {
         if (!wv) return wrap(cmd.op, finish(cmd.op, false, { error: "No webview", message: "No page to automate." }));
         const r = await domClick(wv, cmd.target);
@@ -155,22 +287,53 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
           }),
         );
       }
+      case "set_date": {
+        if (!wv) return wrap(cmd.op, finish(cmd.op, false, { error: "No webview", message: "No page to automate." }));
+        const iso = parseFriendlyDateToIso(cmd.date);
+        if (!iso) return wrap(cmd.op, finish(cmd.op, false, { message: "Invalid date. Try `Mar 25 2026` or `2026-03-25`." }));
+        const r = await domSetDate(wv, cmd.target, iso);
+        if (r.success) {
+          return wrap(cmd.op, finish(cmd.op, true, { message: `Date set to **${iso}** (${r.mode || "ok"}).` }));
+        }
+        return wrap(
+          cmd.op,
+          finish(cmd.op, false, {
+            message:
+              r.error === "calendar_day_not_found"
+                ? `Could not pick the day automatically. Try running **interactables** and click the day button manually.`
+                : `Could not set date (${r.error || "failed"}).`,
+          }),
+        );
+      }
       case "type": {
         if (!wv) return wrap(cmd.op, finish(cmd.op, false, { error: "No webview", message: "No page to automate." }));
-        const result = await wv.executeJavaScript(`
-          (function(){var el=document.activeElement;if(!el||el===document.body)return{success:false};
-          var val=${JSON.stringify(cmd.text)};
-          if(el.isContentEditable){el.textContent=val;}
-          else{var p=el.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype;
-          var s=Object.getOwnPropertyDescriptor(p,'value');if(s)s.set.call(el,val);else el.value=val;}
-          ['input','change'].forEach(function(t){el.dispatchEvent(new Event(t,{bubbles:true}));});
-          return{success:true,tag:el.tagName.toLowerCase()};})()
-        `);
-        const o = result as { success: boolean; tag?: string };
+        if (!cmd.selector || !cmd.selector.trim()) {
+          return wrap(
+            cmd.op,
+            finish(cmd.op, false, {
+              message: "Type requires a selector. Use **type into <selector> with <text>**.",
+            }),
+          );
+        }
+        const o = await domTypeHuman(wv, cmd.selector ?? null, cmd.text, {
+          minDelayMs: 28,
+          maxDelayMs: 120,
+          mistakeRate: 0.06,
+        });
         return wrap(
           cmd.op,
           finish(cmd.op, o.success, {
-            message: o.success ? `Typed into **${o.tag}**` : "No focused element — use **fill** with a selector.",
+            message: o.success
+              ? cmd.selector
+                ? `Typed into **${cmd.selector}** (${o.tag})`
+                : `Typed into **${o.tag}**`
+              : o.error === "no_focus"
+                ? "No focused element — use **type into <selector> with <text>**."
+                : o.error === "not_found"
+                  ? `Field not found: **${cmd.selector || ""}**`
+                  : o.error === "not_text_input"
+                    ? "Focused element is not a text input."
+                    : "Type failed.",
           }),
         );
       }
@@ -206,7 +369,6 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
         );
       case "submit": {
         if (!wv) return wrap(cmd.op, finish(cmd.op, false, { error: "No webview", message: "No page to automate." }));
-        const sel = cmd.selector || "form";
         await wv.executeJavaScript(`
           (function(){
             var el = ${cmd.selector ? `document.querySelector(${JSON.stringify(cmd.selector)})` : "document.querySelector('form')"};
@@ -222,26 +384,59 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
       }
       case "switch_tab": {
         const tabs = ctx.getTabs();
-        let id: number | undefined = cmd.tabId;
+        // cmd.tabId is treated as the public 5-digit TabId for user-facing commands.
+        let id: number | undefined;
+        let publicId: number | undefined = cmd.tabId;
+        if (publicId != null) {
+          const m = tabs.find((t) => Number(t.publicId) === Number(publicId));
+          if (m) id = m.id;
+        }
         if (cmd.index != null) {
           const i = cmd.index;
-          if (i >= 0 && i < tabs.length) id = tabs[i].id;
+          if (i >= 0 && i < tabs.length) {
+            id = tabs[i].id;
+            publicId = tabs[i].publicId;
+          }
         }
         if (!id && cmd.titleContains) {
           const m = tabs.find((t) => t.title.toLowerCase().includes(cmd.titleContains!.toLowerCase()));
-          if (m) id = m.id;
+          if (m) {
+            id = m.id;
+            publicId = m.publicId;
+          }
         }
         if (id != null) {
           ctx.switchTab(id);
-          return wrap(cmd.op, finish(cmd.op, true, { message: `Switched to tab **${id}**.` }));
+          const t = tabs.find((x) => x.id === id);
+          return wrap(
+            cmd.op,
+            finish(cmd.op, true, {
+              message: `Switched to tab **${publicId ?? ""}**${t?.title ? ` — **${t.title}**` : ""}.`,
+            }),
+          );
         }
         return wrap(cmd.op, finish(cmd.op, false, { message: "Tab not found." }));
       }
       case "close_tab": {
-        const id = cmd.tabId ?? ctx.getActiveTabId();
+        const tabs = ctx.getTabs();
+        let id: number | null | undefined = ctx.getActiveTabId();
+        let publicId: number | undefined;
+        if (cmd.tabId != null) {
+          // cmd.tabId is treated as public 5-digit TabId
+          const m = tabs.find((t) => Number(t.publicId) === Number(cmd.tabId));
+          if (m) {
+            id = m.id;
+            publicId = m.publicId;
+          } else {
+            id = null;
+          }
+        } else {
+          const cur = tabs.find((t) => t.id === id);
+          publicId = cur?.publicId;
+        }
         if (id != null) {
           ctx.closeTabById(id);
-          return wrap(cmd.op, finish(cmd.op, true, { message: `Closed tab **${id}**.` }));
+          return wrap(cmd.op, finish(cmd.op, true, { message: `Closed tab **${publicId ?? ""}**.` }));
         }
         return wrap(cmd.op, finish(cmd.op, false, { message: "No tab to close." }));
       }
@@ -290,6 +485,45 @@ export async function dispatchAutomationLine(text: string, ctx: AutomationKernel
   const t = text.toLowerCase().trim();
   const raw = text.trim();
 
+  if (/^tab\s+(cycle|demo)$/i.test(raw)) {
+    const tabsBefore = ctx.getTabs();
+    const beforeId = ctx.getActiveTabId();
+    if (!tabsBefore.length || beforeId == null) {
+      return finish("tab", false, { kind: "action", op: "tab", message: "No active tab." });
+    }
+
+    // 1) New tab (switches active tab in kernel)
+    ctx.createTab();
+    const createdId = ctx.getActiveTabId();
+
+    // 2) Switch back to the original tab (if still present)
+    const tabsAfterCreate = ctx.getTabs();
+    const stillHasOriginal = tabsAfterCreate.some((t2) => t2.id === beforeId);
+    if (stillHasOriginal) ctx.switchTab(beforeId);
+
+    // 3) Close the created tab (safe: avoids closing the user's original tab)
+    if (createdId != null && createdId !== beforeId) {
+      const tabsNow = ctx.getTabs();
+      if (tabsNow.length > 1 && tabsNow.some((t2) => t2.id === createdId)) {
+        ctx.closeTabById(createdId);
+      }
+    }
+
+    return finish("tab", true, {
+      kind: "action",
+      op: "tab",
+      message: "Tab cycle: new tab → switch back → close created tab.",
+    });
+  }
+
+  const navMatch = raw.match(/^nav\\s+(back|forward|reload)$/i);
+  if (navMatch) {
+    const dir = navMatch[1].toLowerCase() as "back" | "forward" | "reload";
+    if (dir === "back") return runAutomationCommand({ kind: "action", op: "back" }, ctx);
+    if (dir === "forward") return runAutomationCommand({ kind: "action", op: "forward" }, ctx);
+    return runAutomationCommand({ kind: "action", op: "reload" }, ctx);
+  }
+
   if (t.startsWith("go to ") || t.startsWith("navigate to ") || t.startsWith("open ")) {
     const u = raw.replace(/^(go to|navigate to|open)\s+/i, "").trim();
     return runAutomationCommand({ kind: "action", op: "goto", url: u }, ctx);
@@ -305,16 +539,36 @@ export async function dispatchAutomationLine(text: string, ctx: AutomationKernel
   if (clickMatch) {
     return runAutomationCommand({ kind: "action", op: "click", target: clickMatch[1].trim() }, ctx);
   }
-  const fillMatch = raw.match(/^(?:fill|type into|type in)\s+(.+?)\s+with\s+(.+)$/i);
+  const fillMatch = raw.match(/^(?:fill)\s+(.+?)\s+with\s+(.+)$/i);
   if (fillMatch) {
     return runAutomationCommand(
       { kind: "action", op: "fill", selector: fillMatch[1].trim(), value: fillMatch[2].trim() },
       ctx,
     );
   }
+  const typeIntoMatch = raw.match(/^(?:type into|type in)\s+(.+?)\s+with\s+(.+)$/i);
+  if (typeIntoMatch) {
+    const selector = typeIntoMatch[1].trim();
+    let typeText = typeIntoMatch[2].trim();
+    if (typeText.length >= 2 && typeText.startsWith('"') && typeText.endsWith('"')) {
+      typeText = typeText.slice(1, -1).replace(/\\"/g, '"');
+    }
+    return runAutomationCommand({ kind: "action", op: "type", selector, text: typeText }, ctx);
+  }
+  const dateMatch = raw.match(/^date\s+(.+?)\s*=\s*(.+)$/i);
+  if (dateMatch) {
+    return runAutomationCommand(
+      { kind: "action", op: "set_date", target: dateMatch[1].trim(), date: dateMatch[2].trim() },
+      ctx,
+    );
+  }
   const typeMatch = raw.match(/^type\s+(.+)$/i);
   if (typeMatch) {
-    return runAutomationCommand({ kind: "action", op: "type", text: typeMatch[1].trim() }, ctx);
+    return finish("type", false, {
+      kind: "action",
+      op: "type",
+      message: "Type requires a selector. Use **type into <selector> with <text>**.",
+    });
   }
   if (t === "get text" || t === "read page" || t === "page text") {
     return runAutomationCommand({ kind: "info", op: "get_page_text", maxChars: 500 }, ctx);
@@ -324,6 +578,9 @@ export async function dispatchAutomationLine(text: string, ctx: AutomationKernel
   }
   if (t === "form schema" || t === "get form schema") {
     return runAutomationCommand({ kind: "info", op: "get_form_schema" }, ctx);
+  }
+  if (t === "interactables" || t === "get interactables") {
+    return runAutomationCommand({ kind: "info", op: "get_interactables", limit: 40 }, ctx);
   }
   if (t === "list tabs" || t === "tabs") {
     return runAutomationCommand({ kind: "info", op: "list_tabs" }, ctx);
@@ -358,20 +615,54 @@ export async function dispatchAutomationLine(text: string, ctx: AutomationKernel
   if (t === "new tab") {
     return runAutomationCommand({ kind: "action", op: "new_tab" }, ctx);
   }
-  const switchTabMatch = raw.match(/^switch\s+tab\s+(\d+)$/i);
+  if (t === "close tab") {
+    return runAutomationCommand({ kind: "action", op: "close_tab" }, ctx);
+  }
+  const closeTabMatch = raw.match(/^close\s+tab\s+(\d{5})$/i);
+  if (closeTabMatch) {
+    return runAutomationCommand({ kind: "action", op: "close_tab", tabId: Number(closeTabMatch[1]) }, ctx);
+  }
+  const switchTabMatch = raw.match(/^switch\s+tab\s+(\d{5})$/i);
   if (switchTabMatch) {
     return runAutomationCommand({ kind: "action", op: "switch_tab", tabId: Number(switchTabMatch[1]) }, ctx);
+  }
+  const waitMatch = raw.match(/^wait\s+(\d+)\s*(ms|s)?$/i);
+  if (waitMatch) {
+    const n = Number(waitMatch[1]);
+    const unit = (waitMatch[2] || "ms").toLowerCase();
+    const ms = unit === "s" ? n * 1000 : n;
+    return runAutomationCommand({ kind: "action", op: "wait_ms", ms }, ctx);
+  }
+  if (t === "submit") {
+    return runAutomationCommand({ kind: "action", op: "submit" }, ctx);
+  }
+  const submitMatch = raw.match(/^submit\s+(.+)$/i);
+  if (submitMatch) {
+    return runAutomationCommand({ kind: "action", op: "submit", selector: submitMatch[1].trim() }, ctx);
   }
   if (t === "help") {
     return finish("help", true, {
       kind: "info",
       op: "help",
       message:
-        "Commands:\n\n" +
-        "• **go to [url]**\n• **click [selector or text]**\n• **fill [selector] with [value]**\n• **type [text]** (focused element)\n" +
-        "• **scroll up/down**\n• **screenshot**\n• **get text** / **viewport md** / **form schema**\n• **list tabs** / **switch tab [id]**\n" +
-        "• **url** / **title**\n• **reload** / **back** / **forward**\n• **zoom in/out/reset**\n• **new tab**\n\n" +
-        "Or send JSON: `{\"kind\":\"info\",\"op\":\"get_viewport_md\"}`",
+        "## Help\n\n" +
+        "### Navigation\n" +
+        "- `go to https://example.com`\n- `back`, `forward`, `reload`\n- `nav back|forward|reload`\n\n" +
+        "### Tabs\n" +
+        "- `list tabs` (returns a table with 5-digit TabIds)\n- `switch tab 24532`\n- `new tab`\n- `close tab` / `close tab 24532`\n\n" +
+        "### Page actions\n" +
+        "- `click <selector or text>`\n- `fill <selector> with <value>`\n- `type <text>` (focused element)\n- `submit` / `submit <selector>`\n- `scroll up` / `scroll down`\n- `screenshot`\n- `wait 1200ms` / `wait 2s`\n\n" +
+        "### Info / extraction\n" +
+        "- `url`, `title`\n- `viewport md`\n- `form schema`\n- `interactables`\n\n" +
+        "### Date picker\n" +
+        "- `date <selector_or_label> = Mar 25 2026`\n- `date <selector_or_label> = 2026-03-25`\n\n" +
+        "### Tools (UI toggles)\n" +
+        "Use the **Tools** menu (or Quick) to enable:\n" +
+        "- **Picker (Any)** (any element)\n" +
+        "- **Picker (Interactive)** (snaps to clickable/input)\n" +
+        "- **Element Screenshot**\n\n" +
+        "### JSON mode\n" +
+        "You can also send JSON like: `{\"kind\":\"info\",\"op\":\"get_viewport_md\"}`",
     });
   }
 

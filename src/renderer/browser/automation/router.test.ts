@@ -13,8 +13,8 @@ function ctx(): AutomationKernelContext {
     switchTab: () => {},
     closeTabById: () => {},
     getTabs: () => [
-      { id: 1, title: "One", url: "https://a.example" },
-      { id: 2, title: "Two", url: "https://b.example" },
+      { id: 1, publicId: 24532, title: "One", url: "https://a.example" },
+      { id: 2, publicId: 15638, title: "Two", url: "https://b.example" },
     ],
     getActiveTabId: () => 1,
     applyZoom: () => {},
@@ -27,7 +27,8 @@ describe("automation router", () => {
   it("dispatches list tabs info", async () => {
     const r = await dispatchAutomationLine("list tabs", ctx());
     expect(r.success).toBe(true);
-    expect(String(r.message)).toContain("**1**");
+    expect(String(r.message)).toContain("| TabId | Active | Title | URL |");
+    expect(String(r.message)).toContain("24532");
   });
 
   it("parses JSON command", async () => {
@@ -44,14 +45,14 @@ describe("automation router", () => {
     expect(r.success).toBe(false);
   });
 
-  it("switches tab by id", async () => {
+  it("switches tab by public id", async () => {
     let switched = 0;
     const c = ctx();
     c.switchTab = (id) => {
       switched = id;
     };
     const r = await runAutomationCommand(
-      { kind: "action", op: "switch_tab", tabId: 2 },
+      { kind: "action", op: "switch_tab", tabId: 15638 },
       c,
     );
     expect(r.success).toBe(true);

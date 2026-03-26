@@ -1,6 +1,10 @@
 // @ts-nocheck
 /* eslint-disable -- legacy kernel port from renderer.js; refactor into modules incrementally */
 import { dispatchAutomationLine, runAutomationCommand } from "./automation/router";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
+import { SPOTLIGHT_ICON_SVGS } from "../shared/spotlightIconSvgs";
+import { QUICK_COMMAND_ENTRIES } from "../shared/quick-command-entries";
 
 /**
  * Browser kernel: tab/webview/profile/chat/tools. Call initBrowserKernel() after the shell DOM
@@ -50,11 +54,55 @@ let lastFindQuery = "";
 let tabs = [];
 let activeTabId = null;
 let tabCounter = 0;
+
+function generatePublicTabId() {
+  // 5-digit, human-friendly, no leading zeros.
+  // Keep unique among currently-open tabs.
+  let n = 0;
+  for (let i = 0; i < 50; i++) {
+    n = Math.floor(10000 + Math.random() * 90000);
+    if (!tabs.some((t) => String(t.publicId) === String(n))) return n;
+  }
+  // Fallback: deterministic-ish from time; still 5 digits.
+  return Number(String(Date.now()).slice(-5));
+}
 let zoomLevel = parseFloat(localStorage.getItem("zoomLevel") ?? "-1");
 let isLoading = false;
 let loadingTimer = null;
 let findActive = false;
-let homePage = localStorage.getItem("homePage") || "https://www.duckduckgo.com";
+function normalizeHomePageUrl(stored) {
+  const fallback = "https://duckduckgo.com";
+  const s = (stored || "").trim();
+  if (!s) return fallback;
+  try {
+    const u = new URL(s);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return fallback;
+    return u.href;
+  } catch {
+    return fallback;
+  }
+}
+
+let homePage = normalizeHomePageUrl(localStorage.getItem("homePage"));
+
+let profileGateBackdropOn = false;
+
+function setProfileGateBackdrop(on) {
+  profileGateBackdropOn = !!on;
+  if (browserFrame) {
+    browserFrame.style.opacity = profileGateBackdropOn ? "0" : "";
+  }
+  if (loadingOverlay) {
+    if (profileGateBackdropOn) {
+      const st = loadingOverlay.querySelector(".loading-spotlight-stage");
+      if (st) shuffleLoadingSpotlightStage(st);
+      loadingOverlay.style.display = "flex";
+    } else {
+      // If an actual navigation load is happening, keep the overlay managed by setLoading().
+      if (!isLoading) loadingOverlay.style.display = "none";
+    }
+  }
+}
 
 // ── DOM Refs (re-read after shell reinject / React StrictMode remount) ──
 let tabScrollArea;
@@ -82,7 +130,6 @@ let historyBtn;
 let settingsPanel;
 let settingsOverlay;
 let closeSettingsBtn;
-let loadingBar;
 let loadingOverlay;
 let errorPage;
 let errorDesc;
@@ -127,6 +174,34 @@ let firefoxPreview;
 let skipImportBtn;
 let importOptionBtns;
 
+function hydrateLoadingSpotlightStage(stageEl) {
+  if (!stageEl) return;
+  const beats = stageEl.querySelectorAll(".loading-spotlight-beat");
+  beats.forEach((beat, i) => {
+    const wrap = beat.querySelector(".loading-spotlight-icon-wrap");
+    if (wrap && SPOTLIGHT_ICON_SVGS[i]) wrap.innerHTML = SPOTLIGHT_ICON_SVGS[i];
+  });
+}
+
+function shuffleLoadingSpotlightStage(stage) {
+  if (!stage) return;
+  const beats = Array.from(stage.querySelectorAll(".loading-spotlight-beat"));
+  for (let i = beats.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [beats[i], beats[j]] = [beats[j], beats[i]];
+  }
+  beats.forEach((b) => stage.appendChild(b));
+}
+
+function hydrateLoadingSpotlightShellStages() {
+  hydrateLoadingSpotlightStage(
+    document.querySelector("#loadingOverlay .loading-spotlight-stage"),
+  );
+  hydrateLoadingSpotlightStage(
+    document.querySelector("#importOverlay .loading-spotlight-stage"),
+  );
+}
+
 function refreshDomRefsFromDocument() {
   tabScrollArea = document.getElementById("tabScrollArea");
   tabBarEl = document.getElementById("tabBar");
@@ -153,7 +228,6 @@ function refreshDomRefsFromDocument() {
   settingsPanel = document.getElementById("settingsPanel");
   settingsOverlay = document.getElementById("settingsOverlay");
   closeSettingsBtn = document.getElementById("closeSettingsBtn");
-  loadingBar = document.getElementById("loadingBar");
   loadingOverlay = document.getElementById("loadingOverlay");
   errorPage = document.getElementById("errorPage");
   errorDesc = document.getElementById("errorDesc");
@@ -223,14 +297,19 @@ function setupReactPortalHosts() {
     const mainCol = document.getElementById("browserMainColumn");
     const navParent = pageFrame ?? mainCol;
     if (!navParent) return;
+    const crumbBar = document.getElementById("crumbBar");
     let reactNavHost = document.getElementById("reactNavHost");
     if (!reactNavHost) {
       reactNavHost = document.createElement("div");
       reactNavHost.id = "reactNavHost";
       reactNavHost.className = "nav-bar";
-      navParent.insertBefore(reactNavHost, navParent.firstChild);
+      if (crumbBar && crumbBar.parentElement === navParent) crumbBar.after(reactNavHost);
+      else navParent.insertBefore(reactNavHost, navParent.firstChild);
     } else if (reactNavHost.parentElement !== navParent) {
-      navParent.insertBefore(reactNavHost, navParent.firstChild);
+      if (crumbBar && crumbBar.parentElement === navParent) crumbBar.after(reactNavHost);
+      else navParent.insertBefore(reactNavHost, navParent.firstChild);
+    } else if (crumbBar && crumbBar.parentElement === navParent && crumbBar.nextElementSibling !== reactNavHost) {
+      crumbBar.after(reactNavHost);
     }
     let reactFindHost = document.getElementById("reactFindHost");
     if (!reactFindHost) {
@@ -246,9 +325,91 @@ function setupReactPortalHosts() {
   }
 }
 
+type TopSurface =
+  | "webview"
+  | "bookmarks"
+  | "history"
+  | "passwords"
+  | "toolsHub"
+  | "settings"
+  | "networkWorkbench";
+
+let lastToolsHubCrumbs: string[] = ["Tool Hub"];
+
+function setAddressCrumbText(text: string): void {
+  const t = (text || "").trim();
+  const ids = ["reactAddressBarWrapper", "addressBarWrapper"];
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (!t) el.removeAttribute("data-crumb");
+    else el.setAttribute("data-crumb", t);
+  }
+}
+
+function setCrumbParts(parts: string[]): void {
+  const host = document.getElementById("crumbBar");
+  const safeParts = parts.map((p) => String(p ?? "").trim()).filter(Boolean);
+  const crumbLine = safeParts.length ? `> ${safeParts.join(" > ")}` : "";
+  setAddressCrumbText(crumbLine);
+
+  if (!host) return;
+  if (!parts.length) {
+    host.innerHTML = "";
+    host.setAttribute("aria-hidden", "true");
+    return;
+  }
+  host.setAttribute("aria-hidden", "false");
+  const safe = safeParts.map((p) => escapeHtml(p));
+  host.innerHTML = safe
+    .map(
+      (p, i) =>
+        (i ? `<span class="crumb-sep" aria-hidden="true">&gt;</span>` : "") +
+        `<span class="crumb-part">${p}</span>`,
+    )
+    .join("");
+}
+
+function syncTopChromeForSurface(): void {
+  const bsec = document.getElementById("browserSection");
+  if (!bsec) return;
+
+  const hub = document.getElementById("toolsHubRoot");
+  const hubOpen = !!(hub && hub.classList.contains("tools-hub--open"));
+  const settingsOpen = !!document
+    .getElementById("webviewContainer")
+    ?.hasAttribute("data-settings-open");
+  const workbenchOpen = !!document
+    .getElementById("webviewContainer")
+    ?.hasAttribute("data-workbench-open");
+
+  const bookmarksOpen = !!document.getElementById("bookmarksPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
+  const historyOpen = !!document.getElementById("historyPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
+  const passwordsOpen = !!document.getElementById("passwordsPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
+
+  let surface: TopSurface = "webview";
+  if (hubOpen) surface = "toolsHub";
+  else if (workbenchOpen) surface = "networkWorkbench";
+  else if (settingsOpen) surface = "settings";
+  else if (historyOpen) surface = "history";
+  else if (bookmarksOpen) surface = "bookmarks";
+  else if (passwordsOpen) surface = "passwords";
+
+  bsec.setAttribute("data-surface", surface);
+
+  if (surface === "webview") setCrumbParts([]);
+  else if (surface === "history") setCrumbParts(["History"]);
+  else if (surface === "bookmarks") setCrumbParts(["Bookmarks"]);
+  else if (surface === "passwords") setCrumbParts(["Saved passwords"]);
+  else if (surface === "settings") setCrumbParts(["Settings"]);
+  else if (surface === "toolsHub") setCrumbParts(lastToolsHubCrumbs.length ? lastToolsHubCrumbs : ["Tool Hub"]);
+  else if (surface === "networkWorkbench") setCrumbParts(["Network", "Workbench"]);
+}
+
 function ensureReactPortalHostsAfterShellChange() {
   const prevFrame = browserFrame;
   refreshDomRefsFromDocument();
+  hydrateLoadingSpotlightShellStages();
   setupReactPortalHosts();
   refreshDomRefsFromDocument();
   if (USE_REACT_MODALS) wireReactSettingsButtons();
@@ -265,8 +426,13 @@ function ensureReactPortalHostsAfterShellChange() {
 }
 
 refreshDomRefsFromDocument();
+hydrateLoadingSpotlightShellStages();
 setupReactPortalHosts();
 // addTabBtn is rendered dynamically inside renderTabs()
+
+// If the app is waiting on profile selection, keep the loading spotlight behind modals
+// and hide the blank webview until the first tab is created.
+setProfileGateBackdrop(USE_REACT_MODALS && tabs.length === 0);
 
 let chatOpen = true;
 
@@ -285,11 +451,46 @@ function hideLegacyModalContainers() {
   });
 }
 
+/** Clears settings DOM state and notifies React — call after the next surface is visible when possible. */
+function leaveSettingsSurfaceSync() {
+  document.getElementById("webviewContainer")?.removeAttribute("data-settings-open");
+  window.dispatchEvent(new CustomEvent("react-close-settings"));
+}
+
 function wireReactSettingsButtons() {
   const s = document.getElementById("settingsBtn");
-  const open = () =>
+  const open = () => {
+    closeSidePanels();
+    const hub = document.getElementById("toolsHubRoot");
+    const hubWasOpen = !!(hub && hub.classList.contains("tools-hub--open"));
+    document.getElementById("webviewContainer")?.setAttribute("data-settings-open", "");
     window.dispatchEvent(new CustomEvent("react-open-settings"));
+    syncRailPanelActive();
+    syncWebviewInteractionLayer();
+    if (hubWasOpen) {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        window.removeEventListener("react-settings-mounted", onMounted);
+        closeToolsHub();
+      };
+      const onMounted = () => finish();
+      window.addEventListener("react-settings-mounted", onMounted);
+      window.setTimeout(finish, 250);
+    }
+  };
   if (s) s.onclick = open;
+}
+
+function showWebviewOnly() {
+  closeSidePanels();
+  closeToolsHub();
+  document.getElementById("webviewContainer")?.removeAttribute("data-workbench-open");
+  window.dispatchEvent(new CustomEvent("react-close-workbench"));
+  leaveSettingsSurfaceSync();
+  syncRailPanelActive();
+  syncWebviewInteractionLayer();
 }
 
 // -----------------------------------------------------------
@@ -298,9 +499,14 @@ function wireReactSettingsButtons() {
 
 function createTab(url = homePage) {
   const id = ++tabCounter;
+  let resolved = url;
+  if (resolved == null || String(resolved).trim() === "") resolved = homePage;
+  else resolved = String(resolved).trim();
+  if (!resolved) resolved = homePage;
   tabs.push({
     id,
-    url,
+    publicId: generatePublicTabId(),
+    url: resolved,
     title: "New Tab",
     favicon: null,
     loading: false,
@@ -444,7 +650,7 @@ function switchTab(id) {
   updateSecurityIcon(tab.url);
   updateBookmarkStar(tab.url === "about:blank" ? "" : tab.url);
   renderTabs();
-  syncSidePanelDismissLayer();
+  syncWebviewInteractionLayer();
 }
 
 function closeTab(id, e) {
@@ -711,16 +917,18 @@ function setLoading(on) {
     renderTabs();
   }
   if (on) {
-    loadingBar.classList.add("loading");
-    loadingOverlay.style.display = "flex";
+    if (loadingOverlay) {
+      const st = loadingOverlay.querySelector(".loading-spotlight-stage");
+      if (st) shuffleLoadingSpotlightStage(st);
+      loadingOverlay.style.display = "flex";
+    }
     if (!USE_REACT_NAV_UI && reloadBtn) {
       reloadBtn.classList.add("stop-mode");
       reloadBtn.title = "Stop (Esc)";
       reloadBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
     }
   } else {
-    loadingBar.classList.remove("loading");
-    loadingOverlay.style.display = "none";
+    if (loadingOverlay) loadingOverlay.style.display = "none";
     if (!USE_REACT_NAV_UI && reloadBtn) {
       reloadBtn.classList.remove("stop-mode");
       reloadBtn.title = "Reload (F5)";
@@ -836,6 +1044,30 @@ function setupWebviewEvents(wv) {
         wv.setZoomLevel(zoomLevel);
       } catch {
         /* ignore */
+      }
+      const tid = Number(wv.dataset.orionTabId);
+      const tab = getTab(tid);
+      if (tab && tab.url && tab.url !== "about:blank") {
+        window.setTimeout(() => {
+          if (!isActiveWebview(wv)) return;
+          let cur = "";
+          try {
+            cur = wv.getURL ? wv.getURL() : "";
+          } catch {
+            /* ignore */
+          }
+          if ((!cur || cur === "about:blank") && tab.url && tab.url !== "about:blank") {
+            try {
+              wv.loadURL(tab.url);
+            } catch {
+              try {
+                wv.src = tab.url;
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+        }, 120);
       }
       wv
         .insertCSS(
@@ -1407,8 +1639,9 @@ function setupSettings() {
   homePageInput.addEventListener("change", () => {
     const val = homePageInput.value.trim();
     if (val) {
-      homePage = val;
-      localStorage.setItem("homePage", val);
+      homePage = normalizeHomePageUrl(val);
+      localStorage.setItem("homePage", homePage);
+      homePageInput.value = homePage;
     }
   });
 
@@ -1615,6 +1848,15 @@ function setupKeyboardShortcuts() {
   document.addEventListener("keydown", (e) => {
     const ctrl = e.ctrlKey || e.metaKey;
 
+    if (e.key === "Escape") {
+      const hub = document.getElementById("toolsHubRoot");
+      if (hub && hub.classList.contains("tools-hub--open")) {
+        closeToolsHub();
+        e.preventDefault();
+        return;
+      }
+    }
+
     if (ctrl && e.key === "t") {
       e.preventDefault();
       createTab();
@@ -1767,48 +2009,6 @@ function setupChat() {
     chatMessages.innerHTML = "";
     addBotMessage("Chat cleared. How can I help?");
   };
-
-  document.querySelectorAll(".qc-btn").forEach((btn) => {
-    btn.onclick = () => {
-      const qp = document.getElementById("quickPanel");
-      const qb = document.getElementById("quickPanelBtn");
-      if (qp) qp.style.display = "none";
-      if (qb) qb.classList.remove("tools-open");
-
-      const cmd = btn.dataset.command;
-      // click/fill: activate picker so user can point at the element
-      if (cmd === "click" || cmd === "fill") {
-        const pickerTool = TOOLS.find((t) => t.id === "picker");
-        if (pickerTool && !pickerTool.active) {
-          pickerTool.active = true;
-          pickerTool.toggle(true);
-          const list = document.getElementById("toolsList");
-          if (list) {
-            const card = list.querySelector(`[data-tool-id="picker"]`);
-            if (card) card.classList.add("tool-active");
-          }
-        }
-        return;
-      }
-
-      const templates = {
-        navigate: "go to ",
-        screenshot: "screenshot",
-        scroll: "scroll down",
-        help: "help",
-      };
-      const val = templates[cmd] || "";
-      const chatInputEl = document.getElementById("chatInput");
-      const chatInputMd = document.getElementById("chatInputMd");
-      chatInputMd.style.display = "none";
-      chatInputEl.style.display = "block";
-      chatInputEl.value = val;
-      chatInputEl.style.height = "auto";
-      chatInputEl.style.height = Math.min(chatInputEl.scrollHeight, 160) + "px";
-      chatInputEl.focus();
-      chatInputEl.setSelectionRange(val.length, val.length);
-    };
-  });
 }
 
 function submitChat() {
@@ -1851,6 +2051,7 @@ function getKernelAutomationContext() {
     getTabs: () =>
       tabs.map((t) => ({
         id: t.id,
+        publicId: t.publicId,
         title: t.title || "New Tab",
         url: t.url || "",
       })),
@@ -1962,42 +2163,72 @@ function escapeHtml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function normalizeCodeLang(rawLang) {
+  const l = (rawLang || "").trim().toLowerCase();
+  if (!l) return "";
+  // Conservative: keep simple token; drop anything that could break attributes.
+  return l.replace(/[^a-z0-9_+-]/g, "");
+}
+
+function buildMarkedRenderer() {
+  const r = new marked.Renderer();
+
+  // Ensure links keep the md-link class (we intercept clicks elsewhere).
+  r.link = function (tok) {
+    const safeHref = tok && typeof tok.href === "string" ? tok.href : "";
+    const safeTitle = tok && typeof tok.title === "string" ? tok.title : "";
+    const titleAttr = safeTitle ? ` title="${escapeHtml(safeTitle)}"` : "";
+    // Render link text via marked inline parser (handles emphasis/code inside links).
+    const inner =
+      tok && tok.tokens && this && this.parser && this.parser.parseInline
+        ? this.parser.parseInline(tok.tokens)
+        : escapeHtml(tok && typeof tok.text === "string" ? tok.text : "");
+    // Keep href; DOMPurify will sanitize protocols/attrs.
+    return `<a class="md-link" href="${escapeHtml(safeHref)}"${titleAttr}>${inner}</a>`;
+  };
+
+  // Wrap fenced code blocks so we can add a copy button.
+  // marked@17 passes a token object: { text, lang, escaped }.
+  r.code = (tok) => {
+    const text = typeof tok === "string" ? tok : tok && typeof tok.text === "string" ? tok.text : String(tok ?? "");
+    const langRaw = tok && typeof tok.lang === "string" ? tok.lang : "";
+    const lang = normalizeCodeLang(langRaw);
+    const label = lang ? lang : "code";
+    const codeEsc = escapeHtml(String(text ?? "")).replace(/\n$/, "");
+    const langClass = lang ? ` language-${lang}` : "";
+    const langAttr = lang ? ` data-lang="${lang}"` : "";
+    return `
+      <div class="md-codeblock"${langAttr}>
+        <div class="md-codeblock-head">
+          <span class="md-codeblock-lang">${escapeHtml(label)}</span>
+          <button type="button" class="md-codecopy" aria-label="Copy code">Copy</button>
+        </div>
+        <pre><code class="${langClass}">${codeEsc}</code></pre>
+      </div>
+    `.trim();
+  };
+
+  return r;
+}
+
 function mdToHtml(text) {
-  let h = escapeHtml(text);
-  // fenced code blocks
-  h = h.replace(
-    /```(\w*)\n?([\s\S]*?)```/g,
-    (_, lang, code) =>
-      `<pre><code${lang ? ` class="lang-${lang}"` : ""}>${code.trimEnd()}</code></pre>`,
-  );
-  // inline code
-  h = h.replace(/`([^`]+)`/g, "<code>$1</code>");
-  // headings
-  h = h.replace(/^### (.+)$/gm, "<strong><em>$1</em></strong>");
-  h = h.replace(/^## (.+)$/gm, "<strong>$1</strong>");
-  h = h.replace(/^# (.+)$/gm, '<strong style="font-size:1.1em">$1</strong>');
-  // bold + italic
-  h = h.replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>");
-  h = h.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  h = h.replace(/\*(.+?)\*/g, "<em>$1</em>");
-  // strikethrough
-  h = h.replace(/~~(.+?)~~/g, "<del>$1</del>");
-  // unordered list items
-  h = h.replace(/^[\-\*] (.+)$/gm, '<span class="md-li">• $1</span>');
-  // ordered list items
-  h = h.replace(/^\d+\. (.+)$/gm, '<span class="md-li">$1</span>');
-  // blockquote
-  h = h.replace(/^&gt; (.+)$/gm, '<span class="md-bq">$1</span>');
-  // horizontal rule
-  h = h.replace(/^---$/gm, '<hr class="md-hr">');
-  // links
-  h = h.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    '<a href="$2" class="md-link">$1</a>',
-  );
-  // newlines (skip inside pre)
-  h = h.replace(/\n/g, "<br>");
-  return h;
+  const raw = String(text ?? "");
+
+  const html = marked.parse(raw, {
+    gfm: true,
+    breaks: true,
+    headerIds: false,
+    mangle: false,
+    renderer: buildMarkedRenderer(),
+  });
+
+  // Sanitize: disallow raw HTML and any dangerous attributes.
+  return DOMPurify.sanitize(String(html ?? ""), {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ["style", "script", "iframe", "object", "embed"],
+    FORBID_ATTR: ["style", "onerror", "onload", "onclick"],
+    ALLOW_UNKNOWN_PROTOCOLS: false,
+  });
 }
 
 function formatMessage(text) {
@@ -2022,6 +2253,50 @@ function setupChatPanelLinks() {
     "click",
     (e) => {
       const t = e.target;
+      const copyBtn = t && t.closest ? t.closest("button.md-codecopy") : null;
+      if (copyBtn && panel.contains(copyBtn)) {
+        e.preventDefault();
+        e.stopPropagation();
+        const block = copyBtn.closest(".md-codeblock");
+        const codeEl = block ? block.querySelector("pre code") : null;
+        const codeText = codeEl ? codeEl.textContent ?? "" : "";
+        if (!codeText) return;
+
+        const setLabel = (txt) => {
+          try {
+            copyBtn.textContent = txt;
+            window.clearTimeout(copyBtn.__copyTimer);
+            copyBtn.__copyTimer = window.setTimeout(() => {
+              copyBtn.textContent = "Copy";
+            }, 1200);
+          } catch {
+            /* ignore */
+          }
+        };
+
+        navigator.clipboard
+          .writeText(codeText)
+          .then(() => setLabel("Copied"))
+          .catch(() => {
+            try {
+              // Fallback selection copy.
+              const ta = document.createElement("textarea");
+              ta.value = codeText;
+              ta.setAttribute("readonly", "true");
+              ta.style.position = "fixed";
+              ta.style.top = "-1000px";
+              ta.style.left = "-1000px";
+              document.body.appendChild(ta);
+              ta.select();
+              document.execCommand("copy");
+              ta.remove();
+              setLabel("Copied");
+            } catch {
+              setLabel("Failed");
+            }
+          });
+        return;
+      }
       const a = t && t.closest ? t.closest("a") : null;
       if (!a || !panel.contains(a)) return;
       const href = a.getAttribute("href");
@@ -2260,7 +2535,18 @@ const TOOLS = [
     desc: "Click to get a unique CSS selector",
     active: false,
     toggle(on) {
-      if (on) startElementPicker();
+      if (on) startElementPicker("any");
+      else stopElementPicker();
+    },
+  },
+  {
+    id: "pickerInteractive",
+    icon: "🧲",
+    name: "Interactive Picker",
+    desc: "Pick the nearest clickable/input element",
+    active: false,
+    toggle(on) {
+      if (on) startElementPicker("interactive");
       else stopElementPicker();
     },
   },
@@ -2317,6 +2603,20 @@ function setupToolsPanel() {
   }
 
   renderTools();
+
+  const quickList = document.querySelector("#quickPanel .quick-list");
+  if (quickList) {
+    quickList.innerHTML = "";
+    QUICK_COMMAND_ENTRIES.forEach(({ command, label }) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "qc-btn";
+      btn.dataset.command = command;
+      btn.textContent = label;
+      btn.onclick = () => runQuickCommand(command);
+      quickList.appendChild(btn);
+    });
+  }
 
   panelBtn.onclick = (e) => {
     e.stopPropagation();
@@ -2607,17 +2907,24 @@ async function fillElement(sel, value) {
 
 let pickerActive = false;
 
-function startElementPicker() {
+function startElementPicker(mode = "any") {
   if (pickerActive) {
     stopElementPicker();
     return;
   }
   pickerActive = true;
 
-  syncToolState("picker", true);
-  showToast("🎯 Click any element on the page to pick its selector...");
+  const toolId = mode === "interactive" ? "pickerInteractive" : "picker";
+  syncToolState(toolId, true);
+  showToast(
+    mode === "interactive"
+      ? "🎯 Click an interactive element (button/input/link) to pick it..."
+      : "🎯 Click any element on the page to pick its selector...",
+  );
   addBotMessage(
-    "🎯 **Picker active** — click any element on the page. Press Esc to cancel.",
+    mode === "interactive"
+      ? "🎯 **Interactive Picker active** — click a button/input/link. Press Esc to cancel."
+      : "🎯 **Picker active** — click any element on the page. Press Esc to cancel.",
   );
 
   browserFrame
@@ -2626,6 +2933,7 @@ function startElementPicker() {
     (function() {
       if (window.__orionPicker) return;
       window.__orionPicker = true;
+      window.__orionPickerMode = ${JSON.stringify(mode)};
 
       const overlay = document.createElement('div');
       overlay.id = '__orion_highlight';
@@ -2637,61 +2945,95 @@ function startElementPicker() {
       label.style.cssText = 'position:fixed;z-index:2147483647;background:#7c6af7;color:#fff;font:bold 11px/1 monospace;padding:3px 7px;border-radius:4px;pointer-events:none;white-space:nowrap;max-width:400px;overflow:hidden;text-overflow:ellipsis;';
       document.body.appendChild(label);
 
-      function getBestSelector(el) {
-        if (el.id && !/^\\d/.test(el.id)) {
-          if (document.querySelectorAll('#' + CSS.escape(el.id)).length === 1)
-            return '#' + el.id;
-        }
+      function isInteractive(el) {
+        if (!el || el.nodeType !== 1) return false;
         const tag = el.tagName.toLowerCase();
-        if (el.name) {
-          const s = tag + '[name=' + JSON.stringify(el.name) + ']';
-          if (document.querySelectorAll(s).length === 1) return s;
+        if (tag === 'button' || tag === 'a' || tag === 'select' || tag === 'textarea') return true;
+        if (tag === 'input') return true;
+        const role = (el.getAttribute('role') || '').toLowerCase();
+        if (['button','link','menuitem','option','tab','checkbox','radio','combobox','switch'].includes(role)) return true;
+        if (el.hasAttribute('aria-haspopup')) return true;
+        if (el.hasAttribute('tabindex') && el.tabIndex >= 0) return true;
+        return false;
+      }
+      function closestInteractive(el) {
+        let cur = el;
+        while (cur && cur !== document.body) {
+          if (isInteractive(cur)) return cur;
+          cur = cur.parentElement;
         }
-        if (el.placeholder) {
-          const s = tag + '[placeholder=' + JSON.stringify(el.placeholder) + ']';
-          if (document.querySelectorAll(s).length === 1) return s;
+        return el;
+      }
+      function unique(sel) {
+        try { return document.querySelectorAll(sel).length === 1; } catch { return false; }
+      }
+      function escAttr(v){ return JSON.stringify(String(v)); }
+      function buildSelector(el) {
+        const tag = el.tagName.toLowerCase();
+        // 1) id
+        if (el.id && !/^\\d/.test(el.id)) {
+          const s = '#' + CSS.escape(el.id);
+          if (unique(s)) return s;
+        }
+        // 2) stable data attrs
+        const dataKeys = ['data-testid','data-test','data-qa','data-cy'];
+        for (const k of dataKeys) {
+          const v = el.getAttribute(k);
+          if (v) { const s = tag + '[' + k + '=' + escAttr(v) + ']'; if (unique(s)) return s; }
+        }
+        // 3) name / aria-label
+        if (el.getAttribute('name')) {
+          const v = el.getAttribute('name');
+          const s = tag + '[name=' + escAttr(v) + ']';
+          if (unique(s)) return s;
         }
         const al = el.getAttribute('aria-label');
         if (al) {
-          const s = tag + '[aria-label=' + JSON.stringify(al) + ']';
-          if (document.querySelectorAll(s).length === 1) return s;
+          const s = tag + '[aria-label=' + escAttr(al) + ']';
+          if (unique(s)) return s;
         }
-        for (const attr of el.attributes) {
-          if (attr.name.startsWith('data-') && attr.value) {
-            const s = tag + '[' + attr.name + '=' + JSON.stringify(attr.value) + ']';
-            if (document.querySelectorAll(s).length === 1) return s;
+        // 4) role + aria-label
+        const role = el.getAttribute('role');
+        if (role && al) {
+          const s = '[role=' + escAttr(role) + '][aria-label=' + escAttr(al) + ']';
+          if (unique(s)) return s;
+        }
+        // 5) fallback: short ancestor chain with nth-of-type
+        let cur = el;
+        const parts = [];
+        for (let depth = 0; cur && cur !== document.body && depth < 4; depth++) {
+          const t = cur.tagName.toLowerCase();
+          let part = t;
+          const pid = cur.id && !/^\\d/.test(cur.id) ? '#' + CSS.escape(cur.id) : '';
+          if (pid) part += pid;
+          else {
+            const sibs = Array.from(cur.parentElement ? cur.parentElement.children : []).filter(x => x.tagName === cur.tagName);
+            if (sibs.length > 1) {
+              const idx = sibs.indexOf(cur) + 1;
+              part += ':nth-of-type(' + idx + ')';
+            }
           }
-        }
-        if (el.type) {
-          const s = tag + '[type=' + JSON.stringify(el.type) + ']';
-          if (document.querySelectorAll(s).length === 1) return s;
-        }
-        if (el.className && typeof el.className === 'string') {
-          const cls = el.className.trim().split(/\\s+/).filter(c => /^[a-zA-Z_-]/.test(c));
-          if (cls.length) {
-            const s = tag + '.' + cls.join('.');
-            try { if (document.querySelectorAll(s).length === 1) return s; } catch {}
-          }
-        }
-        let path = tag, cur = el;
-        while (cur.parentElement && cur.parentElement !== document.body) {
-          const siblings = [...cur.parentElement.children].filter(c => c.tagName === cur.tagName);
-          const idx = [...cur.parentElement.children].indexOf(cur) + 1;
-          path = cur.tagName.toLowerCase() + (siblings.length > 1 ? ':nth-child(' + idx + ')' : '') + ' > ' + path;
+          parts.unshift(part);
+          const s = parts.join(' > ');
+          if (unique(s)) return s;
           cur = cur.parentElement;
         }
-        return path;
+        return parts.join(' > ') || tag;
+      }
+      function pickTarget(el) {
+        const mode = window.__orionPickerMode || 'any';
+        return mode === 'interactive' ? closestInteractive(el) : el;
       }
 
       function onMove(e) {
-        const el = e.target;
+        const el = pickTarget(e.target);
         if (el.id === '__orion_highlight' || el.id === '__orion_label') return;
         const r = el.getBoundingClientRect();
         overlay.style.left   = r.left   + 'px';
         overlay.style.top    = r.top    + 'px';
         overlay.style.width  = r.width  + 'px';
         overlay.style.height = r.height + 'px';
-        label.textContent = getBestSelector(el);
+        label.textContent = buildSelector(el);
         label.style.left = r.left + 'px';
         label.style.top  = Math.max(0, r.top - 22) + 'px';
       }
@@ -2699,7 +3041,8 @@ function startElementPicker() {
       function onClick(e) {
         e.preventDefault();
         e.stopPropagation();
-        window.__orionPickedSelector = getBestSelector(e.target);
+        const el = pickTarget(document.elementFromPoint(e.clientX, e.clientY) || e.target);
+        window.__orionPickedSelector = buildSelector(el);
         cleanup();
       }
 
@@ -2714,6 +3057,7 @@ function startElementPicker() {
         overlay.remove();
         label.remove();
         delete window.__orionPicker;
+        delete window.__orionPickerMode;
       }
 
       document.addEventListener('mousemove', onMove, true);
@@ -2774,6 +3118,7 @@ function startElementPicker() {
 function stopElementPicker() {
   pickerActive = false;
   syncToolState("picker", false);
+  syncToolState("pickerInteractive", false);
   browserFrame
     .executeJavaScript(
       `
@@ -3080,14 +3425,16 @@ function renderBookmarks(filter) {
   list.innerHTML = "";
   items.forEach((b) => {
     const row = document.createElement("div");
-    row.className = "side-item";
+    row.className = "side-item side-item--bookmark";
+    const added = b.addedAt ? new Date(b.addedAt).toLocaleDateString() : "";
     row.innerHTML = `
       <img class="side-favicon" src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(new URL(b.url).hostname)}&sz=16" onerror="this.style.display='none'" width="14" height="14"/>
       <div class="side-item-info">
         <div class="side-item-title">${escapeHtml(b.title)}</div>
         <div class="side-item-url">${escapeHtml(b.url)}</div>
       </div>
-      <button class="side-item-del" title="Remove">✕</button>`;
+      ${added ? `<span class="side-item-date">${added}</span>` : ""}
+      <button class="side-item-del" title="Remove bookmark" aria-label="Remove bookmark">✕</button>`;
     row.querySelector(".side-item-info").onclick = () => {
       navigateTo(b.url);
       closeSidePanels();
@@ -3135,27 +3482,51 @@ function renderHistory(filter) {
     return;
   }
   list.innerHTML = "";
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+
+  const labelForTs = (ts) => {
+    if (ts >= startOfToday) return "Today";
+    if (ts >= startOfYesterday) return "Yesterday";
+    return new Date(ts).toLocaleDateString();
+  };
+
+  const groups = new Map();
   items.slice(0, 300).forEach((h) => {
-    const row = document.createElement("div");
-    row.className = "side-item";
-    const date = new Date(h.visitedAt).toLocaleDateString();
-    let hostname = "";
-    try {
-      hostname = new URL(h.url).hostname;
-    } catch {}
-    row.innerHTML = `
-      <img class="side-favicon" src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=16" onerror="this.style.display='none'" width="14" height="14"/>
-      <div class="side-item-info">
-        <div class="side-item-title">${escapeHtml(h.title)}</div>
-        <div class="side-item-url">${escapeHtml(h.url)}</div>
-      </div>
-      <span class="side-item-date">${date}</span>`;
-    row.querySelector(".side-item-info").onclick = () => {
-      navigateTo(h.url);
-      closeSidePanels();
-    };
-    list.appendChild(row);
+    const label = labelForTs(h.visitedAt);
+    const arr = groups.get(label) || [];
+    arr.push(h);
+    groups.set(label, arr);
   });
+
+  for (const [label, entries] of groups.entries()) {
+    const header = document.createElement("div");
+    header.className = "side-group-header";
+    header.textContent = label;
+    list.appendChild(header);
+
+    entries.forEach((h) => {
+      const row = document.createElement("div");
+      row.className = "side-item side-item--history";
+      let hostname = "";
+      try {
+        hostname = new URL(h.url).hostname;
+      } catch {}
+      row.innerHTML = `
+        <img class="side-favicon" src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=16" onerror="this.style.display='none'" width="14" height="14"/>
+        <div class="side-item-info">
+          <div class="side-item-title">${escapeHtml(h.title)}</div>
+          <div class="side-item-url">${escapeHtml(h.url)}</div>
+        </div>`;
+      row.querySelector(".side-item-info").onclick = () => {
+        navigateTo(h.url);
+        closeSidePanels();
+      };
+      list.appendChild(row);
+    });
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3189,21 +3560,27 @@ function renderPasswords(filter) {
     const isEncrypted =
       pw.password.startsWith("[encrypted") || pw.password.startsWith("[");
     const row = document.createElement("div");
-    row.className = "side-item pw-item";
+    row.className = "side-item pw-item pw-card";
     row.innerHTML = `
-      <div class="pw-icon">🔑</div>
-      <div class="side-item-info">
-        <div class="side-item-title">${escapeHtml(pw.url || "Unknown site")}</div>
-        <div class="side-item-url">${escapeHtml(pw.username)}</div>
+      <div class="pw-main">
+        <div class="pw-top">
+          <div class="pw-site">${escapeHtml(pw.url || "Unknown site")}</div>
+          ${
+            isEncrypted
+              ? `<span class="pw-badge" title="Encrypted by OS">Encrypted</span>`
+              : ""
+          }
+        </div>
+        <div class="pw-user">${escapeHtml(pw.username)}</div>
         ${pw.note ? `<div class="pw-note">${escapeHtml(pw.note)}</div>` : ""}
       </div>
-      <div class="pw-actions">
+      <div class="pw-actions" aria-label="Password actions">
         ${
           !isEncrypted
             ? `
-          <button class="pw-copy-btn" data-type="user"  title="Copy username">👤</button>
-          <button class="pw-copy-btn" data-type="pass"  title="Copy password">🔒</button>
-          <button class="pw-del-btn"                    title="Delete">✕</button>`
+          <button class="pw-copy-btn" data-type="user"  title="Copy username">User</button>
+          <button class="pw-copy-btn" data-type="pass"  title="Copy password">Pass</button>
+          <button class="pw-del-btn"                    title="Delete">Delete</button>`
             : ""
         }
       </div>`;
@@ -3234,16 +3611,27 @@ function renderPasswords(filter) {
 // ═══════════════════════════════════════════════════════════
 
 const SIDE_PANEL_OPEN_CLASS = "side-panel--open";
-let sidePanelOpenTimer = null;
+/** Skip enter/exit transitions so bookmarks ↔ history ↔ passwords swaps feel instant. */
+const SIDE_PANEL_INSTANT_CLASS = "side-panel--instant";
 
-function syncSidePanelDismissLayer() {
-  const open = !!document.querySelector(".side-panel.side-panel--open");
+function syncWebviewInteractionLayer() {
+  const sideOpen = !!document.querySelector(".side-panel.side-panel--open");
+  const hub = document.getElementById("toolsHubRoot");
+  const hubOpen = !!(hub && hub.classList.contains("tools-hub--open"));
+  const settingsOpen = !!document
+    .getElementById("webviewContainer")
+    ?.hasAttribute("data-settings-open");
+  const workbenchOpen = !!document
+    .getElementById("webviewContainer")
+    ?.hasAttribute("data-workbench-open");
+  const blockWebview = sideOpen || hubOpen || settingsOpen || workbenchOpen;
   document
     .getElementById("sidePanelWebviewShield")
-    ?.classList.toggle("is-active", open);
+    ?.classList.toggle("is-active", sideOpen);
   document.querySelectorAll("webview").forEach((wv) => {
-    wv.style.pointerEvents = open ? "none" : "";
+    wv.style.pointerEvents = blockWebview ? "none" : "";
   });
+  syncTopChromeForSurface();
 }
 
 function syncRailPanelActive() {
@@ -3255,6 +3643,19 @@ function syncRailPanelActive() {
   document.querySelectorAll("#leftToolRail .rail-btn").forEach((b) => {
     b.classList.remove("rail-btn-active");
   });
+  const hub = document.getElementById("toolsHubRoot");
+  if (hub && hub.classList.contains("tools-hub--open")) {
+    document.getElementById("toolsHubBtn")?.classList.add("rail-btn-active");
+    return;
+  }
+  if (document.getElementById("webviewContainer")?.hasAttribute("data-workbench-open")) {
+    document.getElementById("networkWorkbenchBtn")?.classList.add("rail-btn-active");
+    return;
+  }
+  if (document.getElementById("webviewContainer")?.hasAttribute("data-settings-open")) {
+    document.getElementById("settingsBtn")?.classList.add("rail-btn-active");
+    return;
+  }
   for (const pid of ["bookmarksPanel", "historyPanel", "passwordsPanel"]) {
     const p = document.getElementById(pid);
     if (p && p.classList.contains(SIDE_PANEL_OPEN_CLASS)) {
@@ -3263,13 +3664,10 @@ function syncRailPanelActive() {
       return;
     }
   }
+  document.getElementById("railWebviewBtn")?.classList.add("rail-btn-active");
 }
 
 function closeSidePanels() {
-  if (sidePanelOpenTimer) {
-    window.clearTimeout(sidePanelOpenTimer);
-    sidePanelOpenTimer = null;
-  }
   ["bookmarksPanel", "historyPanel", "passwordsPanel"].forEach((id) => {
     const el = document.getElementById(id);
     if (el) {
@@ -3278,44 +3676,162 @@ function closeSidePanels() {
     }
   });
   syncRailPanelActive();
-  syncSidePanelDismissLayer();
+  syncWebviewInteractionLayer();
+}
+
+function closeToolsHub() {
+  const hub = document.getElementById("toolsHubRoot");
+  if (!hub) return;
+  hub.classList.remove("tools-hub--open");
+  hub.style.display = "none";
+  hub.setAttribute("aria-hidden", "true");
+  syncRailPanelActive();
+  syncWebviewInteractionLayer();
+}
+
+function openToolsHub() {
+  closeSidePanels();
+  const hub = document.getElementById("toolsHubRoot");
+  if (!hub) return;
+  hub.classList.add("tools-hub--open");
+  hub.style.display = "flex";
+  hub.setAttribute("aria-hidden", "false");
+  leaveSettingsSurfaceSync();
+  syncRailPanelActive();
+  syncWebviewInteractionLayer();
+  window.dispatchEvent(new CustomEvent("tools-hub-open"));
+}
+
+function toggleToolsHub() {
+  const hub = document.getElementById("toolsHubRoot");
+  if (!hub) return;
+  if (hub.classList.contains("tools-hub--open")) closeToolsHub();
+  else openToolsHub();
 }
 
 function toggleSidePanel(id) {
   const panel = document.getElementById(id);
   if (!panel) return;
 
-  if (sidePanelOpenTimer) {
-    window.clearTimeout(sidePanelOpenTimer);
-    sidePanelOpenTimer = null;
-  }
-
   if (panel.classList.contains(SIDE_PANEL_OPEN_CLASS)) {
     panel.classList.remove(SIDE_PANEL_OPEN_CLASS);
     panel.setAttribute("aria-hidden", "true");
     syncRailPanelActive();
-    syncSidePanelDismissLayer();
+    syncWebviewInteractionLayer();
     return;
   }
 
+  const settingsWasOpen = !!document
+    .getElementById("webviewContainer")
+    ?.hasAttribute("data-settings-open");
+  const hub = document.getElementById("toolsHubRoot");
+  const hubWasOpen = !!(hub && hub.classList.contains("tools-hub--open"));
+
   const prev = document.querySelector(".side-panel.side-panel--open");
   if (prev && prev !== panel) {
-    prev.classList.remove(SIDE_PANEL_OPEN_CLASS);
-    prev.setAttribute("aria-hidden", "true");
-    syncRailPanelActive();
-    syncSidePanelDismissLayer();
-    sidePanelOpenTimer = window.setTimeout(() => {
-      sidePanelOpenTimer = null;
-      panel.classList.add(SIDE_PANEL_OPEN_CLASS);
-      panel.setAttribute("aria-hidden", "false");
-      syncRailPanelActive();
-      syncSidePanelDismissLayer();
-    }, 100);
-  } else {
+    panel.classList.add(SIDE_PANEL_INSTANT_CLASS);
+    prev.classList.add(SIDE_PANEL_INSTANT_CLASS);
     panel.classList.add(SIDE_PANEL_OPEN_CLASS);
     panel.setAttribute("aria-hidden", "false");
+    prev.classList.remove(SIDE_PANEL_OPEN_CLASS);
+    prev.setAttribute("aria-hidden", "true");
+    window.requestAnimationFrame(() => {
+      prev.classList.remove(SIDE_PANEL_INSTANT_CLASS);
+      panel.classList.remove(SIDE_PANEL_INSTANT_CLASS);
+    });
+    if (settingsWasOpen) window.requestAnimationFrame(() => leaveSettingsSurfaceSync());
+    else leaveSettingsSurfaceSync();
+    if (hubWasOpen) window.requestAnimationFrame(() => closeToolsHub());
+    else {
+      syncRailPanelActive();
+      syncWebviewInteractionLayer();
+    }
+    return;
+  }
+
+  panel.classList.add(SIDE_PANEL_OPEN_CLASS);
+  panel.setAttribute("aria-hidden", "false");
+  // If we're coming from the tools hub, the panel's first "open" frame can still be near-transparent
+  // (transition start). Force it to be instantly visible for a frame to avoid a webview flash.
+  if (hubWasOpen || settingsWasOpen) {
+    panel.classList.add(SIDE_PANEL_INSTANT_CLASS);
+    window.requestAnimationFrame(() => panel.classList.remove(SIDE_PANEL_INSTANT_CLASS));
+  }
+  if (settingsWasOpen) window.requestAnimationFrame(() => leaveSettingsSurfaceSync());
+  else leaveSettingsSurfaceSync();
+  if (hubWasOpen) window.requestAnimationFrame(() => closeToolsHub());
+  else {
     syncRailPanelActive();
-    syncSidePanelDismissLayer();
+    syncWebviewInteractionLayer();
+  }
+}
+
+function runQuickCommand(cmd, opts) {
+  const closeHub = opts && opts.closeHub;
+  if (!cmd) return;
+  try {
+    const qp = document.getElementById("quickPanel");
+    const qb = document.getElementById("quickPanelBtn");
+    if (qp) qp.style.display = "none";
+    if (qb) qb.classList.remove("tools-open");
+
+    if (cmd === "click" || cmd === "fill") {
+      const pickerTool = TOOLS.find((t) => t.id === "picker");
+      if (pickerTool && !pickerTool.active) {
+        pickerTool.active = true;
+        pickerTool.toggle(true);
+        const list = document.getElementById("toolsList");
+        if (list) {
+          const card = list.querySelector(`[data-tool-id="picker"]`);
+          if (card) card.classList.add("tool-active");
+        }
+      }
+      return;
+    }
+
+    if (cmd === "picker" || cmd === "pickerInteractive" || cmd === "elemshot") {
+      const tool = TOOLS.find((t) => t.id === cmd);
+      if (tool) {
+        tool.active = !tool.active;
+        tool.toggle(tool.active);
+        syncToolState(tool.id, tool.active);
+      }
+      return;
+    }
+
+    const templates = {
+      navigate: "go to ",
+      nav: "nav ",
+      tab: "tab ",
+      url: "url",
+      title: "title",
+      screenshot: "screenshot",
+      scroll: "scroll down",
+      reload: "reload",
+      back: "back",
+      forward: "forward",
+      tabs: "list tabs",
+      switchTab: "switch tab ",
+      newTab: "new tab",
+      closeTab: "close tab",
+      viewportMd: "viewport md",
+      formSchema: "form schema",
+      interactables: "interactables",
+      type: "type ",
+      wait: "wait 1000ms",
+    };
+    const val = templates[cmd] || "";
+    const chatInputEl = document.getElementById("chatInput");
+    const chatInputMd = document.getElementById("chatInputMd");
+    chatInputMd.style.display = "none";
+    chatInputEl.style.display = "block";
+    chatInputEl.value = val;
+    chatInputEl.style.height = "auto";
+    chatInputEl.style.height = Math.min(chatInputEl.scrollHeight, 160) + "px";
+    chatInputEl.focus();
+    chatInputEl.setSelectionRange(val.length, val.length);
+  } finally {
+    if (closeHub) closeToolsHub();
   }
 }
 
@@ -3393,12 +3909,24 @@ async function runBrowserImport(target) {
 // ── Wire up all panel buttons ─────────────────────────────
 function setupDataPanelButtons() {
   // Nav bar buttons
+  document.getElementById("railWebviewBtn").onclick = () => showWebviewOnly();
   document.getElementById("bookmarksBtn").onclick = () =>
     toggleSidePanel("bookmarksPanel");
   document.getElementById("historyBtn").onclick = () =>
     toggleSidePanel("historyPanel");
   document.getElementById("passwordsBtn").onclick = () =>
     toggleSidePanel("passwordsPanel");
+  document.getElementById("networkWorkbenchBtn").onclick = () => {
+    // Close other surfaces first to avoid flashes
+    closeSidePanels();
+    closeToolsHub();
+    leaveSettingsSurfaceSync();
+    document.getElementById("webviewContainer")?.setAttribute("data-workbench-open", "");
+    window.dispatchEvent(new CustomEvent("react-open-workbench"));
+    syncRailPanelActive();
+    syncWebviewInteractionLayer();
+  };
+  document.getElementById("toolsHubBtn").onclick = () => toggleToolsHub();
 
   // Bookmark star
   document.getElementById("bookmarkStarBtn").onclick = () => {
@@ -3441,6 +3969,27 @@ function setupDataPanelButtons() {
   document
     .getElementById("passwordSearch")
     .addEventListener("input", (e) => renderPasswords(e.target.value));
+
+  // Search clear buttons
+  const wireSearchClear = (inputId, rerender) => {
+    const input = document.getElementById(inputId);
+    const btn = document.querySelector(`.side-search-clear[data-clear="${inputId}"]`);
+    if (!input || !btn) return;
+    btn.addEventListener("click", () => {
+      input.value = "";
+      input.focus();
+      rerender("");
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        input.value = "";
+        rerender("");
+      }
+    });
+  };
+  wireSearchClear("bookmarkSearch", renderBookmarks);
+  wireSearchClear("historySearch", renderHistory);
+  wireSearchClear("passwordSearch", renderPasswords);
 
   // Add password form
   const pwAddForm = document.getElementById("pwAddForm");
@@ -3659,6 +4208,7 @@ window.legacyBrowser = {
   getTabs: () =>
     tabs.map((t) => ({
       id: t.id,
+      publicId: t.publicId,
       title: t.title || "New Tab",
       url: t.url,
       loading: !!t.loading,
@@ -3706,6 +4256,10 @@ window.legacyBrowser = {
   },
   navigateToUrl: (url) => navigateTo(url),
   closeSidePanels: () => closeSidePanels(),
+  syncRailAndWebview: () => {
+    syncRailPanelActive();
+    syncWebviewInteractionLayer();
+  },
   toggleSidePanel: (panelId) => toggleSidePanel(panelId),
   showToast: (msg, duration = 3000) => showToast(msg, duration),
   removeBookmarkByUrl: (url) => removeBookmark(url),
@@ -3729,8 +4283,8 @@ window.legacyBrowser = {
   setHomePage: (url) => {
     const val = (url || "").trim();
     if (!val) return;
-    homePage = val;
-    localStorage.setItem("homePage", val);
+    homePage = normalizeHomePageUrl(val);
+    localStorage.setItem("homePage", homePage);
   },
   applyTheme: (name) => applyTheme(name),
   initDataPanels: () => initDataPanels(),
@@ -3750,6 +4304,10 @@ window.legacyBrowser = {
   setChatPanelOpen: (open) => setChatOpen(!!open),
   runAutomationCommand: async (cmd) => runAutomationCommand(cmd, getKernelAutomationContext()),
   dispatchAutomationLine: async (line) => dispatchAutomationLine(line, getKernelAutomationContext()),
+  openToolsHub: () => openToolsHub(),
+  closeToolsHub: () => closeToolsHub(),
+  toggleToolsHub: () => toggleToolsHub(),
+  runQuickCommand: (cmd, opts) => runQuickCommand(cmd, opts),
 };
 
   setupTitleBar();
@@ -3775,6 +4333,7 @@ window.legacyBrowser = {
     window.addEventListener(
       "profile-gate-complete",
       () => {
+        setProfileGateBackdrop(false);
         if (tabs.length === 0) createTab(homePage);
       },
       { once: true },
@@ -3787,4 +4346,16 @@ window.legacyBrowser = {
     setupProfileModal();
     checkFirstRun();
   }
+  window.addEventListener("tools-hub-breadcrumb", (e: Event) => {
+    const d = (e as CustomEvent<{ parts?: unknown }>).detail;
+    const parts = Array.isArray(d?.parts) ? (d?.parts as unknown[]) : [];
+    const cleaned = parts
+      .map((p) => (typeof p === "string" ? p : String(p ?? "")).trim())
+      .filter(Boolean)
+      .slice(0, 6);
+    lastToolsHubCrumbs = cleaned.length ? cleaned : ["Tool Hub"];
+    syncTopChromeForSurface();
+  });
+  syncRailPanelActive();
+  syncWebviewInteractionLayer();
 }

@@ -6,6 +6,7 @@ import { NavChromeBridge } from "./components/NavChromeBridge";
 import { SidePanelsBridge } from "./components/SidePanelsBridge";
 import { TabsBridge } from "./components/TabsBridge";
 import { ToastBridge } from "./components/ToastBridge";
+import { ToolsHubBridge } from "./components/ToolsHubBridge";
 import { WebviewShellBridge } from "./components/WebviewShellBridge";
 
 export default function App(): ReactElement {
@@ -19,6 +20,7 @@ export default function App(): ReactElement {
       <ChatShellBridge />
       <ToastBridge />
       <RequestWorkbench />
+      <ToolsHubBridge />
     </>
   );
 }

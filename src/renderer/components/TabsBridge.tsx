@@ -65,6 +65,7 @@ export function TabsBridge(): ReactElement | null {
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const [dropHint, setDropHint] = useState<{ tabId: number; side: "left" | "right" } | null>(null);
   const [dragGhost, setDragGhost] = useState<DragGhost | null>(null);
+  const [surface, setSurface] = useState("webview");
 
   const dragRef = useRef<{
     tabId: number;
@@ -93,11 +94,18 @@ export function TabsBridge(): ReactElement | null {
     const sync = () => {
       setTabs(bridge.getTabs());
       setActiveTabId(bridge.getState().activeTabId);
+      const s = document.getElementById("browserSection")?.getAttribute("data-surface") ?? "webview";
+      setSurface(s);
     };
     sync();
     const id = window.setInterval(sync, POLL_MS);
     return () => window.clearInterval(id);
   }, [bridge]);
+
+  const ensureWebviewSurface = () => {
+    if (!bridge) return;
+    if (surface !== "webview") bridge.clickUi?.("railWebviewBtn");
+  };
 
   const onTabMouseDown = (tabId: number, e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -146,6 +154,7 @@ export function TabsBridge(): ReactElement | null {
         const hint = findDropTarget(ev.clientX, d.tabId);
         if (hint) bridge.reorderTabs(d.tabId, hint.tabId, hint.side);
       } else {
+        ensureWebviewSurface();
         bridge.switchTabById(d.tabId);
       }
       dragRef.current = null;
@@ -161,11 +170,27 @@ export function TabsBridge(): ReactElement | null {
   };
 
   if (!bridge || !host) return null;
+  const surfaceTabNeeded = surface !== "webview";
+  const surfaceTabTitle = "Workspace";
+  const surfaceTab = surfaceTabNeeded ? (
+    <div role="tab" aria-selected tabIndex={0} className="tab tab-surface active" data-tab-id="surface">
+      <div className="tab-favicon">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
+          <rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+          <rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+          <rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+          <rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+        </svg>
+      </div>
+      <span className="tab-title">{surfaceTabTitle}</span>
+    </div>
+  ) : null;
 
   const strip = (
     <>
+      {surfaceTab}
       {tabs.map((tab) => {
-        const isActive = tab.id === activeTabId;
+        const isActive = surface === "webview" && tab.id === activeTabId;
         const isDragging = draggingId === tab.id;
         let extra = "";
         if (dropHint && dropHint.tabId === tab.id) {
@@ -215,7 +240,10 @@ export function TabsBridge(): ReactElement | null {
         type="button"
         className="add-tab-btn flex shrink-0 items-center justify-center"
         title="New Tab (Ctrl+T)"
-        onClick={() => bridge.newTab()}
+        onClick={() => {
+          ensureWebviewSurface();
+          bridge.newTab();
+        }}
       >
         {plusSvg}
       </button>

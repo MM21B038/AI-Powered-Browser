@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent, type ReactElement } from "react";
+import { useEffect, useLayoutEffect, useState, type MouseEvent, type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import type { ImportStatsDetail, ListedBrowserProfile, SystemInfo } from "../../../shared/ipc-types";
 import { getElectronApi } from "../../services/electron-api";
@@ -66,6 +66,20 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps): ReactEleme
   const [activeTheme, setActiveTheme] = useState(
     () => (typeof localStorage !== "undefined" && localStorage.getItem("theme")) || "dark",
   );
+
+  useLayoutEffect(() => {
+    const wv = document.getElementById("webviewContainer");
+    if (wv) wv.toggleAttribute("data-settings-open", open);
+    window.legacyBrowser?.syncRailAndWebview?.();
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const raf = window.requestAnimationFrame(() => {
+      window.dispatchEvent(new CustomEvent("react-settings-mounted"));
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -203,235 +217,270 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps): ReactEleme
       <div className="settings-panel" style={{ display: "flex" }} onClick={(e) => e.stopPropagation()}>
         <div className="settings-header">
           <h3>Settings</h3>
-          <button type="button" className="icon-btn" title="Close" onClick={onClose}>
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+          <button type="button" className="icon-btn" title="Close" aria-label="Close" onClick={onClose}>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
               <path
-                d="M2 2L12 12M12 2L2 12"
+                d="M2 2L10 10M10 2L2 10"
                 stroke="currentColor"
-                strokeWidth="1.8"
+                strokeWidth="1.6"
                 strokeLinecap="round"
               />
             </svg>
           </button>
         </div>
         <div className="settings-body">
-          <div className="settings-section">
-            <label className="settings-label">Theme</label>
-            <div className="theme-grid">
-              {(["dark", "aurora", "ocean", "ember"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  className={`theme-card${activeTheme === t ? " active" : ""}`}
-                  data-theme={t}
-                  onClick={() => applyTheme(t)}
-                >
-                  <div className={`theme-preview ${t}-preview`} />
-                  <span>{t === "dark" ? "Void" : t[0].toUpperCase() + t.slice(1)}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="settings-section">
-            <label className="settings-label">Import from your device</label>
-            <p className="settings-hint">
-              Pick the browser engine, then the exact profile folder (Chrome can have many). Passwords are
-              imported as metadata where the OS still encrypts secrets.
-            </p>
-            {appStats ? (
-              <div className="settings-import-app-summary">
-                <span className="settings-import-app-title">Already in this app</span>
-                <span className="settings-import-app-counts">
-                  {appStats.bookmarks} bookmarks · {appStats.history} history · {appStats.cookies} cookies ·{" "}
-                  {appStats.passwords} passwords · {appStats.autofill} autofill
-                </span>
-                {appStats.lastImport ? (
-                  <span className="settings-import-last">
-                    Last import: {appStats.lastImport.browser ?? "?"} ·{" "}
-                    {appStats.lastImport.timestamp
-                      ? new Date(appStats.lastImport.timestamp).toLocaleString()
-                      : ""}{" "}
-                    ({(appStats.lastImport.dataTypes ?? []).join(", ")})
-                  </span>
-                ) : (
-                  <span className="settings-import-last muted">No import recorded yet</span>
-                )}
+          <div className="settings-dashboard" role="region" aria-label="Settings dashboard">
+            <div className="settings-card settings-card--appearance">
+              <div className="settings-card-head">
+                <div className="settings-card-title">Appearance</div>
+                <div className="settings-card-sub">Theme presets</div>
               </div>
-            ) : null}
-            <div className="settings-browser-pick">
-              <button
-                type="button"
-                className={`settings-browser-card${browser === "chrome" ? " active" : ""}`}
-                onClick={() => selectBrowser("chrome")}
-              >
-                <span className="settings-browser-icon">{chromeLogo}</span>
-                <span className="settings-browser-name">Google Chrome</span>
-                <span className="settings-browser-sub">Chromium profiles on this PC</span>
-              </button>
-              <button
-                type="button"
-                className={`settings-browser-card${browser === "firefox" ? " active" : ""}`}
-                onClick={() => selectBrowser("firefox")}
-              >
-                <span className="settings-browser-icon">{firefoxLogo}</span>
-                <span className="settings-browser-name">Mozilla Firefox</span>
-                <span className="settings-browser-sub">Firefox profile folders</span>
-              </button>
-            </div>
-            {browser ? (
-              <>
-                <label className="settings-label settings-label-mt" htmlFor="profileSelectReact">
-                  Profile folder
-                </label>
-                <select
-                  id="profileSelectReact"
-                  className="settings-select"
-                  value={profilePath || profileList[0]?.path || ""}
-                  onChange={(e) => setProfilePath(e.target.value)}
-                >
-                  {profileList.length === 0 ? (
-                    <option value="">No profiles found</option>
-                  ) : (
-                    profileList.map((p) => (
-                      <option key={p.path} value={p.path}>
-                        {p.label}
-                      </option>
-                    ))
-                  )}
-                </select>
-                <div className="import-options settings-import-options-grid">
-                  <label className="checkbox-label">
-                    <input type="checkbox" checked={impBm} onChange={(e) => setImpBm(e.target.checked)} />
-                    <span>Bookmarks</span>
-                  </label>
-                  <label className="checkbox-label">
-                    <input type="checkbox" checked={impHist} onChange={(e) => setImpHist(e.target.checked)} />
-                    <span>History</span>
-                  </label>
-                  <label className="checkbox-label">
-                    <input type="checkbox" checked={impCookies} onChange={(e) => setImpCookies(e.target.checked)} />
-                    <span>Cookies</span>
-                  </label>
-                  <label className="checkbox-label">
-                    <input type="checkbox" checked={impPw} onChange={(e) => setImpPw(e.target.checked)} />
-                    <span>Passwords</span>
-                  </label>
-                  <label className="checkbox-label">
-                    <input type="checkbox" checked={impAf} onChange={(e) => setImpAf(e.target.checked)} />
-                    <span>Autofill</span>
-                  </label>
+              <div className="settings-section">
+                <label className="settings-label">Theme</label>
+                <div className="theme-grid">
+                  {(["dark", "aurora", "ocean", "ember"] as const).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      className={`theme-card${activeTheme === t ? " active" : ""}`}
+                      data-theme={t}
+                      onClick={() => applyTheme(t)}
+                    >
+                      <div className={`theme-preview ${t}-preview`} />
+                      <span>{t === "dark" ? "Void" : t[0].toUpperCase() + t.slice(1)}</span>
+                    </button>
+                  ))}
                 </div>
-                <div className="settings-source-stats">{sourceStatsLine}</div>
-                <div className="import-actions">
+              </div>
+            </div>
+
+            <div className="settings-card settings-card--import">
+              <div className="settings-card-head">
+                <div className="settings-card-title">Import</div>
+                <div className="settings-card-sub">Bring your data from installed browsers</div>
+              </div>
+              <div className="settings-section">
+                <p className="settings-hint">
+                  Pick the browser engine, then the exact profile folder (Chrome can have many). Passwords are
+                  imported as metadata where the OS still encrypts secrets.
+                </p>
+                {appStats ? (
+                  <div className="settings-import-app-summary">
+                    <span className="settings-import-app-title">Already in this app</span>
+                    <span className="settings-import-app-counts">
+                      {appStats.bookmarks} bookmarks · {appStats.history} history · {appStats.cookies} cookies ·{" "}
+                      {appStats.passwords} passwords · {appStats.autofill} autofill
+                    </span>
+                    {appStats.lastImport ? (
+                      <span className="settings-import-last">
+                        Last import: {appStats.lastImport.browser ?? "?"} ·{" "}
+                        {appStats.lastImport.timestamp ? new Date(appStats.lastImport.timestamp).toLocaleString() : ""}{" "}
+                        ({(appStats.lastImport.dataTypes ?? []).join(", ")})
+                      </span>
+                    ) : (
+                      <span className="settings-import-last muted">No import recorded yet</span>
+                    )}
+                  </div>
+                ) : null}
+                <div className="settings-browser-pick">
                   <button
                     type="button"
-                    className="btn-primary"
-                    disabled={!browser || importBusy || profileList.length === 0}
-                    onClick={() => void startImport()}
+                    className={`settings-browser-card${browser === "chrome" ? " active" : ""}`}
+                    onClick={() => selectBrowser("chrome")}
                   >
-                    Import selected data
+                    <span className="settings-browser-icon">{chromeLogo}</span>
+                    <span className="settings-browser-name">Google Chrome</span>
+                    <span className="settings-browser-sub">Chromium profiles on this PC</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`settings-browser-card${browser === "firefox" ? " active" : ""}`}
+                    onClick={() => selectBrowser("firefox")}
+                  >
+                    <span className="settings-browser-icon">{firefoxLogo}</span>
+                    <span className="settings-browser-name">Mozilla Firefox</span>
+                    <span className="settings-browser-sub">Firefox profile folders</span>
                   </button>
                 </div>
-              </>
-            ) : null}
-            <div className="import-progress" style={{ display: progress.show ? "block" : "none" }}>
-              <div className="progress-bar">
-                <div className="progress-fill" style={{ width: `${progress.pct}%` }} />
+                {browser ? (
+                  <>
+                    <label className="settings-label settings-label-mt" htmlFor="profileSelectReact">
+                      Profile folder
+                    </label>
+                    <select
+                      id="profileSelectReact"
+                      className="settings-select"
+                      value={profilePath || profileList[0]?.path || ""}
+                      onChange={(e) => setProfilePath(e.target.value)}
+                    >
+                      {profileList.length === 0 ? (
+                        <option value="">No profiles found</option>
+                      ) : (
+                        profileList.map((p) => (
+                          <option key={p.path} value={p.path}>
+                            {p.label}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <div className="import-options settings-import-options-grid">
+                      <label className="checkbox-label">
+                        <input type="checkbox" checked={impBm} onChange={(e) => setImpBm(e.target.checked)} />
+                        <span>Bookmarks</span>
+                      </label>
+                      <label className="checkbox-label">
+                        <input type="checkbox" checked={impHist} onChange={(e) => setImpHist(e.target.checked)} />
+                        <span>History</span>
+                      </label>
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={impCookies}
+                          onChange={(e) => setImpCookies(e.target.checked)}
+                        />
+                        <span>Cookies</span>
+                      </label>
+                      <label className="checkbox-label">
+                        <input type="checkbox" checked={impPw} onChange={(e) => setImpPw(e.target.checked)} />
+                        <span>Passwords</span>
+                      </label>
+                      <label className="checkbox-label">
+                        <input type="checkbox" checked={impAf} onChange={(e) => setImpAf(e.target.checked)} />
+                        <span>Autofill</span>
+                      </label>
+                    </div>
+                    <div className="settings-source-stats">{sourceStatsLine}</div>
+                    <div className="import-actions">
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        disabled={!browser || importBusy || profileList.length === 0}
+                        onClick={() => void startImport()}
+                      >
+                        Import selected data
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+                <div className="import-progress" style={{ display: progress.show ? "block" : "none" }}>
+                  <div className="progress-bar">
+                    <div className="progress-fill" style={{ width: `${progress.pct}%` }} />
+                  </div>
+                  <div className="progress-text">{progress.text}</div>
+                </div>
               </div>
-              <div className="progress-text">{progress.text}</div>
             </div>
-          </div>
-          <div className="settings-section">
-            <label className="settings-label" htmlFor="homePageInputReact">
-              Home Page
-            </label>
-            <input
-              id="homePageInputReact"
-              type="text"
-              className="settings-input"
-              placeholder="https://duckduckgo.com"
-              value={homePage}
-              onChange={(e) => setHomePage(e.target.value)}
-              onBlur={() => bridge?.setHomePage?.(homePage.trim())}
-            />
-          </div>
-          <div className="settings-section">
-            <label className="settings-label">System Info</label>
-            <div className="sysinfo-grid">
-              <div className="sysinfo-item">
-                <span className="si-label">Electron</span>
-                <span className="si-val">{sys?.version ?? "—"}</span>
+
+            <div className="settings-card settings-card--home">
+              <div className="settings-card-head">
+                <div className="settings-card-title">Home</div>
+                <div className="settings-card-sub">Start page URL</div>
               </div>
-              <div className="sysinfo-item">
-                <span className="si-label">Chrome</span>
-                <span className="si-val">{sys?.chrome ?? "—"}</span>
-              </div>
-              <div className="sysinfo-item">
-                <span className="si-label">Node</span>
-                <span className="si-val">{sys?.node ?? "—"}</span>
-              </div>
-              <div className="sysinfo-item">
-                <span className="si-label">Memory</span>
-                <span className="si-val">{sys?.memory ?? "—"}</span>
-              </div>
-              <div className="sysinfo-item">
-                <span className="si-label">Platform</span>
-                <span className="si-val">{sys?.platform ?? "—"}</span>
-              </div>
-              <div className="sysinfo-item">
-                <span className="si-label">CPUs</span>
-                <span className="si-val">{sys?.cpus ?? "—"}</span>
+              <div className="settings-section">
+                <label className="settings-label" htmlFor="homePageInputReact">
+                  Home Page
+                </label>
+                <input
+                  id="homePageInputReact"
+                  type="text"
+                  className="settings-input"
+                  placeholder="https://duckduckgo.com"
+                  value={homePage}
+                  onChange={(e) => setHomePage(e.target.value)}
+                  onBlur={() => bridge?.setHomePage?.(homePage.trim())}
+                />
               </div>
             </div>
-          </div>
-          <div className="settings-section">
-            <label className="settings-label">Keyboard Shortcuts</label>
-            <div className="shortcuts-list">
-              <div className="shortcut-row">
-                <kbd>Ctrl+T</kbd>
-                <span>New Tab</span>
+
+            <div className="settings-card settings-card--system">
+              <div className="settings-card-head">
+                <div className="settings-card-title">System</div>
+                <div className="settings-card-sub">Runtime details</div>
               </div>
-              <div className="shortcut-row">
-                <kbd>Ctrl+W</kbd>
-                <span>Close Tab</span>
+              <div className="settings-section">
+                <div className="sysinfo-grid">
+                  <div className="sysinfo-item">
+                    <span className="si-label">Electron</span>
+                    <span className="si-val">{sys?.version ?? "—"}</span>
+                  </div>
+                  <div className="sysinfo-item">
+                    <span className="si-label">Chrome</span>
+                    <span className="si-val">{sys?.chrome ?? "—"}</span>
+                  </div>
+                  <div className="sysinfo-item">
+                    <span className="si-label">Node</span>
+                    <span className="si-val">{sys?.node ?? "—"}</span>
+                  </div>
+                  <div className="sysinfo-item">
+                    <span className="si-label">Memory</span>
+                    <span className="si-val">{sys?.memory ?? "—"}</span>
+                  </div>
+                  <div className="sysinfo-item">
+                    <span className="si-label">Platform</span>
+                    <span className="si-val">{sys?.platform ?? "—"}</span>
+                  </div>
+                  <div className="sysinfo-item">
+                    <span className="si-label">CPUs</span>
+                    <span className="si-val">{sys?.cpus ?? "—"}</span>
+                  </div>
+                </div>
               </div>
-              <div className="shortcut-row">
-                <kbd>Ctrl+L</kbd>
-                <span>Focus Address Bar</span>
+            </div>
+
+            <div className="settings-card settings-card--shortcuts">
+              <div className="settings-card-head">
+                <div className="settings-card-title">Shortcuts</div>
+                <div className="settings-card-sub">Keyboard controls</div>
               </div>
-              <div className="shortcut-row">
-                <kbd>Ctrl+F</kbd>
-                <span>Find in Page</span>
-              </div>
-              <div className="shortcut-row">
-                <kbd>Ctrl+R / F5</kbd>
-                <span>Reload</span>
-              </div>
-              <div className="shortcut-row">
-                <kbd>Ctrl+Shift+S</kbd>
-                <span>Screenshot</span>
-              </div>
-              <div className="shortcut-row">
-                <kbd>Ctrl+= / Ctrl+-</kbd>
-                <span>Zoom In/Out</span>
-              </div>
-              <div className="shortcut-row">
-                <kbd>Ctrl+0</kbd>
-                <span>Reset Zoom</span>
-              </div>
-              <div className="shortcut-row">
-                <kbd>F12</kbd>
-                <span>DevTools</span>
-              </div>
-              <div className="shortcut-row">
-                <kbd>Alt+Left / Alt+Right</kbd>
-                <span>Back / Forward</span>
+              <div className="settings-section">
+                <div className="shortcuts-list">
+                  <div className="shortcut-row">
+                    <kbd>Ctrl+T</kbd>
+                    <span>New Tab</span>
+                  </div>
+                  <div className="shortcut-row">
+                    <kbd>Ctrl+W</kbd>
+                    <span>Close Tab</span>
+                  </div>
+                  <div className="shortcut-row">
+                    <kbd>Ctrl+L</kbd>
+                    <span>Focus Address Bar</span>
+                  </div>
+                  <div className="shortcut-row">
+                    <kbd>Ctrl+F</kbd>
+                    <span>Find in Page</span>
+                  </div>
+                  <div className="shortcut-row">
+                    <kbd>Ctrl+R / F5</kbd>
+                    <span>Reload</span>
+                  </div>
+                  <div className="shortcut-row">
+                    <kbd>Ctrl+Shift+S</kbd>
+                    <span>Screenshot</span>
+                  </div>
+                  <div className="shortcut-row">
+                    <kbd>Ctrl+= / Ctrl+-</kbd>
+                    <span>Zoom In/Out</span>
+                  </div>
+                  <div className="shortcut-row">
+                    <kbd>Ctrl+0</kbd>
+                    <span>Reset Zoom</span>
+                  </div>
+                  <div className="shortcut-row">
+                    <kbd>F12</kbd>
+                    <span>DevTools</span>
+                  </div>
+                  <div className="shortcut-row">
+                    <kbd>Alt+Left / Alt+Right</kbd>
+                    <span>Back / Forward</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
     </>,
-    document.body,
+    document.getElementById("webviewOverlayHost") ?? document.body,
   );
 }

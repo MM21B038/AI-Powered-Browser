@@ -86,20 +86,137 @@ export const FORM_SCHEMA_SCRIPT = `
 
 export const INTERACTABLES_SCRIPT = `
 (function() {
-  const sel = 'a,button,input,select,textarea,label,[role=button],[role=link],[tabindex]';
+  const sel = 'a,button,input,select,textarea,label,[role=button],[role=link],[role=checkbox],[role=radio],[role=combobox],[tabindex]';
+
+  function isInteractive(el) {
+    if (!el || el.nodeType !== 1) return false;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'button' || tag === 'a' || tag === 'select' || tag === 'textarea') return true;
+    if (tag === 'input') return true;
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    if (['button','link','menuitem','option','tab','checkbox','radio','combobox','switch'].includes(role)) return true;
+    if (el.hasAttribute('aria-haspopup')) return true;
+    if (el.hasAttribute('tabindex') && el.tabIndex >= 0) return true;
+    return false;
+  }
+
+  function closestInteractive(el) {
+    let cur = el;
+    while (cur && cur !== document.body) {
+      if (isInteractive(cur)) return cur;
+      cur = cur.parentElement;
+    }
+    return el;
+  }
+
+  function unique(sel) {
+    try { return document.querySelectorAll(sel).length === 1; } catch { return false; }
+  }
+  function escAttr(v){ return JSON.stringify(String(v)); }
+
+  function buildSelector(el) {
+    const tag = el.tagName.toLowerCase();
+    if (el.id && !/^\\d/.test(el.id)) {
+      const s = '#' + CSS.escape(el.id);
+      if (unique(s)) return s;
+    }
+    const dataKeys = ['data-testid','data-test','data-qa','data-cy'];
+    for (const k of dataKeys) {
+      const v = el.getAttribute(k);
+      if (v) { const s = tag + '[' + k + '=' + escAttr(v) + ']'; if (unique(s)) return s; }
+    }
+    const name = el.getAttribute('name');
+    if (name) {
+      const s = tag + '[name=' + escAttr(name) + ']';
+      if (unique(s)) return s;
+    }
+    const al = el.getAttribute('aria-label');
+    if (al) {
+      const s = tag + '[aria-label=' + escAttr(al) + ']';
+      if (unique(s)) return s;
+    }
+    const role = el.getAttribute('role');
+    if (role && al) {
+      const s = '[role=' + escAttr(role) + '][aria-label=' + escAttr(al) + ']';
+      if (unique(s)) return s;
+    }
+    let cur = el;
+    const parts = [];
+    for (let depth = 0; cur && cur !== document.body && depth < 4; depth++) {
+      const t = cur.tagName.toLowerCase();
+      let part = t;
+      const pid = cur.id && !/^\\d/.test(cur.id) ? '#' + CSS.escape(cur.id) : '';
+      if (pid) part += pid;
+      else {
+        const sibs = Array.from(cur.parentElement ? cur.parentElement.children : []).filter(x => x.tagName === cur.tagName);
+        if (sibs.length > 1) {
+          const idx = sibs.indexOf(cur) + 1;
+          part += ':nth-of-type(' + idx + ')';
+        }
+      }
+      parts.unshift(part);
+      const s = parts.join(' > ');
+      if (unique(s)) return s;
+      cur = cur.parentElement;
+    }
+    return parts.join(' > ') || tag;
+  }
+
+  function labelFor(el) {
+    return (
+      (el.innerText || el.textContent || '').trim() ||
+      (el.value != null ? String(el.value).trim() : '') ||
+      (el.getAttribute('aria-label') || '').trim() ||
+      (el.getAttribute('title') || '').trim() ||
+      (el.getAttribute('placeholder') || '').trim()
+    ).slice(0, 120);
+  }
+
+  function kindFor(el) {
+    const tag = el.tagName.toLowerCase();
+    const type = (el.type || '').toLowerCase();
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    if (tag === 'input' && type === 'checkbox') return 'checkbox';
+    if (tag === 'input' && type === 'radio') return 'radio';
+    if (tag === 'input' && type === 'date') return 'date';
+    if (tag === 'select') return el.multiple ? 'multi-select' : 'select';
+    if (role === 'combobox') return 'combobox';
+    if (tag === 'textarea') return 'textarea';
+    if (tag === 'input') return 'input';
+    if (tag === 'a' || role === 'link') return 'link';
+    if (tag === 'button' || role === 'button') return 'button';
+    return tag;
+  }
+
   const out = [];
   document.querySelectorAll(sel).forEach((el, i) => {
     if (i > 80) return;
     const r = el.getBoundingClientRect();
     if (r.width === 0 && r.height === 0) return;
-    const t = (el.innerText || el.textContent || el.value || el.getAttribute("aria-label") || "").trim().slice(0, 120);
+    const t = labelFor(el);
     if (!t && el.tagName !== "INPUT") return;
+    const actionEl = closestInteractive(el);
+    const kind = kindFor(actionEl);
+    const selector = buildSelector(actionEl);
+    const role = actionEl.getAttribute('role') || '';
+    const type = actionEl.type || '';
+    let suggestedCommand = '';
+    if (kind === 'checkbox') suggestedCommand = 'toggle_checkbox ' + selector;
+    else if (kind === 'radio') suggestedCommand = 'toggle_radio ' + selector;
+    else if (kind === 'select' || kind === 'multi-select') suggestedCommand = 'select ' + selector + ' by label \"...\"';
+    else if (kind === 'date') suggestedCommand = 'date ' + selector + ' = Mar 25 2026';
+    else if (kind === 'input' || kind === 'textarea' || kind === 'combobox') suggestedCommand = 'fill ' + selector + ' with \"...\"';
+    else suggestedCommand = 'click ' + selector;
     out.push({
-      tag: el.tagName.toLowerCase(),
-      type: el.type || "",
-      text: t,
-      id: el.id || "",
-      name: el.name || "",
+      kind,
+      label: t,
+      selector,
+      tag: actionEl.tagName.toLowerCase(),
+      role,
+      type,
+      id: actionEl.id || "",
+      name: actionEl.name || "",
+      suggestedCommand,
     });
   });
   return { items: out };

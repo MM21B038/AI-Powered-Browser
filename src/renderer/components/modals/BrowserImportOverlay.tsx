@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactElement } from "react";
 import { createPortal } from "react-dom";
+import { LoadingIconCarousel } from "../LoadingIconCarousel";
 
 export function BrowserImportOverlay(): ReactElement | null {
   const [busy, setBusy] = useState(false);
@@ -18,7 +19,11 @@ export function BrowserImportOverlay(): ReactElement | null {
   return createPortal(
     <div className="import-overlay" style={{ display: "flex" }}>
       <div className="import-box">
-        <div className="loading-ring" />
+        <LoadingIconCarousel
+          compact
+          showCaption={false}
+          ariaLabel="Scanning installed browsers"
+        />
         <p>Scanning installed browsers...</p>
       </div>
     </div>,

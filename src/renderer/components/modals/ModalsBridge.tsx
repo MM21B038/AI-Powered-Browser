@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { BrowserImportOverlay } from "./BrowserImportOverlay";
 import { FirstRunModal } from "./FirstRunModal";
 import { ImportWizardModal } from "./ImportWizardModal";
@@ -13,6 +13,7 @@ export function ModalsBridge(): ReactElement | null {
   const [firstRunOpen, setFirstRunOpen] = useState(false);
   const [importWizardOpen, setImportWizardOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsHrefBackupRef = useRef<string | null>(null);
 
   useEffect(() => {
     const sync = () => {
@@ -31,7 +32,37 @@ export function ModalsBridge(): ReactElement | null {
     return () => window.removeEventListener("react-open-settings", onSettings);
   }, [useReactModalsUi]);
 
+  useEffect(() => {
+    if (!useReactModalsUi) return;
+    const onCloseSettings = () => {
+      setSettingsOpen(false);
+      if (settingsHrefBackupRef.current) {
+        window.history.replaceState(null, "", settingsHrefBackupRef.current);
+        settingsHrefBackupRef.current = null;
+      }
+    };
+    window.addEventListener("react-close-settings", onCloseSettings);
+    return () => window.removeEventListener("react-close-settings", onCloseSettings);
+  }, [useReactModalsUi]);
+
+  useEffect(() => {
+    if (!useReactModalsUi || !settingsOpen) return;
+    if (!settingsHrefBackupRef.current) {
+      settingsHrefBackupRef.current = window.location.href.replace(/#.*$/, "");
+    }
+    const base = window.location.href.replace(/#.*$/, "");
+    window.history.replaceState(null, "", `${base}#/panel/settings`);
+  }, [useReactModalsUi, settingsOpen]);
+
   if (!useReactModalsUi) return null;
+
+  const closeSettings = () => {
+    setSettingsOpen(false);
+    if (settingsHrefBackupRef.current) {
+      window.history.replaceState(null, "", settingsHrefBackupRef.current);
+      settingsHrefBackupRef.current = null;
+    }
+  };
 
   const onProfileComplete = () => {
     window.dispatchEvent(new CustomEvent("profile-gate-complete"));
@@ -57,7 +88,7 @@ export function ModalsBridge(): ReactElement | null {
       <ProfileModal open={profileOpen} onComplete={onProfileComplete} />
       <FirstRunModal open={firstRunOpen} onDismiss={closeFirstRun} />
       <ImportWizardModal open={importWizardOpen} onSkip={skipImportWizard} />
-      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsPanel open={settingsOpen} onClose={closeSettings} />
     </>
   );
 }

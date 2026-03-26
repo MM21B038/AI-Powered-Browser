@@ -79,7 +79,9 @@ declare global {
     reorderTabs: (movedId: number, targetId: number, side: "left" | "right") => void;
     getProfileSnapshot?: () => LegacyProfileSnapshot;
     navigateToUrl?: (url: string) => void;
-    closeSidePanels?: () => void;
+    closeSidePanels?: (opts?: { restorePreviousUrl?: boolean }) => void;
+    /** Sync left rail active state + webview pointer-events after panel/hub/settings changes */
+    syncRailAndWebview?: () => void;
     toggleSidePanel?: (panelId: string) => void;
     showToast?: (message: string, duration?: number) => void;
     removeBookmarkByUrl?: (url: string) => void;
@@ -97,6 +99,10 @@ declare global {
     /** Typed automation (same engine as chat commands). */
     runAutomationCommand?: (cmd: AutomationCommand) => Promise<AutomationResult>;
     dispatchAutomationLine?: (line: string) => Promise<AutomationResult>;
+    openToolsHub?: (opts?: { toolId?: string | null }) => void;
+    closeToolsHub?: () => void;
+    toggleToolsHub?: () => void;
+    runQuickCommand?: (cmd: string, opts?: { closeHub?: boolean }) => void;
   }
 
   interface Window {
