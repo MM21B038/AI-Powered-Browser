@@ -2,7 +2,6 @@ import { useEffect, useState, type ReactElement } from "react";
 import { createPortal } from "react-dom";
 
 const POLL_MS = 200;
-const HOST_WAIT_MS = 1200;
 const HOST_RETRY_MS = 32;
 
 export function NavChromeBridge(): ReactElement | null {
@@ -14,17 +13,33 @@ export function NavChromeBridge(): ReactElement | null {
   const [findQuery, setFindQuery] = useState("");
 
   useEffect(() => {
-    const t0 = Date.now();
     const id = window.setInterval(() => {
-      const navEl = document.getElementById("reactNavHost");
-      const findEl = document.getElementById("reactFindHost");
+      let navEl = document.getElementById("reactNavHost");
+      let findEl = document.getElementById("reactFindHost");
+      if (!navEl) {
+        // Self-heal: create nav portal hosts if kernel host wiring didn't run yet.
+        const pageFrame = document.getElementById("browserPageFrame");
+        const mainCol = document.getElementById("browserMainColumn");
+        const parent = pageFrame ?? mainCol;
+        if (parent) {
+          const crumbBar = document.getElementById("crumbBar");
+          const createdNav = document.createElement("div");
+          createdNav.id = "reactNavHost";
+          createdNav.className = "nav-bar";
+          if (crumbBar && crumbBar.parentElement === parent) crumbBar.after(createdNav);
+          else parent.insertBefore(createdNav, parent.firstChild);
+          navEl = createdNav;
+        }
+      }
+      if (navEl && !findEl) {
+        const createdFind = document.createElement("div");
+        createdFind.id = "reactFindHost";
+        navEl.after(createdFind);
+        findEl = createdFind;
+      }
       if (navEl) setNavHost(navEl);
       if (findEl) setFindHost(findEl);
-      if (navEl && findEl) {
-        window.clearInterval(id);
-        return;
-      }
-      if (Date.now() - t0 >= HOST_WAIT_MS) window.clearInterval(id);
+      if (navEl && findEl) window.clearInterval(id);
     }, HOST_RETRY_MS);
     return () => window.clearInterval(id);
   }, []);

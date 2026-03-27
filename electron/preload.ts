@@ -18,6 +18,13 @@ const electronApi: ElectronApi = {
   showNotification: (title, body) => ipcRenderer.invoke("show-notification", { title, body }),
   captureWebview: (webContentsId, rect) => ipcRenderer.invoke("capture-webview", { webContentsId, rect }),
   saveScreenshot: (dataUrl) => ipcRenderer.invoke("save-screenshot", dataUrl),
+  bgEnsureSession: (sessionId) => ipcRenderer.invoke("bg-session-ensure", { sessionId }),
+  bgKillSession: (sessionId) => ipcRenderer.invoke("bg-session-kill", { sessionId }),
+  bgGoto: (sessionId, url) => ipcRenderer.invoke("bg-goto", { sessionId, url }),
+  bgEval: (sessionId, script) => ipcRenderer.invoke("bg-eval", { sessionId, script }),
+  bgGetUrl: (sessionId) => ipcRenderer.invoke("bg-url", { sessionId }),
+  bgGetTitle: (sessionId) => ipcRenderer.invoke("bg-title", { sessionId }),
+  bgScreenshot: (sessionId) => ipcRenderer.invoke("bg-screenshot", { sessionId }),
   showSaveDialog: (options) => ipcRenderer.invoke("show-save-dialog", options),
   setZoom: (level) => ipcRenderer.invoke("set-zoom", level),
   sendChatMessage: (message) => ipcRenderer.invoke("chat-message", message),
@@ -49,6 +56,7 @@ const electronApi: ElectronApi = {
   addHistoryEntry: (entry) => ipcRenderer.invoke("add-history-entry", entry),
   getDataStats: () => ipcRenderer.invoke("get-data-stats"),
   clearAllData: () => ipcRenderer.invoke("clear-all-data"),
+  debugLog: (payload) => ipcRenderer.invoke("debug-log", payload),
 };
 
 contextBridge.exposeInMainWorld("electronAPI", electronApi);

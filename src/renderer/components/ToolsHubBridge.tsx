@@ -12,7 +12,9 @@ import {
   ToolsHubClickDetail,
   ToolsHubFillDetail,
   ToolsHubGenericDetail,
+  ToolsHubPressDetail,
   ToolsHubScrollDetail,
+  ToolsHubSessionDetail,
   ToolsHubTypeDetail,
 } from "./tools-hub/ToolDetailViews";
 
@@ -222,9 +224,27 @@ export function ToolsHubBridge(): ReactElement | null {
           onBack={() => backFromToolDetail(td.category)}
         />
       );
+    } else if (td.item.detail === "press") {
+      body = (
+        <ToolsHubPressDetail
+          category={td.category}
+          item={td.item}
+          bridge={bridge}
+          onBack={() => backFromToolDetail(td.category)}
+        />
+      );
     } else if (td.item.detail && TOOLS_HUB_NAV_FLOW_DETAILS.includes(td.item.detail)) {
       body = (
         <ToolsHubNavFlowDetail
+          category={td.category}
+          item={td.item}
+          bridge={bridge}
+          onBack={() => backFromToolDetail(td.category)}
+        />
+      );
+    } else if (td.item.detail === "session") {
+      body = (
+        <ToolsHubSessionDetail
           category={td.category}
           item={td.item}
           bridge={bridge}

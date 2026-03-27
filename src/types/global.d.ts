@@ -13,6 +13,7 @@ declare global {
 
   interface LegacyBrowserState {
     activeTabId: number | null;
+    activeSessionId?: string;
     tabCount: number;
     activeUrl: string;
     canGoBack: boolean;
@@ -73,6 +74,11 @@ declare global {
     zoomReset?: () => void;
     getState: () => LegacyBrowserState;
     getTabs: () => LegacyTabSnapshot[];
+    getSessions?: () => Array<{ id: string; headless: boolean; tabCount?: number; activeTabId?: number | null; isActive?: boolean; createdAt?: number; activeForMs?: number }>;
+    getActiveSessionId?: () => string;
+    switchSessionById?: (sessionId: string) => boolean;
+    createSession?: (headless: boolean) => { id: string; headless: boolean };
+    killSessionById?: (sessionId: string) => boolean;
     switchTabById: (id: number) => void;
     closeTabById: (id: number) => void;
     /** @param side drop edge relative to `targetId` */

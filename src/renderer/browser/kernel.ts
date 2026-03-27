@@ -5,6 +5,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { SPOTLIGHT_ICON_SVGS } from "../shared/spotlightIconSvgs";
 import { QUICK_COMMAND_ENTRIES } from "../shared/quick-command-entries";
+import { getToolTemplateLine } from "../shared/tools-hub-templates";
 
 /**
  * Browser kernel: tab/webview/profile/chat/tools. Call initBrowserKernel() after the shell DOM
@@ -38,6 +39,10 @@ const USE_REACT_CHAT_RESIZE = true;
 
 /** Per-<webview> lifecycle listeners (one Electron <webview> per tab). */
 const webviewsWithListeners = new WeakSet();
+/** Tracks which webviews have already fired `dom-ready` (for automation screenshot timing). */
+const webviewDomReady = new WeakSet();
+/** Tracks which webviews have completed at least one load. */
+const webviewDidFinishLoad = new WeakSet();
 
 window.__FEATURE_FLAGS__ = {
   USE_REACT_MODALS,
@@ -54,6 +59,138 @@ let lastFindQuery = "";
 let tabs = [];
 let activeTabId = null;
 let tabCounter = 0;
+const DEFAULT_SESSION_ID = `s_${Math.random().toString(36).slice(2, 8)}`;
+let activeSessionId = DEFAULT_SESSION_ID;
+const sessions = new Map();
+
+function traceKernel(message, data) {
+  try {
+    void window.electronAPI?.debugLog?.({
+      source: "kernel",
+      message,
+      data,
+    });
+  } catch {
+    // no-op
+  }
+}
+
+function snapshotKernelState() {
+  return {
+    activeSessionId,
+    activeTabId,
+    tabCount: tabs.length,
+    hasBrowserFrame: !!browserFrame,
+    browserFrameId: browserFrame?.id || null,
+    browserFrameSession: browserFrame?.dataset?.orionSessionId || null,
+    browserFrameTab: browserFrame?.dataset?.orionTabId || null,
+    sessions: Array.from(sessions.values()).map((s) => ({
+      id: s.id,
+      headless: !!s.headless,
+      tabCount: s.tabs.length,
+      activeTabId: s.activeTabId,
+      webviews: s.tabs.map((t) => ({
+        id: t.id,
+        url: t.url,
+        hasWebview: !!t.webview,
+        isBrowserFrameId: !!t.webview && t.webview.id === "browserFrame",
+        webviewSession: t.webview?.dataset?.orionSessionId || null,
+        webviewTab: t.webview?.dataset?.orionTabId || null,
+      })),
+    })),
+  };
+}
+
+function makeSession(id, headless) {
+  return {
+    id,
+    headless: !!headless,
+    tabs: [],
+    activeTabId: null,
+    tabCounter: 0,
+    createdAt: Date.now(),
+    lastActiveAt: Date.now(),
+  };
+}
+
+function getSession(id = activeSessionId) {
+  return sessions.get(id) || null;
+}
+
+function getTabInSession(sessionId, id) {
+  const s = getSession(sessionId);
+  if (!s) return null;
+  return s.tabs.find((t) => t.id === id) || null;
+}
+
+function isWebviewOwnedByAnySession(wv) {
+  if (!wv) return false;
+  for (const s of sessions.values()) {
+    if (s?.tabs?.some((t) => t.webview === wv)) return true;
+  }
+  return false;
+}
+
+function persistActiveSessionState() {
+  const s = getSession(activeSessionId);
+  if (!s) return;
+  s.tabs = tabs;
+  s.activeTabId = activeTabId;
+  s.tabCounter = tabCounter;
+  s.lastActiveAt = Date.now();
+}
+
+function syncFromActiveSession() {
+  let s = getSession(activeSessionId);
+  if (!s) {
+    s = makeSession(activeSessionId, false);
+    sessions.set(activeSessionId, s);
+  }
+  tabs = s.tabs;
+  activeTabId = s.activeTabId;
+  tabCounter = s.tabCounter;
+  const t = activeTabId != null ? s.tabs.find((x) => x.id === activeTabId) : null;
+  browserFrame = t?.webview && t.webview.isConnected ? t.webview : null;
+}
+
+function withSessionState(sessionId, fn) {
+  const targetId = sessionId || activeSessionId;
+  if (!sessions.has(targetId)) return fn();
+  const prev = activeSessionId;
+  const same = prev === targetId;
+  const restore = () => {
+    persistActiveSessionState();
+    activeSessionId = prev;
+    syncFromActiveSession();
+  };
+
+  if (!same) {
+    persistActiveSessionState();
+    activeSessionId = targetId;
+    syncFromActiveSession();
+  }
+
+  let result;
+  try {
+    result = fn();
+  } catch (e) {
+    if (!same) restore();
+    throw e;
+  }
+
+  // Important: if `fn` is async, restore must happen after the Promise settles.
+  if (!same && result && typeof (result as { then?: unknown }).then === "function") {
+    return (result as Promise<unknown>).finally(() => restore());
+  }
+
+  if (!same) restore();
+  return result;
+}
+
+function generateSessionId() {
+  return `s_${Math.random().toString(36).slice(2, 8)}`;
+}
+sessions.set(DEFAULT_SESSION_ID, makeSession(DEFAULT_SESSION_ID, false));
 
 function generatePublicTabId() {
   // 5-digit, human-friendly, no leading zeros.
@@ -428,6 +565,8 @@ function ensureReactPortalHostsAfterShellChange() {
 refreshDomRefsFromDocument();
 hydrateLoadingSpotlightShellStages();
 setupReactPortalHosts();
+// IMPORTANT: run after DOM refs (`browserFrame`) declarations are initialized.
+syncFromActiveSession();
 // addTabBtn is rendered dynamically inside renderTabs()
 
 // If the app is waiting on profile selection, keep the loading spotlight behind modals
@@ -457,12 +596,19 @@ function leaveSettingsSurfaceSync() {
   window.dispatchEvent(new CustomEvent("react-close-settings"));
 }
 
+/** Clears workbench DOM state and notifies React — call after the next surface is visible when possible. */
+function leaveWorkbenchSurfaceSync() {
+  document.getElementById("webviewContainer")?.removeAttribute("data-workbench-open");
+  window.dispatchEvent(new CustomEvent("react-close-workbench"));
+}
+
 function wireReactSettingsButtons() {
   const s = document.getElementById("settingsBtn");
   const open = () => {
     closeSidePanels();
     const hub = document.getElementById("toolsHubRoot");
     const hubWasOpen = !!(hub && hub.classList.contains("tools-hub--open"));
+    leaveWorkbenchSurfaceSync();
     document.getElementById("webviewContainer")?.setAttribute("data-settings-open", "");
     window.dispatchEvent(new CustomEvent("react-open-settings"));
     syncRailPanelActive();
@@ -486,8 +632,7 @@ function wireReactSettingsButtons() {
 function showWebviewOnly() {
   closeSidePanels();
   closeToolsHub();
-  document.getElementById("webviewContainer")?.removeAttribute("data-workbench-open");
-  window.dispatchEvent(new CustomEvent("react-close-workbench"));
+  leaveWorkbenchSurfaceSync();
   leaveSettingsSurfaceSync();
   syncRailPanelActive();
   syncWebviewInteractionLayer();
@@ -496,6 +641,167 @@ function showWebviewOnly() {
 // -----------------------------------------------------------
 //  TAB MANAGEMENT
 // ═══════════════════════════════════════════════════════════
+
+function createSessionState(headless) {
+  const id = generateSessionId();
+  const s = makeSession(id, !!headless);
+  sessions.set(id, s);
+  return s;
+}
+
+function listSessions() {
+  const now = Date.now();
+  return Array.from(sessions.values()).map((s) => ({
+    id: s.id,
+    headless: !!s.headless,
+    tabCount: s.tabs.length,
+    activeTabId: s.activeTabId,
+    isActive: s.id === activeSessionId,
+    createdAt: typeof s.createdAt === "number" ? s.createdAt : now,
+    activeForMs: Math.max(0, now - (s.createdAt || now)),
+  }));
+}
+
+function ensureActiveShellReady() {
+  if (!getSession(activeSessionId)) {
+    sessions.set(DEFAULT_SESSION_ID, makeSession(DEFAULT_SESSION_ID, false));
+    activeSessionId = DEFAULT_SESSION_ID;
+    syncFromActiveSession();
+  }
+  if (tabs.length === 0) createTab(homePage);
+  if (activeTabId == null && tabs.length > 0) activeTabId = tabs[0].id;
+  const active = activeTabId != null ? getTab(activeTabId) : null;
+  if (active && !active.webview) ensureWebviewForTab(active);
+  // If shell is now bootstrapped, never keep the startup backdrop blocking UI.
+  if (tabs.length > 0) setProfileGateBackdrop(false);
+  traceKernel("ensureActiveShellReady", {
+    tabs: tabs.length,
+    activeTabId,
+    activeSessionId,
+    hasBrowserFrame: !!browserFrame,
+    hasActiveWebview: !!active?.webview,
+  });
+}
+
+function setWebviewVisibilityForSession(sessionId, visible) {
+  const s = getSession(sessionId);
+  if (!s) return;
+  s.tabs.forEach((t) => {
+    if (!t.webview) return;
+    if (!visible) t.webview.removeAttribute("id");
+    t.webview.style.visibility = visible ? "visible" : "hidden";
+    t.webview.style.pointerEvents = visible ? "auto" : "none";
+    t.webview.style.zIndex = visible ? "1" : "0";
+  });
+}
+
+function rebindActiveSessionViewport() {
+  traceKernel("rebindActiveSessionViewport:start", snapshotKernelState());
+  const s = getSession(activeSessionId);
+  let active = activeTabId != null ? getTab(activeTabId) : null;
+  if (!active && tabs.length > 0) {
+    activeTabId = tabs[0].id;
+    active = tabs[0];
+  }
+  if (active && !active.webview) ensureWebviewForTab(active);
+  if (active) {
+    // Re-run full switch path to restore nav/address/find bindings and webview visibility.
+    traceKernel("rebindActiveSessionViewport:switching_active_tab", { activeTabId: active.id });
+    switchTab(active.id);
+    traceKernel("rebindActiveSessionViewport:after_switchTab", snapshotKernelState());
+    return;
+  }
+  document.querySelectorAll("webview#browserFrame").forEach((wv) => {
+    try {
+      wv.removeAttribute("id");
+    } catch {
+      /* ignore */
+    }
+  });
+  if (active && active.webview) {
+    active.webview.id = "browserFrame";
+    active.webview.style.visibility = s?.headless ? "hidden" : "visible";
+    active.webview.style.pointerEvents = s?.headless ? "none" : "auto";
+    active.webview.style.zIndex = "1";
+    browserFrame = active.webview;
+  } else {
+    browserFrame = null;
+  }
+  if (addressBar) addressBar.value = active?.url === "about:blank" ? "" : active?.url || "";
+  updateNavButtons();
+  syncWebviewInteractionLayer();
+  traceKernel("rebindActiveSessionViewport:end", snapshotKernelState());
+}
+
+function switchSession(sessionId) {
+  traceKernel("switchSession:start", { targetSessionId: sessionId, state: snapshotKernelState() });
+  const next = getSession(sessionId);
+  if (!next) {
+    traceKernel("switchSession:target_missing", { targetSessionId: sessionId });
+    return false;
+  }
+  if (browserFrame) browserFrame.removeAttribute("id");
+  persistActiveSessionState();
+  setWebviewVisibilityForSession(activeSessionId, false);
+  activeSessionId = sessionId;
+  syncFromActiveSession();
+  if (!next.headless && tabs.length === 0) createTab(homePage);
+  next.lastActiveAt = Date.now();
+  if (activeTabId == null && tabs.length > 0) activeTabId = tabs[0].id;
+  const active = activeTabId != null ? getTab(activeTabId) : null;
+  browserFrame = active?.webview || null;
+  if (active && active.webview) {
+    active.webview.id = "browserFrame";
+    active.webview.style.visibility = next.headless ? "hidden" : "visible";
+    active.webview.style.pointerEvents = next.headless ? "none" : "auto";
+  }
+  if (addressBar) addressBar.value = active?.url === "about:blank" ? "" : active?.url || "";
+  renderTabs();
+  updateNavButtons();
+  syncWebviewInteractionLayer();
+  traceKernel("switchSession:end", { targetSessionId: sessionId, state: snapshotKernelState() });
+  return true;
+}
+
+function killSessionById(sessionId) {
+  traceKernel("killSessionById:start", { sessionId, state: snapshotKernelState() });
+  if (!sessionId || sessionId === DEFAULT_SESSION_ID) return false;
+  persistActiveSessionState();
+  const s = getSession(sessionId);
+  if (!s) {
+    traceKernel("killSessionById:session_missing", { sessionId });
+    return false;
+  }
+  try {
+    void window.electronAPI?.bgKillSession?.(sessionId);
+  } catch {
+    /* ignore */
+  }
+  s.tabs.forEach((t) => {
+    if (!t.webview) return;
+    try {
+      t.webview.remove();
+    } catch {
+      /* ignore */
+    }
+    t.webview = null;
+  });
+  sessions.delete(sessionId);
+  if (activeSessionId === sessionId) {
+    traceKernel("killSessionById:deleted_active_session_switching_default", { sessionId });
+    switchSession(DEFAULT_SESSION_ID);
+  } else {
+    // Deleting a non-active session can still disturb DOM ids/visibility; restore active viewport invariants.
+    traceKernel("killSessionById:deleted_non_active_session_rebind", {
+      deletedSessionId: sessionId,
+      currentActiveSessionId: activeSessionId,
+    });
+    rebindActiveSessionViewport();
+    renderTabs();
+  }
+  traceKernel("killSessionById:end", { sessionId, state: snapshotKernelState() });
+  return true;
+}
 
 function createTab(url = homePage) {
   const id = ++tabCounter;
@@ -550,20 +856,35 @@ function isActiveWebview(wv) {
 }
 
 function ensureWebviewForTab(tab) {
-  if (tab.webview) return tab.webview;
+  if (tab.webview) {
+    // A tab may keep a stale webview reference after session switching/deletion.
+    // If it's disconnected, recreate it so session-scoped commands (nav/screenshot) work.
+    if (tab.webview.isConnected) return tab.webview;
+    try {
+      tab.webview.remove();
+    } catch {
+      /* ignore */
+    }
+    tab.webview = null;
+  }
   const container = document.getElementById("webviewContainer");
   if (!container) return null;
+  const s = getSession(activeSessionId);
+  const isHeadless = !!s?.headless;
 
   const unowned = document.getElementById("browserFrame");
   if (
     unowned &&
     unowned.parentNode === container &&
-    !tabs.some((t) => t.webview === unowned)
+    !isWebviewOwnedByAnySession(unowned)
   ) {
     tab.webview = unowned;
     unowned.dataset.orionTabId = String(tab.id);
+    unowned.dataset.orionSessionId = activeSessionId;
     unowned.style.position = "absolute";
     unowned.style.inset = "0";
+    unowned.style.visibility = isHeadless ? "hidden" : "visible";
+    unowned.style.pointerEvents = isHeadless ? "none" : "auto";
     setupWebviewEvents(unowned);
     return unowned;
   }
@@ -571,9 +892,11 @@ function ensureWebviewForTab(tab) {
   const wv = document.createElement("webview");
   wv.className = "browser-frame";
   wv.setAttribute("allowpopups", "");
+  wv.setAttribute("partition", `persist:orion_${activeSessionId}`);
   wv.dataset.orionTabId = String(tab.id);
+  wv.dataset.orionSessionId = activeSessionId;
   wv.style.cssText =
-    "position:absolute;inset:0;visibility:hidden;pointer-events:none;z-index:0;";
+    `position:absolute;inset:0;visibility:${isHeadless ? "hidden" : "visible"};pointer-events:none;z-index:0;`;
   container.appendChild(wv);
   tab.webview = wv;
   setupWebviewEvents(wv);
@@ -581,11 +904,17 @@ function ensureWebviewForTab(tab) {
 }
 
 function switchTab(id) {
+  traceKernel("switchTab:start", { tabId: id, state: snapshotKernelState() });
   const prevActiveId = activeTabId;
   const prevTab = prevActiveId != null ? getTab(prevActiveId) : null;
   activeTabId = id;
   const tab = getTab(id);
-  if (!tab) return;
+  if (!tab) {
+    traceKernel("switchTab:tab_missing", { tabId: id, state: snapshotKernelState() });
+    return;
+  }
+  const session = getSession(activeSessionId);
+  const isHeadless = !!session?.headless;
 
   if (prevTab && prevTab.webview) {
     prevTab.webview.style.visibility = "hidden";
@@ -598,13 +927,14 @@ function switchTab(id) {
   if (!wv) {
     if (addressBar) addressBar.value = tab.url === "about:blank" ? "" : tab.url;
     renderTabs();
+    traceKernel("switchTab:no_webview", { tabId: id, state: snapshotKernelState() });
     return;
   }
 
   browserFrame = wv;
   wv.id = "browserFrame";
-  wv.style.visibility = "visible";
-  wv.style.pointerEvents = "auto";
+  wv.style.visibility = isHeadless ? "hidden" : "visible";
+  wv.style.pointerEvents = isHeadless ? "none" : "auto";
   wv.style.zIndex = "1";
   wv.style.position = "absolute";
   wv.style.inset = "0";
@@ -651,6 +981,9 @@ function switchTab(id) {
   updateBookmarkStar(tab.url === "about:blank" ? "" : tab.url);
   renderTabs();
   syncWebviewInteractionLayer();
+  // Keep session object in sync so syncFromActiveSession() restores correct state.
+  persistActiveSessionState();
+  traceKernel("switchTab:end", { tabId: id, state: snapshotKernelState() });
 }
 
 function closeTab(id, e) {
@@ -669,7 +1002,12 @@ function closeTab(id, e) {
     createTab();
     return;
   }
-  if (activeTabId === id) switchTab(tabs[tabs.length - 1].id);
+  if (activeTabId === id) {
+    const fallback = tabs[tabs.length - 1];
+    // If fallback tab points to a stale/removed webview, clear it so a fresh one is created.
+    if (fallback?.webview && !fallback.webview.isConnected) fallback.webview = null;
+    switchTab(fallback.id);
+  }
   else renderTabs();
 }
 
@@ -884,6 +1222,7 @@ function resolveInput(raw) {
 }
 
 function navigateTo(raw) {
+  traceKernel("navigateTo:start", { raw, state: snapshotKernelState() });
   const url = resolveInput(raw);
   if (!url) return;
   const tab = getTab(activeTabId);
@@ -893,10 +1232,25 @@ function navigateTo(raw) {
   tab.url = url;
   tab.initialized = true;
   if (addressBar) addressBar.value = url;
-  wv.loadURL(url);
+  try {
+    wv.loadURL(url);
+  } catch {
+    // Some freshly-created webviews (especially headless sessions) can throw until dom-ready.
+    // Setting src is safe pre-dom-ready and lets Electron navigate as soon as guest is ready.
+    try {
+      wv.src = url;
+    } catch {
+      try {
+        wv.setAttribute("src", url);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
   setLoading(true);
   updateSecurityIcon(url);
   hideError();
+  traceKernel("navigateTo:end", { raw, resolvedUrl: url, state: snapshotKernelState() });
 }
 
 function updateNavButtons() {
@@ -904,8 +1258,19 @@ function updateNavButtons() {
   try {
     backBtn.disabled = !browserFrame.canGoBack();
     forwardBtn.disabled = !browserFrame.canGoForward();
+    traceKernel("updateNavButtons", {
+      backDisabled: backBtn?.disabled,
+      forwardDisabled: forwardBtn?.disabled,
+      hasBrowserFrame: !!browserFrame,
+      browserFrameSession: browserFrame?.dataset?.orionSessionId || null,
+      browserFrameTab: browserFrame?.dataset?.orionTabId || null,
+    });
   } catch {
     /* webview not ready */
+    traceKernel("updateNavButtons:webview_not_ready", {
+      hasBrowserFrame: !!browserFrame,
+      browserFrameId: browserFrame?.id || null,
+    });
   }
 }
 
@@ -1040,13 +1405,15 @@ function setupWebviewEvents(wv) {
   wv.addEventListener(
     "dom-ready",
     () => {
+      webviewDomReady.add(wv);
       try {
         wv.setZoomLevel(zoomLevel);
       } catch {
         /* ignore */
       }
       const tid = Number(wv.dataset.orionTabId);
-      const tab = getTab(tid);
+      const sid = String(wv.dataset.orionSessionId || activeSessionId);
+      const tab = getTabInSession(sid, tid);
       if (tab && tab.url && tab.url !== "about:blank") {
         window.setTimeout(() => {
           if (!isActiveWebview(wv)) return;
@@ -1096,6 +1463,7 @@ function setupWebviewEvents(wv) {
   });
 
   wv.addEventListener("did-finish-load", () => {
+    webviewDidFinishLoad.add(wv);
     if (isActiveWebview(wv)) {
       setLoading(false);
       updateNavButtons();
@@ -1115,7 +1483,8 @@ function setupWebviewEvents(wv) {
       )
       .then((faviconUrl) => {
         const tid = Number(wv.dataset.orionTabId);
-        const t = getTab(tid);
+        const sid = String(wv.dataset.orionSessionId || activeSessionId);
+        const t = getTabInSession(sid, tid);
         if (t && faviconUrl && !t.favicon) {
           t.favicon = faviconUrl;
           renderTabs();
@@ -1127,7 +1496,8 @@ function setupWebviewEvents(wv) {
   wv.addEventListener("did-navigate", (e) => {
     const url = e.url || wv.getURL();
     const tid = Number(wv.dataset.orionTabId);
-    const t = getTab(tid);
+    const sid = String(wv.dataset.orionSessionId || activeSessionId);
+    const t = getTabInSession(sid, tid);
     if (t) {
       t.url = url;
       t.favicon = null;
@@ -1149,7 +1519,8 @@ function setupWebviewEvents(wv) {
   wv.addEventListener("did-navigate-in-page", (e) => {
     const url = e.url || wv.getURL();
     const tid = Number(wv.dataset.orionTabId);
-    const t = getTab(tid);
+    const sid = String(wv.dataset.orionSessionId || activeSessionId);
+    const t = getTabInSession(sid, tid);
     if (t) t.url = url;
     if (isActiveWebview(wv)) {
       if (addressBar) addressBar.value = url;
@@ -1160,7 +1531,8 @@ function setupWebviewEvents(wv) {
 
   wv.addEventListener("page-title-updated", (e) => {
     const tid = Number(wv.dataset.orionTabId);
-    const t = getTab(tid);
+    const sid = String(wv.dataset.orionSessionId || activeSessionId);
+    const t = getTabInSession(sid, tid);
     if (t && e.title) {
       t.title = e.title;
       renderTabs();
@@ -1178,7 +1550,8 @@ function setupWebviewEvents(wv) {
 
   wv.addEventListener("page-favicon-updated", (e) => {
     const tid = Number(wv.dataset.orionTabId);
-    const t = getTab(tid);
+    const sid = String(wv.dataset.orionSessionId || activeSessionId);
+    const t = getTabInSession(sid, tid);
     if (t && e.favicons && e.favicons.length > 0) {
       t.favicon = e.favicons[0];
       renderTabs();
@@ -1352,8 +1725,41 @@ function closeScreenshotMenu() {
   screenshotMenuOpen = false;
 }
 
+function waitForWebviewDomReady(wv, timeoutMs = 8000) {
+  if (!wv) return Promise.reject(new Error("No webview"));
+  if (webviewDomReady.has(wv) || webviewDidFinishLoad.has(wv)) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      try {
+        // eslint-disable-next-line no-console
+        console.warn("[kernel] waitForWebviewDomReady timeout");
+      } catch {
+        /* ignore */
+      }
+      reject(new Error("dom-ready timeout"));
+    }, timeoutMs);
+
+    const onReady = () => {
+      window.clearTimeout(timer);
+      webviewDomReady.add(wv);
+      resolve(undefined);
+    };
+    const onFinish = () => {
+      window.clearTimeout(timer);
+      webviewDidFinishLoad.add(wv);
+      resolve(undefined);
+    };
+
+    // Once listener so we don't leak if screenshot is called multiple times.
+    wv.addEventListener("dom-ready", onReady, { once: true });
+    wv.addEventListener("did-finish-load", onFinish, { once: true });
+  });
+}
+
 async function takeScreenshot(mode = "viewport") {
   try {
+    if (!browserFrame) throw new Error("No webview attached");
+    await waitForWebviewDomReady(browserFrame, 8000);
     showToast("📸 Capturing...");
     const img = await captureFullImage();
     let dataUrl;
@@ -2026,48 +2432,198 @@ function submitChat() {
 }
 
 function getKernelAutomationContext() {
-  return {
-    getBrowserFrame: () => browserFrame,
-    navigateTo,
-    resolveInput,
-    reload: () => {
-      if (browserFrame) {
-        browserFrame.reload();
-        setLoading(true);
+  const ensureSessionCommandReady = (sessionId) =>
+    withSessionState(sessionId, () => {
+      if (tabs.length === 0) {
+        const id = ++tabCounter;
+        tabs.push({
+          id,
+          publicId: generatePublicTabId(),
+          url: homePage,
+          title: "New Tab",
+          favicon: null,
+          loading: false,
+          _new: false,
+          initialized: false,
+          webview: null,
+        });
+        activeTabId = id;
       }
+      if (activeTabId == null && tabs.length > 0) activeTabId = tabs[0].id;
+      const active = activeTabId != null ? getTab(activeTabId) : null;
+      if (active) {
+        if (!active.webview || !active.webview.isConnected) ensureWebviewForTab(active);
+        const wv = active.webview;
+        // For automation (especially headless / non-active session), the webview may sit at
+        // about:blank until that session becomes visible. Force navigation if needed.
+        if (wv && active.url && active.url !== "about:blank") {
+          let cur = "";
+          try {
+            cur = wv.getURL ? wv.getURL() : "";
+          } catch {
+            /* ignore */
+          }
+          const needsNav = !cur || cur === "about:blank" || !urlsMatchForTabSwitch(cur, active.url);
+          if (needsNav) {
+            try {
+              wv.loadURL(active.url);
+            } catch {
+              try {
+                wv.src = active.url;
+              } catch {
+                try {
+                  wv.setAttribute("src", active.url);
+                } catch {
+                  /* ignore */
+                }
+              }
+            }
+            active.initialized = true;
+          }
+        }
+      }
+      persistActiveSessionState();
+    });
+
+  const shouldUseBackground = (sessionId?: string): boolean => {
+    if (!sessionId) return false;
+    const s = getSession(sessionId);
+    if (!s) return false;
+    if (s.headless) return true;
+    return sessionId !== activeSessionId;
+  };
+
+  const getBackgroundFrame = (sessionId: string) => ({
+    executeJavaScript: async (code: string) => {
+      await window.electronAPI.bgEnsureSession(sessionId);
+      const r = await window.electronAPI.bgEval(sessionId, code);
+      if (!r?.success) throw new Error(r?.error || "bg eval failed");
+      return r.data;
     },
-    goBack: () => {
-      if (browserFrame && browserFrame.canGoBack()) browserFrame.goBack();
+  });
+
+  return {
+    getBrowserFrame: (sessionId) => {
+      if (sessionId && shouldUseBackground(sessionId)) return getBackgroundFrame(sessionId);
+      if (sessionId) ensureSessionCommandReady(sessionId);
+      return withSessionState(sessionId, () => browserFrame);
     },
-    goForward: () => {
-      if (browserFrame && browserFrame.canGoForward()) browserFrame.goForward();
+    navigateTo: (raw, sessionId) => {
+      const uiSessionId = activeSessionId;
+      const targetSessionId = sessionId || activeSessionId;
+      const url = resolveInput(raw);
+      if (!url) return;
+      if (sessionId && shouldUseBackground(sessionId)) {
+        void window.electronAPI.bgEnsureSession(sessionId)
+          .then(() => window.electronAPI.bgGoto(sessionId, url))
+          .catch(() => {});
+        return;
+      }
+      withSessionState(sessionId, () => {
+        const tab = getTab(activeTabId);
+        if (!tab) return;
+        const wv = tab.webview || ensureWebviewForTab(tab);
+        if (!wv) return;
+        tab.url = url;
+        tab.initialized = true;
+        try {
+          wv.loadURL(url);
+        } catch {
+          try {
+            wv.src = url;
+          } catch {
+            try {
+              wv.setAttribute("src", url);
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+        // Only drive visible loading/nav UI for the actually open session.
+        if (targetSessionId === uiSessionId) {
+          if (addressBar) addressBar.value = url;
+          setLoading(true);
+          updateSecurityIcon(url);
+          hideError();
+        }
+        persistActiveSessionState();
+      });
     },
-    createTab: (url) => {
-      if (url) createTab(url);
-      else createTab();
+    resolveInput,
+    reload: (sessionId) => {
+      const uiSessionId = activeSessionId;
+      const targetSessionId = sessionId || activeSessionId;
+      withSessionState(sessionId, () => {
+        if (browserFrame) {
+          browserFrame.reload();
+          if (targetSessionId === uiSessionId) setLoading(true);
+        }
+      });
     },
-    switchTab,
-    closeTabById: (id) => closeTab(id),
-    getTabs: () =>
-      tabs.map((t) => ({
-        id: t.id,
-        publicId: t.publicId,
-        title: t.title || "New Tab",
-        url: t.url || "",
-      })),
-    getActiveTabId: () => activeTabId,
+    goBack: (sessionId) =>
+      withSessionState(sessionId, () => {
+        if (browserFrame && browserFrame.canGoBack()) browserFrame.goBack();
+      }),
+    goForward: (sessionId) =>
+      withSessionState(sessionId, () => {
+        if (browserFrame && browserFrame.canGoForward()) browserFrame.goForward();
+      }),
+    createTab: (url, sessionId) =>
+      withSessionState(sessionId, () => {
+        if (url) createTab(url);
+        else createTab();
+      }),
+    switchTab: (id, sessionId) =>
+      withSessionState(sessionId, () => {
+        switchTab(id);
+      }),
+    closeTabById: (id, sessionId) =>
+      withSessionState(sessionId, () => {
+        closeTab(id);
+      }),
+    getTabs: (sessionId) =>
+      withSessionState(sessionId, () =>
+        tabs.map((t) => ({
+          id: t.id,
+          publicId: t.publicId,
+          title: t.title || "New Tab",
+          url: t.url || "",
+        })),
+      ),
+    getActiveTabId: (sessionId) => withSessionState(sessionId, () => activeTabId),
     applyZoom,
     getZoomLevel: () => zoomLevel,
-    takeScreenshot,
+    takeScreenshot: (mode, sessionId) => {
+      if (sessionId && shouldUseBackground(sessionId)) {
+        return (async () => {
+          await window.electronAPI.bgEnsureSession(sessionId);
+          const r = await window.electronAPI.bgScreenshot(sessionId);
+          if (!r?.success) throw new Error(r?.error || "bg screenshot failed");
+          const dataUrl = r?.data?.dataUrl || "";
+          const saved = await window.electronAPI.saveScreenshot(dataUrl);
+          if (saved.success) {
+            showToast(`✅ Saved: ${saved.filename}`);
+            addScreenshotMessage(dataUrl, saved.filename);
+          } else {
+            showToast("❌ Screenshot failed");
+          }
+        })();
+      }
+      if (sessionId) ensureSessionCommandReady(sessionId);
+      return withSessionState(sessionId, () => takeScreenshot(mode));
+    },
+    createSession: (headless) => {
+      const s = createSessionState(headless);
+      return { id: s.id, headless: s.headless };
+    },
+    switchSession: (sessionId) => switchSession(sessionId),
+    killSession: (sessionId) => killSessionById(sessionId),
+    hasSession: (sessionId) => sessions.has(sessionId),
   };
 }
 
 async function processCommand(text) {
   const result = await dispatchAutomationLine(text, getKernelAutomationContext());
-  if (result.op === "screenshot" && result.success) {
-    await takeScreenshot("viewport");
-    return;
-  }
   if (result.message) addBotMessage(result.message);
 }
 // ── Message helpers ───────────────────────────────────────────
@@ -3281,6 +3837,7 @@ function showPickerActionPopup(sel, info, canFill, isCheckable) {
 // ═══════════════════════════════════════════════════════════
 
 let currentProfile = null;
+let mergedAppPasswordsOnce = false;
 
 function getProfile() {
   if (!currentProfile)
@@ -3363,6 +3920,7 @@ async function loadProfile(name) {
     history: (data && data.history) || [],
     passwords: (data && data.passwords) || [],
   };
+  mergedAppPasswordsOnce = false;
   document.getElementById("profileOverlay").style.display = "none";
   initDataPanels();
   showToast(`✅ Profile "${name}" loaded`);
@@ -3543,6 +4101,35 @@ function renderPasswords(filter) {
     ""
   ).toLowerCase();
   const p = getProfile();
+  // If Settings-imported passwords exist in app storage, merge them in-memory so they show here.
+  // (Settings import writes to DataManager; legacy side panels read from currentProfile.)
+  if (!mergedAppPasswordsOnce && (!p.passwords || p.passwords.length === 0) && window.electronAPI?.getPasswords) {
+    mergedAppPasswordsOnce = true;
+    window.electronAPI
+      .getPasswords()
+      .then((raw) => {
+        const arr = (raw && (raw.passwords || raw.data?.passwords)) || [];
+        if (!Array.isArray(arr) || arr.length === 0) return;
+        const seen = new Set((p.passwords || []).map((x) => `${x.url}@@${x.username}`));
+        arr.forEach((pw) => {
+          const url = String(pw.url || "").trim();
+          const username = String(pw.username || pw.username_value || "").trim();
+          if (!url || !username) return;
+          const key = `${url}@@${username}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          (p.passwords ||= []).push({
+            url,
+            username,
+            password: String(pw.password || "[encrypted]"),
+            note: pw.source ? `Imported (${pw.source})` : "",
+            addedAt: pw.dateLastUsed || pw.dateCreated || pw.timestamp || Date.now(),
+          });
+        });
+        renderPasswords();
+      })
+      .catch(() => {});
+  }
   const items = q
     ? p.passwords.filter(
         (pw) =>
@@ -3632,6 +4219,17 @@ function syncWebviewInteractionLayer() {
     wv.style.pointerEvents = blockWebview ? "none" : "";
   });
   syncTopChromeForSurface();
+  traceKernel("syncWebviewInteractionLayer", {
+    sideOpen,
+    hubOpen,
+    settingsOpen,
+    workbenchOpen,
+    blockWebview,
+    activeSessionId,
+    activeTabId,
+    browserFrameSession: browserFrame?.dataset?.orionSessionId || null,
+    browserFrameTab: browserFrame?.dataset?.orionTabId || null,
+  });
 }
 
 function syncRailPanelActive() {
@@ -3696,6 +4294,7 @@ function openToolsHub() {
   hub.classList.add("tools-hub--open");
   hub.style.display = "flex";
   hub.setAttribute("aria-hidden", "false");
+  leaveWorkbenchSurfaceSync();
   leaveSettingsSurfaceSync();
   syncRailPanelActive();
   syncWebviewInteractionLayer();
@@ -3724,6 +4323,9 @@ function toggleSidePanel(id) {
   const settingsWasOpen = !!document
     .getElementById("webviewContainer")
     ?.hasAttribute("data-settings-open");
+  const workbenchWasOpen = !!document
+    .getElementById("webviewContainer")
+    ?.hasAttribute("data-workbench-open");
   const hub = document.getElementById("toolsHubRoot");
   const hubWasOpen = !!(hub && hub.classList.contains("tools-hub--open"));
 
@@ -3741,6 +4343,9 @@ function toggleSidePanel(id) {
     });
     if (settingsWasOpen) window.requestAnimationFrame(() => leaveSettingsSurfaceSync());
     else leaveSettingsSurfaceSync();
+    // Close workbench only after the new panel is visible to avoid webview flashes.
+    if (workbenchWasOpen) window.requestAnimationFrame(() => leaveWorkbenchSurfaceSync());
+    else leaveWorkbenchSurfaceSync();
     if (hubWasOpen) window.requestAnimationFrame(() => closeToolsHub());
     else {
       syncRailPanelActive();
@@ -3753,12 +4358,15 @@ function toggleSidePanel(id) {
   panel.setAttribute("aria-hidden", "false");
   // If we're coming from the tools hub, the panel's first "open" frame can still be near-transparent
   // (transition start). Force it to be instantly visible for a frame to avoid a webview flash.
-  if (hubWasOpen || settingsWasOpen) {
+  if (hubWasOpen || settingsWasOpen || workbenchWasOpen) {
     panel.classList.add(SIDE_PANEL_INSTANT_CLASS);
     window.requestAnimationFrame(() => panel.classList.remove(SIDE_PANEL_INSTANT_CLASS));
   }
   if (settingsWasOpen) window.requestAnimationFrame(() => leaveSettingsSurfaceSync());
   else leaveSettingsSurfaceSync();
+  // Close workbench only after the new panel is visible to avoid webview flashes.
+  if (workbenchWasOpen) window.requestAnimationFrame(() => leaveWorkbenchSurfaceSync());
+  else leaveWorkbenchSurfaceSync();
   if (hubWasOpen) window.requestAnimationFrame(() => closeToolsHub());
   else {
     syncRailPanelActive();
@@ -3799,30 +4407,14 @@ function runQuickCommand(cmd, opts) {
       return;
     }
 
-    const templates = {
-      navigate: "go to ",
-      nav: "nav ",
-      tab: "tab ",
-      url: "url",
-      title: "title",
-      screenshot: "screenshot",
-      scroll: "scroll down",
-      reload: "reload",
-      back: "back",
-      forward: "forward",
-      tabs: "list tabs",
-      switchTab: "switch tab ",
-      newTab: "new tab",
-      closeTab: "close tab",
-      viewportMd: "viewport md",
-      formSchema: "form schema",
-      interactables: "interactables",
-      type: "type ",
-      wait: "wait 1000ms",
-    };
-    const val = templates[cmd] || "";
+    const activeSid = activeSessionId || "s_ab12cd";
+    const val = getToolTemplateLine(cmd, activeSid) || "";
     const chatInputEl = document.getElementById("chatInput");
     const chatInputMd = document.getElementById("chatInputMd");
+    if (!val) {
+      showToast("No template for this quick command");
+      return;
+    }
     chatInputMd.style.display = "none";
     chatInputEl.style.display = "block";
     chatInputEl.value = val;
@@ -4232,6 +4824,7 @@ window.legacyBrowser = {
     }
     return {
     activeTabId,
+    activeSessionId,
     tabCount: tabs.length,
     activeUrl,
     canGoBack,
@@ -4245,6 +4838,14 @@ window.legacyBrowser = {
     useReactChatResizeUi: USE_REACT_CHAT_RESIZE,
   };
   },
+  getSessions: () => listSessions(),
+  getActiveSessionId: () => activeSessionId,
+  switchSessionById: (sessionId) => switchSession(String(sessionId || "")),
+  createSession: (headless) => {
+    const s = createSessionState(!!headless);
+    return { id: s.id, headless: s.headless };
+  },
+  killSessionById: (sessionId) => killSessionById(String(sessionId || "")),
   getProfileSnapshot: () => {
     const p = getProfile();
     return {
@@ -4310,42 +4911,48 @@ window.legacyBrowser = {
   runQuickCommand: (cmd, opts) => runQuickCommand(cmd, opts),
 };
 
-  setupTitleBar();
-  setupTheme();
-  if (USE_REACT_MODALS) {
-    hideLegacyModalContainers();
-    wireReactSettingsButtons();
-  } else {
-    setupSettings();
-  }
-  setupKeyboardShortcuts();
-  setupNavEvents();
-  setupFindBar();
-  setupZoom();
-  setupChat();
-  setupChatPanel();
-  setupChatPanelLinks();
-  setupToolsPanel();
-  if (!USE_REACT_CHAT_RESIZE) setupResizeHandle();
-  setupDataPanelButtons();
-  if (!USE_REACT_MODALS) setupImportWizard();
+  // ── Register startup gate callbacks FIRST — before any setup that might throw ──
+  // This guarantees tabs are created and the loading overlay is cleared regardless
+  // of whether any optional setup function encounters an error.
   if (USE_REACT_MODALS) {
     window.addEventListener(
       "profile-gate-complete",
       () => {
         setProfileGateBackdrop(false);
-        if (tabs.length === 0) createTab(homePage);
+        ensureActiveShellReady();
       },
       { once: true },
     );
-  } else {
-    createTab(homePage);
+    window.setTimeout(() => {
+      ensureActiveShellReady();
+      setProfileGateBackdrop(false);
+    }, 450);
   }
-  if (!USE_REACT_MODALS) loadSystemInfo();
-  if (!USE_REACT_MODALS) {
-    setupProfileModal();
-    checkFirstRun();
-  }
+
+  // ── Setup calls — each isolated so one failure can't block shell init ──
+  try { setupTitleBar(); } catch (e) { console.warn("[kernel] setupTitleBar:", e); }
+  try { setupTheme(); } catch (e) { console.warn("[kernel] setupTheme:", e); }
+  try {
+    if (USE_REACT_MODALS) {
+      hideLegacyModalContainers();
+      wireReactSettingsButtons();
+    } else {
+      setupSettings();
+    }
+  } catch (e) { console.warn("[kernel] setupModalsOrSettings:", e); }
+  try { setupKeyboardShortcuts(); } catch (e) { console.warn("[kernel] setupKeyboardShortcuts:", e); }
+  try { setupNavEvents(); } catch (e) { console.warn("[kernel] setupNavEvents:", e); }
+  try { setupFindBar(); } catch (e) { console.warn("[kernel] setupFindBar:", e); }
+  try { setupZoom(); } catch (e) { console.warn("[kernel] setupZoom:", e); }
+  try { setupChat(); } catch (e) { console.warn("[kernel] setupChat:", e); }
+  try { setupChatPanel(); } catch (e) { console.warn("[kernel] setupChatPanel:", e); }
+  try { setupChatPanelLinks(); } catch (e) { console.warn("[kernel] setupChatPanelLinks:", e); }
+  try { setupToolsPanel(); } catch (e) { console.warn("[kernel] setupToolsPanel:", e); }
+  try { if (!USE_REACT_CHAT_RESIZE) setupResizeHandle(); } catch (e) { console.warn("[kernel] setupResizeHandle:", e); }
+  try { setupDataPanelButtons(); } catch (e) { console.warn("[kernel] setupDataPanelButtons:", e); }
+  try { if (!USE_REACT_MODALS) setupImportWizard(); } catch (e) { console.warn("[kernel] setupImportWizard:", e); }
+  try { if (!USE_REACT_MODALS) { loadSystemInfo(); setupProfileModal(); checkFirstRun(); } } catch (e) { console.warn("[kernel] legacyProfileSetup:", e); }
+
   window.addEventListener("tools-hub-breadcrumb", (e: Event) => {
     const d = (e as CustomEvent<{ parts?: unknown }>).detail;
     const parts = Array.isArray(d?.parts) ? (d?.parts as unknown[]) : [];
@@ -4356,6 +4963,11 @@ window.legacyBrowser = {
     lastToolsHubCrumbs = cleaned.length ? cleaned : ["Tool Hub"];
     syncTopChromeForSurface();
   });
-  syncRailPanelActive();
-  syncWebviewInteractionLayer();
+
+  // ── Final shell bootstrap — always runs even if some setup above failed ──
+  if (!USE_REACT_MODALS) ensureActiveShellReady();
+  try { syncRailPanelActive(); } catch (e) { /* ignore */ }
+  try { syncWebviewInteractionLayer(); } catch (e) { /* ignore */ }
+  ensureActiveShellReady();
+  traceKernel("initBrowserKernel completed");
 }

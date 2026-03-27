@@ -337,6 +337,41 @@ export async function domPressKey(wv: WebviewLike, key: string, modifiers: strin
   return (await wv.executeJavaScript(code)) as { success: boolean };
 }
 
+export async function domPressHold(
+  wv: WebviewLike,
+  selector: string,
+  holdMs: number,
+): Promise<{ success: boolean; tag?: string; heldMs?: number; error?: string }> {
+  const safeHold = Math.max(80, Math.min(30000, Math.floor(holdMs || 0)));
+  const code = `
+    (async function(){
+      function wait(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+      try {
+        var el = null;
+        try { el = document.querySelector(${JSON.stringify(selector)}); } catch(e) { el = null; }
+        if (!el) return { success:false, error:'not_found' };
+        var r = el.getBoundingClientRect();
+        var inView = r.bottom > 0 && r.top < window.innerHeight;
+        if (!inView) el.scrollIntoView({ block:'center', behavior:'instant' });
+        el.focus();
+        var r2 = el.getBoundingClientRect();
+        var cx = r2.left + r2.width / 2, cy = r2.top + r2.height / 2;
+        var opts = { bubbles:true, cancelable:true, view:window, clientX:cx, clientY:cy };
+        el.dispatchEvent(new PointerEvent('pointerdown', opts));
+        el.dispatchEvent(new MouseEvent('mousedown', opts));
+        await wait(${safeHold});
+        el.dispatchEvent(new PointerEvent('pointerup', opts));
+        el.dispatchEvent(new MouseEvent('mouseup', opts));
+        el.dispatchEvent(new MouseEvent('click', opts));
+        return { success:true, tag:(el.tagName||'').toLowerCase(), heldMs:${safeHold} };
+      } catch(e) {
+        return { success:false, error:String(e && e.message ? e.message : e) };
+      }
+    })()
+  `;
+  return (await wv.executeJavaScript(code)) as { success: boolean; tag?: string; heldMs?: number; error?: string };
+}
+
 export async function domSetDate(
   wv: WebviewLike,
   target: string,

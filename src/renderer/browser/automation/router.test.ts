@@ -20,12 +20,16 @@ function ctx(): AutomationKernelContext {
     applyZoom: () => {},
     getZoomLevel: () => 0,
     takeScreenshot: async () => {},
+    createSession: (headless) => ({ id: "s_test", headless }),
+    switchSession: () => true,
+    killSession: () => true,
+    hasSession: (sessionId) => sessionId === "s_test",
   };
 }
 
 describe("automation router", () => {
   it("dispatches list tabs info", async () => {
-    const r = await dispatchAutomationLine("list tabs", ctx());
+    const r = await dispatchAutomationLine("list tabs in session s_test", ctx());
     expect(r.success).toBe(true);
     expect(String(r.message)).toContain("| TabId | Active | Title | URL |");
     expect(String(r.message)).toContain("24532");
@@ -33,7 +37,7 @@ describe("automation router", () => {
 
   it("parses JSON command", async () => {
     const r = await dispatchAutomationLine(
-      '{"kind":"info","op":"list_tabs"}',
+      '{"kind":"info","op":"list_tabs","sessionId":"s_test"}',
       ctx(),
     );
     expect(r.success).toBe(true);
@@ -55,7 +59,12 @@ describe("automation router", () => {
       { kind: "action", op: "switch_tab", tabId: 15638 },
       c,
     );
-    expect(r.success).toBe(true);
+    expect(r.success).toBe(false);
+    const ok = await runAutomationCommand(
+      { kind: "action", op: "switch_tab", tabId: 15638, sessionId: "s_test" },
+      c,
+    );
+    expect(ok.success).toBe(true);
     expect(switched).toBe(2);
   });
 });

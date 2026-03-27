@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactElement } from "re
 import {
   buildClickCommandLine,
   buildFillCommandLine,
+  buildPressHoldLine,
   buildTypeCommandLine,
   getToolTemplateLine,
   toolUsesQuickCommand,
@@ -60,6 +61,17 @@ export function toastResult(bridge: Bridge, r: Awaited<ReturnType<NonNullable<Br
   }
 }
 
+function useActiveSessionId(bridge: Bridge): string {
+  const [sid, setSid] = useState(() => bridge.getActiveSessionId?.() || "s_ab12cd");
+  useEffect(() => {
+    const sync = () => setSid(bridge.getActiveSessionId?.() || "s_ab12cd");
+    sync();
+    const id = window.setInterval(sync, 250);
+    return () => window.clearInterval(id);
+  }, [bridge]);
+  return sid;
+}
+
 export function ToolsHubScrollDetail({
   category,
   item,
@@ -71,6 +83,7 @@ export function ToolsHubScrollDetail({
   bridge: Bridge;
   onBack: () => void;
 }): ReactElement {
+  const sid = useActiveSessionId(bridge);
   const [step, setStep] = useState<1 | 2>(1);
   const [reduceMotion, setReduceMotion] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
@@ -104,7 +117,7 @@ export function ToolsHubScrollDetail({
   }, [reduceMotion]);
 
   const testNow = useCallback(async () => {
-    const line = step === 1 ? "scroll down" : "scroll up";
+    const line = step === 1 ? `scroll down in session ${sid}` : `scroll up in session ${sid}`;
     try {
       bridge.closeToolsHub?.();
       await delay(60);
@@ -113,7 +126,7 @@ export function ToolsHubScrollDetail({
     } catch (e) {
       bridge.showToast?.(e instanceof Error ? e.message : "Scroll failed", 4000);
     }
-  }, [bridge, step]);
+  }, [bridge, sid, step]);
 
   return (
     <div className="tools-hub-inner tools-hub-inner--tool">
@@ -171,7 +184,7 @@ export function ToolsHubScrollDetail({
         </h3>
         <p className="tools-hub-tool-hint">Type in chat or run from here. Matching is case-insensitive.</p>
         <pre className="tools-hub-tool-pre" tabIndex={0}>
-          {"scroll down\nscroll up"}
+          {`scroll down in session ${sid}\nscroll up in session ${sid}`}
         </pre>
         <p className="tools-hub-tool-output-hint">
           Result: automation runs <code>window.scrollBy</code> with smooth behavior.
@@ -591,9 +604,10 @@ export function ToolsHubFillDetail({
   bridge: Bridge;
   onBack: () => void;
 }): ReactElement {
+  const sid = useActiveSessionId(bridge);
   const [selector, setSelector] = useState("#email");
   const [value, setValue] = useState("Hello");
-  const line = buildFillCommandLine(selector, value);
+  const line = buildFillCommandLine(selector, value, sid);
 
   const testNow = useCallback(async () => {
     try {
@@ -683,9 +697,10 @@ export function ToolsHubTypeDetail({
   bridge: Bridge;
   onBack: () => void;
 }): ReactElement {
+  const sid = useActiveSessionId(bridge);
   const [selector, setSelector] = useState("#email");
   const [text, setText] = useState("Hello");
-  const line = buildTypeCommandLine(selector, text);
+  const line = buildTypeCommandLine(selector, text, sid);
 
   const testNow = useCallback(async () => {
     try {
@@ -775,8 +790,9 @@ export function ToolsHubClickDetail({
   bridge: Bridge;
   onBack: () => void;
 }): ReactElement {
+  const sid = useActiveSessionId(bridge);
   const [selector, setSelector] = useState("#submit");
-  const line = buildClickCommandLine(selector);
+  const line = buildClickCommandLine(selector, sid);
 
   const testNow = useCallback(async () => {
     try {
@@ -846,6 +862,163 @@ export function ToolsHubClickDetail({
   );
 }
 
+export function ToolsHubPressDetail({
+  category,
+  item,
+  bridge,
+  onBack,
+}: {
+  category: ToolsHubCategory;
+  item: ToolsHubItem;
+  bridge: Bridge;
+  onBack: () => void;
+}): ReactElement {
+  const sid = useActiveSessionId(bridge);
+  const [selector, setSelector] = useState("#submit");
+  const [holdMs, setHoldMs] = useState(1200);
+  const line = buildPressHoldLine(selector, holdMs, sid);
+  const testNow = useCallback(async () => {
+    try {
+      bridge.closeToolsHub?.();
+      await delay(60);
+      const r = await bridge.dispatchAutomationLine?.(line);
+      toastResult(bridge, r, line);
+    } catch (e) {
+      bridge.showToast?.(e instanceof Error ? e.message : "Press failed", 4000);
+    }
+  }, [bridge, line]);
+  return (
+    <div className="tools-hub-inner tools-hub-inner--tool">
+      <ToolHero category={category} item={item} onBack={onBack} />
+      <section className="tools-hub-tool-section">
+        <h3 className="tools-hub-tool-h3">What it does</h3>
+        <p className="tools-hub-tool-lead">Finds a target element, holds pointer down for the provided time, then releases.</p>
+      </section>
+      <section className="tools-hub-tool-section">
+        <h3 className="tools-hub-tool-h3">Try it</h3>
+        <div className="tools-hub-fill-fields">
+          <label className="tools-hub-fill-field">
+            <span className="tools-hub-fill-field-label">CSS selector</span>
+            <input className="tools-hub-fill-input-editable" value={selector} onChange={(e) => setSelector(e.target.value)} />
+          </label>
+          <label className="tools-hub-fill-field">
+            <span className="tools-hub-fill-field-label">Hold (ms)</span>
+            <input
+              className="tools-hub-fill-input-editable"
+              type="number"
+              min={100}
+              step={100}
+              value={holdMs}
+              onChange={(e) => setHoldMs(Number(e.target.value || 1200))}
+            />
+          </label>
+        </div>
+      </section>
+      <section className="tools-hub-tool-section">
+        <h3 className="tools-hub-tool-h3">Command format</h3>
+        <pre className="tools-hub-tool-pre tools-hub-tool-pre--typing">{line}</pre>
+      </section>
+      <div className="tools-hub-tool-actions">
+        <button type="button" className="tools-hub-test-btn" onClick={() => void testNow()}>
+          Test now
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function ToolsHubSessionDetail({
+  category,
+  item,
+  bridge,
+  onBack,
+}: {
+  category: ToolsHubCategory;
+  item: ToolsHubItem;
+  bridge: Bridge;
+  onBack: () => void;
+}): ReactElement {
+  const sid = useActiveSessionId(bridge);
+  const [headless, setHeadless] = useState(false);
+  const [lastOutput, setLastOutput] = useState<string>("");
+  const line =
+    item.command === "killSession"
+      ? `kill session ${sid}`
+      : `session headless ${headless ? "true" : "false"}`;
+  const testNow = useCallback(async () => {
+    if (item.command === "killSession") return;
+    try {
+      const r = await bridge.dispatchAutomationLine?.(line);
+      if (r?.data && typeof r.data === "object" && "id" in (r.data as Record<string, unknown>)) {
+        const out = r.data as { id: string; headless: boolean };
+        setLastOutput(JSON.stringify({ id: out.id, headless: out.headless }, null, 2));
+        bridge.showToast?.(`Created ${out.id}`, 2500);
+      } else {
+        toastResult(bridge, r, line);
+      }
+    } catch (e) {
+      bridge.showToast?.(e instanceof Error ? e.message : "Session command failed", 4000);
+    }
+  }, [bridge, item.command, line]);
+  return (
+    <div className="tools-hub-inner tools-hub-inner--tool">
+      <ToolHero category={category} item={item} onBack={onBack} />
+      <section className="tools-hub-tool-section">
+        <h3 className="tools-hub-tool-h3">What it does</h3>
+        <p className="tools-hub-tool-lead">
+          Creates isolated browser sessions and returns a session id. Use that id with all commands in this hub.
+        </p>
+      </section>
+      <section className="tools-hub-tool-section">
+        <h3 className="tools-hub-tool-h3">Command format</h3>
+        {item.command === "session" ? (
+          <>
+            <p className="tools-hub-tool-hint">Choose whether the created session is visible or headless.</p>
+            <div className="tools-hub-dir-toggle" role="group" aria-label="Headless mode">
+              <button
+                type="button"
+                className={"tools-hub-dir-btn" + (!headless ? " tools-hub-dir-btn--active" : "")}
+                onClick={() => setHeadless(false)}
+              >
+                false (visible)
+              </button>
+              <button
+                type="button"
+                className={"tools-hub-dir-btn" + (headless ? " tools-hub-dir-btn--active" : "")}
+                onClick={() => setHeadless(true)}
+              >
+                true (headless)
+              </button>
+            </div>
+          </>
+        ) : null}
+        <pre className="tools-hub-tool-pre">{line}</pre>
+      </section>
+      {item.command === "session" ? (
+        <section className="tools-hub-tool-section">
+          <h3 className="tools-hub-tool-h3">Output format</h3>
+          <pre className="tools-hub-tool-pre" tabIndex={0}>{`{\n  "id": "s_xxxxxx",\n  "headless": ${headless ? "true" : "false"}\n}`}</pre>
+          {lastOutput ? (
+            <>
+              <p className="tools-hub-tool-hint">Last result</p>
+              <pre className="tools-hub-tool-pre tools-hub-tool-pre--io" tabIndex={0}>
+                {lastOutput}
+              </pre>
+            </>
+          ) : null}
+        </section>
+      ) : null}
+      {item.command === "session" ? (
+        <div className="tools-hub-tool-actions">
+          <button type="button" className="tools-hub-test-btn" onClick={() => void testNow()}>
+            Test now
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 const DEMO_CLASS: Partial<Record<string, string>> = {
   screenshot: "tools-hub-simple-demo--shot",
   tabs: "tools-hub-simple-demo--tabs",
@@ -863,9 +1036,10 @@ export function ToolsHubGenericDetail({
   bridge: Bridge;
   onBack: () => void;
 }): ReactElement {
+  const sid = useActiveSessionId(bridge);
   const cmd = item.command;
   const quick = toolUsesQuickCommand(cmd);
-  const templateLine = getToolTemplateLine(cmd);
+  const templateLine = getToolTemplateLine(cmd, sid);
   const demoClass = DEMO_CLASS[cmd] ?? "tools-hub-simple-demo--pulse";
 
   const [typed, setTyped] = useState("");

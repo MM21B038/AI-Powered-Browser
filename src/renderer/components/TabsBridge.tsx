@@ -13,7 +13,6 @@ type DragGhost = {
 
 const POLL_MS = 250;
 const DRAG_THRESHOLD_PX = 6;
-const HOST_WAIT_MS = 1200;
 const HOST_RETRY_MS = 32;
 
 function findDropTarget(
@@ -66,6 +65,9 @@ export function TabsBridge(): ReactElement | null {
   const [dropHint, setDropHint] = useState<{ tabId: number; side: "left" | "right" } | null>(null);
   const [dragGhost, setDragGhost] = useState<DragGhost | null>(null);
   const [surface, setSurface] = useState("webview");
+  const [sessions, setSessions] = useState<Array<{ id: string; headless: boolean; isActive: boolean; activeForMs: number }>>([]);
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
+  const [sessionPanel, setSessionPanel] = useState<"create" | "manage">("create");
 
   const dragRef = useRef<{
     tabId: number;
@@ -76,15 +78,28 @@ export function TabsBridge(): ReactElement | null {
   const ghostOffsetRef = useRef({ ox: 0, oy: 0, w: 0, h: 0 });
 
   useEffect(() => {
-    const t0 = Date.now();
     const id = window.setInterval(() => {
-      const el = document.getElementById("reactTabStripHost");
+      let el = document.getElementById("reactTabStripHost");
+      if (!el) {
+        // Self-heal: create tab portal host if kernel host wiring didn't run yet.
+        const tabBar = document.getElementById("tabBar");
+        const legacyArea = document.getElementById("tabScrollArea");
+        if (tabBar) {
+          if (legacyArea) {
+            legacyArea.style.cssText =
+              "display:none;width:0;height:0;overflow:hidden;padding:0;margin:0;border:0;min-height:0;flex:0;min-width:0;";
+          }
+          const created = document.createElement("div");
+          created.id = "reactTabStripHost";
+          created.className = "tab-scroll-area";
+          tabBar.appendChild(created);
+          el = created;
+        }
+      }
       if (el) {
         setHost(el);
         window.clearInterval(id);
-        return;
       }
-      if (Date.now() - t0 >= HOST_WAIT_MS) window.clearInterval(id);
     }, HOST_RETRY_MS);
     return () => window.clearInterval(id);
   }, []);
@@ -92,8 +107,22 @@ export function TabsBridge(): ReactElement | null {
   useEffect(() => {
     if (!bridge) return;
     const sync = () => {
-      setTabs(bridge.getTabs());
-      setActiveTabId(bridge.getState().activeTabId);
+      const state = bridge.getState?.() ?? { activeTabId: null, activeSessionId: "" };
+      const tabRows = Array.isArray(bridge.getTabs?.()) ? bridge.getTabs() : [];
+      setTabs(tabRows);
+      setActiveTabId(typeof state.activeTabId === "number" ? state.activeTabId : null);
+      const ssRaw = bridge.getSessions?.();
+      const ss = Array.isArray(ssRaw) ? ssRaw : [];
+      setSessions(
+        ss
+          .filter((s) => s && typeof s.id === "string")
+          .map((s) => ({
+            id: s.id,
+            headless: !!s.headless,
+            isActive: !!s.isActive,
+            activeForMs: Number(s.activeForMs || 0),
+          })),
+      );
       const s = document.getElementById("browserSection")?.getAttribute("data-surface") ?? "webview";
       setSurface(s);
     };
@@ -188,6 +217,17 @@ export function TabsBridge(): ReactElement | null {
 
   const strip = (
     <>
+      <button
+        type="button"
+        className="session-picker-btn"
+        title="Select session"
+        onClick={() => {
+          setSessionPanel("create");
+          setSessionMenuOpen((v) => !v);
+        }}
+      >
+        Sessions
+      </button>
       {surfaceTab}
       {tabs.map((tab) => {
         const isActive = surface === "webview" && tab.id === activeTabId;
@@ -286,6 +326,133 @@ export function TabsBridge(): ReactElement | null {
     <>
       {createPortal(strip, host)}
       {ghostEl}
+      {sessionMenuOpen
+        ? createPortal(
+            <div className="session-picker-modal" role="dialog" aria-label="Sessions">
+              <div className="session-picker-head">
+                <strong>Sessions</strong>
+                <button type="button" className="session-picker-close" onClick={() => setSessionMenuOpen(false)}>
+                  Close
+                </button>
+              </div>
+              <div className="session-picker-tabs">
+                <button
+                  type="button"
+                  className={"session-picker-tab" + (sessionPanel === "create" ? " active" : "")}
+                  onClick={() => setSessionPanel("create")}
+                >
+                  Create new session
+                </button>
+                <button
+                  type="button"
+                  className={"session-picker-tab" + (sessionPanel === "manage" ? " active" : "")}
+                  onClick={() => setSessionPanel("manage")}
+                >
+                  Manage session
+                </button>
+              </div>
+              <div className="session-picker-list">
+                {sessionPanel === "create" ? (
+                  <>
+                    <button
+                      type="button"
+                      className="session-picker-create"
+                      onClick={() => {
+                        void window.electronAPI?.debugLog?.({
+                          source: "tabs-bridge",
+                          message: "create_visible_session_click",
+                        });
+                        const s = bridge.createSession?.(false);
+                        if (s?.id) {
+                          void window.electronAPI?.debugLog?.({
+                            source: "tabs-bridge",
+                            message: "create_visible_session_created",
+                            data: s,
+                          });
+                          bridge.switchSessionById?.(s.id);
+                        }
+                        setSessionPanel("manage");
+                      }}
+                    >
+                      Create visible session
+                    </button>
+                    <button
+                      type="button"
+                      className="session-picker-create"
+                      onClick={() => {
+                        const s = bridge.createSession?.(true);
+                        void window.electronAPI?.debugLog?.({
+                          source: "tabs-bridge",
+                          message: "create_headless_session_created",
+                          data: s,
+                        });
+                        setSessionPanel("manage");
+                      }}
+                    >
+                      Create headless session
+                    </button>
+                  </>
+                ) : (
+                  sessions.map((s) => (
+                    <div key={s.id} className={"session-picker-item" + (s.isActive ? " active" : "")}>
+                      <div className="session-picker-meta">
+                        <span className="session-picker-id">{s.id}</span>
+                        <span className="session-picker-badge">{s.headless ? "headless" : "visible"}</span>
+                        <span className="session-picker-age">{formatMs(s.activeForMs)}</span>
+                      </div>
+                      <div className="session-picker-actions">
+                        {!s.headless ? (
+                          <button
+                            type="button"
+                            className="session-picker-open"
+                            onClick={() => {
+                              void window.electronAPI?.debugLog?.({
+                                source: "tabs-bridge",
+                                message: "open_session_click",
+                                data: { sessionId: s.id },
+                              });
+                              bridge.switchSessionById?.(s.id);
+                              setSessionMenuOpen(false);
+                            }}
+                          >
+                            Open session
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="session-picker-delete"
+                          onClick={() => {
+                            void window.electronAPI?.debugLog?.({
+                              source: "tabs-bridge",
+                              message: "delete_session_click",
+                              data: { sessionId: s.id, isActive: s.isActive, headless: s.headless },
+                            });
+                            bridge.killSessionById?.(s.id);
+                          }}
+                          disabled={s.isActive}
+                          title={s.isActive ? "Active default/current session cannot be deleted now." : "Delete session"}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </>
   );
+}
+
+function formatMs(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${m}m active`;
+  if (m > 0) return `${m}m ${s}s active`;
+  return `${s}s active`;
 }

@@ -4,6 +4,7 @@ import {
   domFill,
   domTypeHuman,
   domPressKey,
+  domPressHold,
   domSelectBy,
   domSetDate,
   domToggleCheckbox,
@@ -30,20 +31,24 @@ type InteractableRow = {
 };
 
 export interface AutomationKernelContext {
-  getBrowserFrame(): WebviewLike | null;
-  navigateTo: (raw: string) => void;
+  getBrowserFrame: (sessionId?: string) => WebviewLike | null;
+  navigateTo: (raw: string, sessionId?: string) => void;
   resolveInput: (raw: string) => string | null;
-  reload: () => void;
-  goBack: () => void;
-  goForward: () => void;
-  createTab: (url?: string) => void;
-  switchTab: (id: number) => void;
-  closeTabById: (id: number) => void;
-  getTabs: () => TabInfo[];
-  getActiveTabId: () => number | null;
+  reload: (sessionId?: string) => void;
+  goBack: (sessionId?: string) => void;
+  goForward: (sessionId?: string) => void;
+  createTab: (url?: string, sessionId?: string) => void;
+  switchTab: (id: number, sessionId?: string) => void;
+  closeTabById: (id: number, sessionId?: string) => void;
+  getTabs: (sessionId?: string) => TabInfo[];
+  getActiveTabId: (sessionId?: string) => number | null;
   applyZoom: (level: number) => void;
   getZoomLevel: () => number;
-  takeScreenshot: (mode?: string) => Promise<void>;
+  takeScreenshot: (mode?: string, sessionId?: string) => Promise<void>;
+  createSession: (headless: boolean) => { id: string; headless: boolean };
+  switchSession: (sessionId: string) => boolean;
+  killSession: (sessionId: string) => boolean;
+  hasSession: (sessionId: string) => boolean;
 }
 
 function now() {
@@ -136,9 +141,66 @@ export function tryParseJsonCommand(text: string): AutomationCommand | null {
   return null;
 }
 
+function splitSessionSuffix(input: string): { raw: string; sessionId?: string } {
+  const m = input.match(/\s+in\s+session\s+([a-zA-Z0-9_-]+)\s*$/i);
+  if (!m) return { raw: input.trim() };
+  return { raw: input.slice(0, m.index).trim(), sessionId: m[1] };
+}
+
 export async function runAutomationCommand(cmd: AutomationCommand, ctx: AutomationKernelContext): Promise<AutomationResult> {
   const t0 = now();
-  const wv = ctx.getBrowserFrame();
+  const opName = String((cmd as { op?: unknown }).op || "");
+  const sessionAwareOps = new Set([
+    "goto",
+    "click",
+    "fill",
+    "set_date",
+    "type",
+    "scroll",
+    "select",
+    "toggle_checkbox",
+    "toggle_radio",
+    "upload_file",
+    "submit",
+    "press_key",
+    "press",
+    "switch_tab",
+    "close_tab",
+    "new_tab",
+    "wait_for_selector",
+    "reload",
+    "back",
+    "forward",
+    "nav",
+    "tab",
+    "screenshot",
+    "get_url",
+    "get_title",
+    "get_viewport_md",
+    "get_page_text",
+    "get_form_schema",
+    "list_tabs",
+    "get_interactables",
+    "wait_ms",
+  ]);
+  const cmdSessionId = (cmd as { sessionId?: string }).sessionId;
+  if (sessionAwareOps.has(opName) && (!cmdSessionId || !cmdSessionId.trim())) {
+    return finish(opName || "unknown", false, {
+      kind: cmd.kind,
+      op: opName || "unknown",
+      error: "session_id_required",
+      message: "This command requires **sessionId**. Create one using `session headless true|false`.",
+    });
+  }
+  if (cmdSessionId && !ctx.hasSession(cmdSessionId)) {
+    return finish(opName || "unknown", false, {
+      kind: cmd.kind,
+      op: opName || "unknown",
+      error: "invalid_session_id",
+      message: `Session not found: **${cmdSessionId}**.`,
+    });
+  }
+  const wv = ctx.getBrowserFrame(cmdSessionId);
   const wrap = (op: string, r: AutomationResult): AutomationResult => ({
     ...r,
     timings: { startedAt: t0, endedAt: now(), durationMs: now() - t0 },
@@ -152,7 +214,7 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
       }
       switch (cmd.op) {
         case "get_url": {
-          const url = (ctx.getBrowserFrame() as { getURL?: () => string } | null)?.getURL?.() ?? "";
+          const url = (ctx.getBrowserFrame(cmdSessionId) as { getURL?: () => string } | null)?.getURL?.() ?? "";
           return wrap(cmd.op, finish(cmd.op, true, { kind: "info", message: `Current URL: **${url}**`, data: { url } }));
         }
         case "get_title": {
@@ -204,10 +266,10 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
           );
         }
         case "list_tabs": {
-          const tabs = ctx.getTabs();
+          const tabs = ctx.getTabs(cmdSessionId);
           const rows = tabs.map((t) => [
             String(t.publicId ?? ""),
-            ctx.getActiveTabId() === t.id ? "✓" : "",
+            ctx.getActiveTabId(cmdSessionId) === t.id ? "✓" : "",
             t.title || "",
             t.url || "",
           ]);
@@ -231,41 +293,54 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
 
     switch (cmd.op) {
       case "goto":
-        ctx.navigateTo(cmd.url);
+        ctx.navigateTo(cmd.url, cmdSessionId);
         return wrap(cmd.op, finish(cmd.op, true, { message: `Navigating to **${ctx.resolveInput(cmd.url) || cmd.url}**` }));
       case "nav": {
         const d = cmd.direction;
         if (d === "back") {
-          ctx.goBack();
+          ctx.goBack(cmdSessionId);
           return wrap(cmd.op, finish(cmd.op, true, { message: "Going back." }));
         }
         if (d === "forward") {
-          ctx.goForward();
+          ctx.goForward(cmdSessionId);
           return wrap(cmd.op, finish(cmd.op, true, { message: "Going forward." }));
         }
-        ctx.reload();
+        ctx.reload(cmdSessionId);
         return wrap(cmd.op, finish(cmd.op, true, { message: "Reloading…" }));
       }
       case "tab": {
         if (cmd.action !== "cycle") {
           return wrap(cmd.op, finish(cmd.op, false, { message: "Unknown tab action." }));
         }
-        const tabsBefore = ctx.getTabs();
-        const beforeId = ctx.getActiveTabId();
+        const tabsBefore = ctx.getTabs(cmdSessionId);
+        const beforeId = ctx.getActiveTabId(cmdSessionId);
         if (!tabsBefore.length || beforeId == null) {
           return wrap(cmd.op, finish(cmd.op, false, { message: "No active tab." }));
         }
-        ctx.createTab();
-        const createdId = ctx.getActiveTabId();
-        const tabsAfterCreate = ctx.getTabs();
-        if (tabsAfterCreate.some((t2) => t2.id === beforeId)) ctx.switchTab(beforeId);
+        ctx.createTab(undefined, cmdSessionId);
+        const createdId = ctx.getActiveTabId(cmdSessionId);
+        const tabsAfterCreate = ctx.getTabs(cmdSessionId);
+        if (tabsAfterCreate.some((t2) => t2.id === beforeId)) ctx.switchTab(beforeId, cmdSessionId);
         if (createdId != null && createdId !== beforeId) {
-          const tabsNow = ctx.getTabs();
+          const tabsNow = ctx.getTabs(cmdSessionId);
           if (tabsNow.length > 1 && tabsNow.some((t2) => t2.id === createdId)) {
-            ctx.closeTabById(createdId);
+            ctx.closeTabById(createdId, cmdSessionId);
           }
         }
         return wrap(cmd.op, finish(cmd.op, true, { message: "Tab cycle complete." }));
+      }
+      case "press": {
+        if (!wv) return wrap(cmd.op, finish(cmd.op, false, { error: "No webview", message: "No page to automate." }));
+        const r = await domPressHold(wv, cmd.selector, cmd.holdMs);
+        return wrap(
+          cmd.op,
+          finish(cmd.op, r.success, {
+            message: r.success
+              ? `Pressed **${cmd.selector}** for **${r.heldMs ?? cmd.holdMs}ms**.`
+              : `Could not press: **${cmd.selector}**`,
+            data: r.success ? { selector: cmd.selector, holdMs: r.heldMs ?? cmd.holdMs } : undefined,
+          }),
+        );
       }
       case "click": {
         if (!wv) return wrap(cmd.op, finish(cmd.op, false, { error: "No webview", message: "No page to automate." }));
@@ -383,7 +458,7 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
         return wrap(cmd.op, finish(cmd.op, true, { message: `Key **${cmd.key}**` }));
       }
       case "switch_tab": {
-        const tabs = ctx.getTabs();
+        const tabs = ctx.getTabs(cmdSessionId);
         // cmd.tabId is treated as the public 5-digit TabId for user-facing commands.
         let id: number | undefined;
         let publicId: number | undefined = cmd.tabId;
@@ -406,7 +481,7 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
           }
         }
         if (id != null) {
-          ctx.switchTab(id);
+          ctx.switchTab(id, cmdSessionId);
           const t = tabs.find((x) => x.id === id);
           return wrap(
             cmd.op,
@@ -418,8 +493,8 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
         return wrap(cmd.op, finish(cmd.op, false, { message: "Tab not found." }));
       }
       case "close_tab": {
-        const tabs = ctx.getTabs();
-        let id: number | null | undefined = ctx.getActiveTabId();
+        const tabs = ctx.getTabs(cmdSessionId);
+        let id: number | null | undefined = ctx.getActiveTabId(cmdSessionId);
         let publicId: number | undefined;
         if (cmd.tabId != null) {
           // cmd.tabId is treated as public 5-digit TabId
@@ -435,13 +510,13 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
           publicId = cur?.publicId;
         }
         if (id != null) {
-          ctx.closeTabById(id);
+          ctx.closeTabById(id, cmdSessionId);
           return wrap(cmd.op, finish(cmd.op, true, { message: `Closed tab **${publicId ?? ""}**.` }));
         }
         return wrap(cmd.op, finish(cmd.op, false, { message: "No tab to close." }));
       }
       case "new_tab": {
-        ctx.createTab(cmd.url ? ctx.resolveInput(cmd.url) || undefined : undefined);
+        ctx.createTab(cmd.url ? ctx.resolveInput(cmd.url) || undefined : undefined, cmdSessionId);
         return wrap(cmd.op, finish(cmd.op, true, { message: "New tab opened." }));
       }
       case "wait_for_selector": {
@@ -457,17 +532,31 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
         await new Promise((r) => setTimeout(r, cmd.ms));
         return wrap(cmd.op, finish(cmd.op, true, { message: `Waited ${cmd.ms}ms.` }));
       case "reload":
-        ctx.reload();
+        ctx.reload(cmdSessionId);
         return wrap(cmd.op, finish(cmd.op, true, { message: "Reloading…" }));
       case "back":
-        ctx.goBack();
+        ctx.goBack(cmdSessionId);
         return wrap(cmd.op, finish(cmd.op, true, { message: "Going back." }));
       case "forward":
-        ctx.goForward();
+        ctx.goForward(cmdSessionId);
         return wrap(cmd.op, finish(cmd.op, true, { message: "Going forward." }));
       case "screenshot":
-        await ctx.takeScreenshot(cmd.mode || "viewport");
+        await ctx.takeScreenshot(cmd.mode || "viewport", cmdSessionId);
         return wrap(cmd.op, finish(cmd.op, true, { message: "" }));
+      case "session": {
+        const s = ctx.createSession(!!cmd.headless);
+        if (!s.headless) ctx.switchSession(s.id);
+        return wrap(cmd.op, finish(cmd.op, true, { message: `Created session **${s.id}** (headless=${s.headless}).`, data: s }));
+      }
+      case "kill_session": {
+        const ok = ctx.killSession(cmd.sessionId);
+        return wrap(
+          cmd.op,
+          finish(cmd.op, ok, {
+            message: ok ? `Killed session **${cmd.sessionId}**.` : `Session not found: **${cmd.sessionId}**.`,
+          }),
+        );
+      }
       default:
         return wrap(String((cmd as { op: string }).op), finish("unknown", false, { error: "unknown command" }));
     }
@@ -482,67 +571,81 @@ export async function dispatchAutomationLine(text: string, ctx: AutomationKernel
   const json = tryParseJsonCommand(text);
   if (json) return runAutomationCommand(json, ctx);
 
-  const t = text.toLowerCase().trim();
-  const raw = text.trim();
+  const split = splitSessionSuffix(text.trim());
+  const raw = split.raw;
+  const sessionId = split.sessionId;
+  const t = raw.toLowerCase().trim();
 
-  if (/^tab\s+(cycle|demo)$/i.test(raw)) {
-    const tabsBefore = ctx.getTabs();
-    const beforeId = ctx.getActiveTabId();
+  if (/^tab\s+controls$/i.test(raw)) {
+    if (!sessionId) {
+      return finish("tab", false, { kind: "action", op: "tab", message: "Tab controls requires sessionId: `tab controls in session <id>`." });
+    }
+    const tabsBefore = ctx.getTabs(sessionId);
+    const beforeId = ctx.getActiveTabId(sessionId);
     if (!tabsBefore.length || beforeId == null) {
       return finish("tab", false, { kind: "action", op: "tab", message: "No active tab." });
     }
 
     // 1) New tab (switches active tab in kernel)
-    ctx.createTab();
-    const createdId = ctx.getActiveTabId();
+    ctx.createTab(undefined, sessionId);
+    const createdId = ctx.getActiveTabId(sessionId);
 
     // 2) Switch back to the original tab (if still present)
-    const tabsAfterCreate = ctx.getTabs();
+    const tabsAfterCreate = ctx.getTabs(sessionId);
     const stillHasOriginal = tabsAfterCreate.some((t2) => t2.id === beforeId);
-    if (stillHasOriginal) ctx.switchTab(beforeId);
+    if (stillHasOriginal) ctx.switchTab(beforeId, sessionId);
 
     // 3) Close the created tab (safe: avoids closing the user's original tab)
     if (createdId != null && createdId !== beforeId) {
-      const tabsNow = ctx.getTabs();
+      const tabsNow = ctx.getTabs(sessionId);
       if (tabsNow.length > 1 && tabsNow.some((t2) => t2.id === createdId)) {
-        ctx.closeTabById(createdId);
+        ctx.closeTabById(createdId, sessionId);
       }
     }
 
     return finish("tab", true, {
       kind: "action",
       op: "tab",
-      message: "Tab cycle: new tab → switch back → close created tab.",
+      message: "Tab controls: new tab → switch back → close created tab.",
     });
   }
 
-  const navMatch = raw.match(/^nav\\s+(back|forward|reload)$/i);
+  const navMatch = raw.match(/^nav\s+(back|forward|reload)$/i);
   if (navMatch) {
     const dir = navMatch[1].toLowerCase() as "back" | "forward" | "reload";
-    if (dir === "back") return runAutomationCommand({ kind: "action", op: "back" }, ctx);
-    if (dir === "forward") return runAutomationCommand({ kind: "action", op: "forward" }, ctx);
-    return runAutomationCommand({ kind: "action", op: "reload" }, ctx);
+    if (dir === "back") return runAutomationCommand({ kind: "action", op: "back", sessionId }, ctx);
+    if (dir === "forward") return runAutomationCommand({ kind: "action", op: "forward", sessionId }, ctx);
+    return runAutomationCommand({ kind: "action", op: "reload", sessionId }, ctx);
+  }
+
+  const makeSessionMatch = raw.match(/^session\s+headless\s+(true|false)$/i);
+  if (makeSessionMatch) {
+    return runAutomationCommand({ kind: "action", op: "session", headless: makeSessionMatch[1].toLowerCase() === "true" }, ctx);
+  }
+  const killSessionMatch = raw.match(/^kill\s+session\s+([a-zA-Z0-9_-]+)$/i);
+  if (killSessionMatch) {
+    return runAutomationCommand({ kind: "action", op: "kill_session", sessionId: killSessionMatch[1] }, ctx);
   }
 
   if (t.startsWith("go to ") || t.startsWith("navigate to ") || t.startsWith("open ")) {
     const u = raw.replace(/^(go to|navigate to|open)\s+/i, "").trim();
-    return runAutomationCommand({ kind: "action", op: "goto", url: u }, ctx);
+    return runAutomationCommand({ kind: "action", op: "goto", url: u, sessionId }, ctx);
   }
   if (t === "screenshot" || t === "take screenshot" || t === "capture") {
-    return runAutomationCommand({ kind: "action", op: "screenshot", mode: "viewport" }, ctx);
+    return runAutomationCommand({ kind: "action", op: "screenshot", mode: "viewport", sessionId }, ctx);
   }
   if (t.startsWith("scroll")) {
     const up = t.includes("up");
-    return runAutomationCommand({ kind: "action", op: "scroll", direction: up ? "up" : "down" }, ctx);
+    return runAutomationCommand({ kind: "action", op: "scroll", direction: up ? "up" : "down", sessionId }, ctx);
   }
   const clickMatch = raw.match(/^click\s+(.+)$/i);
   if (clickMatch) {
-    return runAutomationCommand({ kind: "action", op: "click", target: clickMatch[1].trim() }, ctx);
+    return runAutomationCommand({ kind: "action", op: "click", target: clickMatch[1].trim(), sessionId }, ctx);
   }
   const fillMatch = raw.match(/^(?:fill)\s+(.+?)\s+with\s+(.+)$/i);
   if (fillMatch) {
     return runAutomationCommand(
-      { kind: "action", op: "fill", selector: fillMatch[1].trim(), value: fillMatch[2].trim() },
+      { kind: "action", op: "fill", selector: fillMatch[1].trim(), value: fillMatch[2].trim(), sessionId },
       ctx,
     );
   }
@@ -553,12 +656,19 @@ export async function dispatchAutomationLine(text: string, ctx: AutomationKernel
     if (typeText.length >= 2 && typeText.startsWith('"') && typeText.endsWith('"')) {
       typeText = typeText.slice(1, -1).replace(/\\"/g, '"');
     }
-    return runAutomationCommand({ kind: "action", op: "type", selector, text: typeText }, ctx);
+    return runAutomationCommand({ kind: "action", op: "type", selector, text: typeText, sessionId }, ctx);
+  }
+  const pressMatch = raw.match(/^press\s+(.+?)\s+for\s+(\d+)\s*ms$/i);
+  if (pressMatch) {
+    return runAutomationCommand(
+      { kind: "action", op: "press", selector: pressMatch[1].trim(), holdMs: Number(pressMatch[2]), sessionId },
+      ctx,
+    );
   }
   const dateMatch = raw.match(/^date\s+(.+?)\s*=\s*(.+)$/i);
   if (dateMatch) {
     return runAutomationCommand(
-      { kind: "action", op: "set_date", target: dateMatch[1].trim(), date: dateMatch[2].trim() },
+      { kind: "action", op: "set_date", target: dateMatch[1].trim(), date: dateMatch[2].trim(), sessionId },
       ctx,
     );
   }
@@ -571,34 +681,34 @@ export async function dispatchAutomationLine(text: string, ctx: AutomationKernel
     });
   }
   if (t === "get text" || t === "read page" || t === "page text") {
-    return runAutomationCommand({ kind: "info", op: "get_page_text", maxChars: 500 }, ctx);
+    return runAutomationCommand({ kind: "info", op: "get_page_text", maxChars: 500, sessionId }, ctx);
   }
   if (t === "viewport md" || t === "page md" || t === "get viewport md") {
-    return runAutomationCommand({ kind: "info", op: "get_viewport_md" }, ctx);
+    return runAutomationCommand({ kind: "info", op: "get_viewport_md", sessionId }, ctx);
   }
   if (t === "form schema" || t === "get form schema") {
-    return runAutomationCommand({ kind: "info", op: "get_form_schema" }, ctx);
+    return runAutomationCommand({ kind: "info", op: "get_form_schema", sessionId }, ctx);
   }
   if (t === "interactables" || t === "get interactables") {
-    return runAutomationCommand({ kind: "info", op: "get_interactables", limit: 40 }, ctx);
+    return runAutomationCommand({ kind: "info", op: "get_interactables", limit: 40, sessionId }, ctx);
   }
   if (t === "list tabs" || t === "tabs") {
-    return runAutomationCommand({ kind: "info", op: "list_tabs" }, ctx);
+    return runAutomationCommand({ kind: "info", op: "list_tabs", sessionId }, ctx);
   }
   if (t === "url" || t === "current url" || t === "what url") {
-    return runAutomationCommand({ kind: "info", op: "get_url" }, ctx);
+    return runAutomationCommand({ kind: "info", op: "get_url", sessionId }, ctx);
   }
   if (t === "title" || t === "page title") {
-    return runAutomationCommand({ kind: "info", op: "get_title" }, ctx);
+    return runAutomationCommand({ kind: "info", op: "get_title", sessionId }, ctx);
   }
   if (t === "reload" || t === "refresh") {
-    return runAutomationCommand({ kind: "action", op: "reload" }, ctx);
+    return runAutomationCommand({ kind: "action", op: "reload", sessionId }, ctx);
   }
   if (t === "back" || t === "go back") {
-    return runAutomationCommand({ kind: "action", op: "back" }, ctx);
+    return runAutomationCommand({ kind: "action", op: "back", sessionId }, ctx);
   }
   if (t === "forward" || t === "go forward") {
-    return runAutomationCommand({ kind: "action", op: "forward" }, ctx);
+    return runAutomationCommand({ kind: "action", op: "forward", sessionId }, ctx);
   }
   if (t === "zoom in") {
     ctx.applyZoom(ctx.getZoomLevel() + 1);
@@ -613,32 +723,32 @@ export async function dispatchAutomationLine(text: string, ctx: AutomationKernel
     return finish("zoom", true, { kind: "action", op: "zoom", message: "Zoom reset." });
   }
   if (t === "new tab") {
-    return runAutomationCommand({ kind: "action", op: "new_tab" }, ctx);
+    return runAutomationCommand({ kind: "action", op: "new_tab", sessionId }, ctx);
   }
   if (t === "close tab") {
-    return runAutomationCommand({ kind: "action", op: "close_tab" }, ctx);
+    return runAutomationCommand({ kind: "action", op: "close_tab", sessionId }, ctx);
   }
   const closeTabMatch = raw.match(/^close\s+tab\s+(\d{5})$/i);
   if (closeTabMatch) {
-    return runAutomationCommand({ kind: "action", op: "close_tab", tabId: Number(closeTabMatch[1]) }, ctx);
+    return runAutomationCommand({ kind: "action", op: "close_tab", tabId: Number(closeTabMatch[1]), sessionId }, ctx);
   }
   const switchTabMatch = raw.match(/^switch\s+tab\s+(\d{5})$/i);
   if (switchTabMatch) {
-    return runAutomationCommand({ kind: "action", op: "switch_tab", tabId: Number(switchTabMatch[1]) }, ctx);
+    return runAutomationCommand({ kind: "action", op: "switch_tab", tabId: Number(switchTabMatch[1]), sessionId }, ctx);
   }
   const waitMatch = raw.match(/^wait\s+(\d+)\s*(ms|s)?$/i);
   if (waitMatch) {
     const n = Number(waitMatch[1]);
     const unit = (waitMatch[2] || "ms").toLowerCase();
     const ms = unit === "s" ? n * 1000 : n;
-    return runAutomationCommand({ kind: "action", op: "wait_ms", ms }, ctx);
+    return runAutomationCommand({ kind: "action", op: "wait_ms", ms, sessionId }, ctx);
   }
   if (t === "submit") {
-    return runAutomationCommand({ kind: "action", op: "submit" }, ctx);
+    return runAutomationCommand({ kind: "action", op: "submit", sessionId }, ctx);
   }
   const submitMatch = raw.match(/^submit\s+(.+)$/i);
   if (submitMatch) {
-    return runAutomationCommand({ kind: "action", op: "submit", selector: submitMatch[1].trim() }, ctx);
+    return runAutomationCommand({ kind: "action", op: "submit", selector: submitMatch[1].trim(), sessionId }, ctx);
   }
   if (t === "help") {
     return finish("help", true, {
@@ -646,12 +756,14 @@ export async function dispatchAutomationLine(text: string, ctx: AutomationKernel
       op: "help",
       message:
         "## Help\n\n" +
+        "### Sessions\n" +
+        "- `session headless false`\n- `session headless true`\n- `kill session s_ab12cd`\n\n" +
         "### Navigation\n" +
-        "- `go to https://example.com`\n- `back`, `forward`, `reload`\n- `nav back|forward|reload`\n\n" +
+        "- `go to https://example.com in session s_ab12cd`\n- `back|forward|reload in session s_ab12cd`\n- `nav back|forward|reload in session s_ab12cd`\n\n" +
         "### Tabs\n" +
-        "- `list tabs` (returns a table with 5-digit TabIds)\n- `switch tab 24532`\n- `new tab`\n- `close tab` / `close tab 24532`\n\n" +
+        "- `list tabs in session s_ab12cd` (returns a table with 5-digit TabIds)\n- `switch tab 24532 in session s_ab12cd`\n- `new tab in session s_ab12cd`\n- `close tab in session s_ab12cd`\n\n" +
         "### Page actions\n" +
-        "- `click <selector or text>`\n- `fill <selector> with <value>`\n- `type <text>` (focused element)\n- `submit` / `submit <selector>`\n- `scroll up` / `scroll down`\n- `screenshot`\n- `wait 1200ms` / `wait 2s`\n\n" +
+        "- `click <selector or text> in session s_ab12cd`\n- `fill <selector> with <value> in session s_ab12cd`\n- `type into <selector> with <text> in session s_ab12cd`\n- `press <selector> for 1200ms in session s_ab12cd`\n- `submit <selector> in session s_ab12cd`\n- `scroll up|down in session s_ab12cd`\n- `screenshot in session s_ab12cd`\n- `wait 1200ms in session s_ab12cd` / `wait 2s in session s_ab12cd`\n\n" +
         "### Info / extraction\n" +
         "- `url`, `title`\n- `viewport md`\n- `form schema`\n- `interactables`\n\n" +
         "### Date picker\n" +

@@ -9,6 +9,17 @@ import {
 } from "../../shared/tools-hub-templates";
 import { delay, ToolHero, toastResult, type ToolsHubBridge } from "./ToolDetailViews";
 
+function useActiveSessionId(bridge: ToolsHubBridge): string {
+  const [sid, setSid] = useState(() => bridge.getActiveSessionId?.() || "s_ab12cd");
+  useEffect(() => {
+    const sync = () => setSid(bridge.getActiveSessionId?.() || "s_ab12cd");
+    sync();
+    const id = window.setInterval(sync, 250);
+    return () => window.clearInterval(id);
+  }, [bridge]);
+  return sid;
+}
+
 function ToolsHubNavigateDemo({ url }: { url: string }): ReactElement {
   const [phase, setPhase] = useState<1 | 2 | 3>(1);
   const [rm, setRm] = useState(
@@ -724,20 +735,21 @@ export function ToolsHubNavFlowDetail({
   bridge: ToolsHubBridge;
   onBack: () => void;
 }): ReactElement {
+  const sid = useActiveSessionId(bridge);
   const cmd = item.command;
 
   const [navUrl, setNavUrl] = useState("https://example.com");
-  const navigateLine = useMemo(() => buildNavigateLine(navUrl), [navUrl]);
+  const navigateLine = useMemo(() => buildNavigateLine(navUrl, sid), [navUrl, sid]);
 
   const [switchId, setSwitchId] = useState("24532");
-  const switchLine = useMemo(() => buildSwitchTabLine(switchId), [switchId]);
+  const switchLine = useMemo(() => buildSwitchTabLine(switchId, sid), [switchId, sid]);
 
   const [closeId, setCloseId] = useState("");
-  const closeLine = useMemo(() => buildCloseTabLine(closeId), [closeId]);
+  const closeLine = useMemo(() => buildCloseTabLine(closeId, sid), [closeId, sid]);
 
   const [waitAmount, setWaitAmount] = useState(1000);
   const [waitUnit, setWaitUnit] = useState<"ms" | "s">("ms");
-  const waitLine = useMemo(() => buildWaitLine(waitAmount, waitUnit), [waitAmount, waitUnit]);
+  const waitLine = useMemo(() => buildWaitLine(waitAmount, waitUnit, sid), [sid, waitAmount, waitUnit]);
 
   const testLine = useCallback(
     (line: string) => async () => {
@@ -779,12 +791,16 @@ export function ToolsHubNavFlowDetail({
     }, []);
     const displayLine =
       cmdPick === "newTab"
-        ? "new tab"
+        ? `new tab in session ${sid}`
         : cmdPick === "switchTab"
-          ? "switch tab {TabId}"
-          : "close tab";
+          ? `switch tab {TabId} in session ${sid}`
+          : `close tab in session ${sid}`;
     const runLine =
-      cmdPick === "newTab" ? "new tab" : cmdPick === "switchTab" ? "switch tab 24532" : "close tab";
+      cmdPick === "newTab"
+        ? `new tab in session ${sid}`
+        : cmdPick === "switchTab"
+          ? `switch tab 24532 in session ${sid}`
+          : `close tab in session ${sid}`;
     return (
       <div className="tools-hub-inner tools-hub-inner--tool">
         <ToolHero category={category} item={item} onBack={onBack} />
@@ -846,7 +862,7 @@ export function ToolsHubNavFlowDetail({
 
   if (cmd === "nav") {
     const [cmdPick, setCmdPick] = useState<"back" | "forward" | "reload">("back");
-    const line = `nav ${cmdPick}`;
+    const line = `nav ${cmdPick} in session ${sid}`;
     const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
     useEffect(() => {
       let cancelled = false;
@@ -995,11 +1011,11 @@ export function ToolsHubNavFlowDetail({
         <section className="tools-hub-tool-section">
           <h3 className="tools-hub-tool-h3">Command format</h3>
           <pre className="tools-hub-tool-pre" tabIndex={0}>
-            back
+            {`back in session ${sid}`}
           </pre>
         </section>
         <div className="tools-hub-tool-actions">
-          <button type="button" className="tools-hub-test-btn" onClick={() => void testLine("back")()}>
+          <button type="button" className="tools-hub-test-btn" onClick={() => void testLine(`back in session ${sid}`)()}>
             Test now
           </button>
         </div>
@@ -1021,11 +1037,11 @@ export function ToolsHubNavFlowDetail({
         <section className="tools-hub-tool-section">
           <h3 className="tools-hub-tool-h3">Command format</h3>
           <pre className="tools-hub-tool-pre" tabIndex={0}>
-            forward
+            {`forward in session ${sid}`}
           </pre>
         </section>
         <div className="tools-hub-tool-actions">
-          <button type="button" className="tools-hub-test-btn" onClick={() => void testLine("forward")()}>
+          <button type="button" className="tools-hub-test-btn" onClick={() => void testLine(`forward in session ${sid}`)()}>
             Test now
           </button>
         </div>
@@ -1045,14 +1061,14 @@ export function ToolsHubNavFlowDetail({
         <section className="tools-hub-tool-section">
           <h3 className="tools-hub-tool-h3">Command format</h3>
           <pre className="tools-hub-tool-pre" tabIndex={0}>
-            reload
+            {`reload in session ${sid}`}
           </pre>
           <p className="tools-hub-tool-output-hint">
             Alias: <code>refresh</code>
           </p>
         </section>
         <div className="tools-hub-tool-actions">
-          <button type="button" className="tools-hub-test-btn" onClick={() => void testLine("reload")()}>
+          <button type="button" className="tools-hub-test-btn" onClick={() => void testLine(`reload in session ${sid}`)()}>
             Test now
           </button>
         </div>
@@ -1122,11 +1138,11 @@ export function ToolsHubNavFlowDetail({
         <section className="tools-hub-tool-section">
           <h3 className="tools-hub-tool-h3">Command format</h3>
           <pre className="tools-hub-tool-pre" tabIndex={0}>
-            new tab
+            {`new tab in session ${sid}`}
           </pre>
         </section>
         <div className="tools-hub-tool-actions">
-          <button type="button" className="tools-hub-test-btn" onClick={() => void testLine("new tab")()}>
+          <button type="button" className="tools-hub-test-btn" onClick={() => void testLine(`new tab in session ${sid}`)()}>
             Test now
           </button>
         </div>

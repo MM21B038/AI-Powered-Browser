@@ -112,6 +112,14 @@ export interface ElectronApi {
   showNotification: (title: string, body: string) => Promise<IpcResponse>;
   captureWebview: (webContentsId: number, rect?: unknown) => Promise<IpcResponse<{ dataUrl: string }>>;
   saveScreenshot: (dataUrl: string) => Promise<IpcResponse<{ path: string; filename: string }>>;
+  // Background (Playwright-like) session APIs (main-process offscreen pages)
+  bgEnsureSession: (sessionId: string) => Promise<IpcResponse>;
+  bgKillSession: (sessionId: string) => Promise<IpcResponse>;
+  bgGoto: (sessionId: string, url: string) => Promise<IpcResponse<{ url: string }>>;
+  bgEval: <T = unknown>(sessionId: string, script: string) => Promise<IpcResponse<T>>;
+  bgGetUrl: (sessionId: string) => Promise<IpcResponse<{ url: string }>>;
+  bgGetTitle: (sessionId: string) => Promise<IpcResponse<{ title: string }>>;
+  bgScreenshot: (sessionId: string) => Promise<IpcResponse<{ dataUrl: string }>>;
   showSaveDialog: (options?: unknown) => Promise<unknown>;
   setZoom: (level: number) => Promise<IpcResponse>;
   sendChatMessage: (message: string) => Promise<IpcResponse>;
@@ -145,4 +153,9 @@ export interface ElectronApi {
   addHistoryEntry: (entry: unknown) => Promise<IpcResponse>;
   getDataStats: () => Promise<unknown>;
   clearAllData: () => Promise<IpcResponse>;
+  debugLog: (payload: {
+    source?: string;
+    message?: string;
+    data?: unknown;
+  }) => Promise<IpcResponse>;
 }

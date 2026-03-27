@@ -25,6 +25,192 @@ let mainWindow: BrowserWindow | null = null;
 const dataManager = new DataManager();
 const chromeImporter = new ChromeImporter();
 const firefoxImporter = new FirefoxImporter();
+const STARTUP_TRACE_FILE = "startup-trace.log";
+
+// ─────────────────────────────────────────────────────────────
+// Background sessions (Playwright-like)
+// One hidden/offscreen BrowserWindow per sessionId + partition.
+// This allows headless/non-active sessions to navigate/eval/screenshot
+// without hijacking the visible renderer <webview>.
+// ─────────────────────────────────────────────────────────────
+type BgSession = { win: BrowserWindow; sessionId: string };
+const backgroundSessions = new Map<string, BgSession>();
+
+function getPartitionForSession(sessionId: string): string {
+  return `persist:orion_${sessionId}`;
+}
+
+async function waitForDomReady(wc: Electron.WebContents, timeoutMs = 12000): Promise<void> {
+  if (wc.isDestroyed()) throw new Error("webContents destroyed");
+  // dom-ready can fire very quickly; if the page is already interactive, don't hang.
+  // Using isLoading as a cheap guard.
+  if (!wc.isLoading()) return;
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("dom-ready timeout"));
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timer);
+      wc.removeListener("dom-ready", onReady);
+      wc.removeListener("destroyed", onDestroyed);
+    };
+    const onDestroyed = () => {
+      cleanup();
+      reject(new Error("webContents destroyed"));
+    };
+    const onReady = () => {
+      cleanup();
+      resolve();
+    };
+    wc.once("destroyed", onDestroyed);
+    wc.once("dom-ready", onReady);
+  });
+}
+
+async function waitForDidFinishLoad(wc: Electron.WebContents, timeoutMs = 20000): Promise<void> {
+  if (wc.isDestroyed()) throw new Error("webContents destroyed");
+  if (!wc.isLoading()) return;
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("did-finish-load timeout"));
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timer);
+      wc.removeListener("did-finish-load", onFinish);
+      wc.removeListener("did-fail-load", onFail);
+      wc.removeListener("destroyed", onDestroyed);
+    };
+    const onDestroyed = () => {
+      cleanup();
+      reject(new Error("webContents destroyed"));
+    };
+    const onFail = (_e: unknown, code: number, desc: string) => {
+      cleanup();
+      reject(new Error(`did-fail-load ${code}: ${desc}`));
+    };
+    const onFinish = () => {
+      cleanup();
+      resolve();
+    };
+    wc.once("destroyed", onDestroyed);
+    wc.once("did-fail-load", onFail as never);
+    wc.once("did-finish-load", onFinish);
+  });
+}
+
+function ensureBackgroundSession(sessionId: string): BgSession {
+  const existing = backgroundSessions.get(sessionId);
+  if (existing && !existing.win.isDestroyed()) return existing;
+
+  const partition = getPartitionForSession(sessionId);
+  traceMain("bg ensure session", { sessionId, partition });
+
+  const win = new BrowserWindow({
+    show: false,
+    width: 1280,
+    height: 720,
+    backgroundColor: "#000000",
+    webPreferences: {
+      offscreen: true,
+      partition,
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+  win.on("closed", () => {
+    backgroundSessions.delete(sessionId);
+  });
+  // Keep a simple, deterministic start page.
+  void win.loadURL("about:blank").catch(() => {});
+
+  const s: BgSession = { win, sessionId };
+  backgroundSessions.set(sessionId, s);
+  return s;
+}
+
+function killBackgroundSession(sessionId: string): boolean {
+  const s = backgroundSessions.get(sessionId);
+  if (!s) return false;
+  backgroundSessions.delete(sessionId);
+  try {
+    if (!s.win.isDestroyed()) s.win.destroy();
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+
+async function withBackgroundWebContents<T>(sessionId: string, fn: (wc: Electron.WebContents, win: BrowserWindow) => Promise<T>): Promise<T> {
+  const s = ensureBackgroundSession(sessionId);
+  const wc = s.win.webContents;
+  if (wc.isDestroyed()) throw new Error("webContents destroyed");
+  return await fn(wc, s.win);
+}
+
+function appendStartupTrace(message: string): void {
+  try {
+    const ts = new Date().toISOString();
+    const line = `[${ts}] ${message}\n`;
+    const logsDir = app.getPath("logs");
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.appendFileSync(path.join(logsDir, STARTUP_TRACE_FILE), line, "utf8");
+  } catch {
+    // Do not crash startup if logging fails.
+  }
+}
+
+function traceMain(message: string, extra?: unknown): void {
+  const suffix = extra === undefined ? "" : ` ${JSON.stringify(extra)}`;
+  const full = `${message}${suffix}`;
+  console.log(`[main] ${full}`);
+  appendStartupTrace(`[main] ${full}`);
+}
+
+function ensureDirWritable(dir: string): boolean {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const probe = path.join(dir, ".write-probe");
+    fs.writeFileSync(probe, "ok");
+    fs.unlinkSync(probe);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function configureAppPaths(): void {
+  // Only redirect userData (profile/bookmarks/history DB) to a guaranteed-writable location.
+  // We intentionally leave sessionData and cache at their Electron defaults so Chromium
+  // never tries to MOVE existing cache files — that move fails with "Access is denied" on
+  // Windows when another process holds the cache lock.
+  const appName = app.getName().replace(/[^a-zA-Z0-9._-]/g, "_") || "AutonomousBrowser";
+  const preferredRoot = path.join(app.getPath("appData"), appName);
+  const fallbackRoot = path.join(os.tmpdir(), appName);
+  const root = ensureDirWritable(preferredRoot) ? preferredRoot : fallbackRoot;
+  fs.mkdirSync(root, { recursive: true });
+
+  const userDataPath = path.join(root, "user-data");
+  fs.mkdirSync(userDataPath, { recursive: true });
+  app.setPath("userData", userDataPath);
+
+  const logsPath = path.join(root, "logs");
+  fs.mkdirSync(logsPath, { recursive: true });
+  app.setAppLogsPath(logsPath);
+  appendStartupTrace(`[main] app paths configured root=${root}`);
+}
+
+configureAppPaths();
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  traceMain("single-instance lock denied; quitting new instance");
+  app.quit();
+} else {
+  traceMain("single-instance lock acquired");
+}
 
 function getRendererEntry(): string {
   const devUrl = process.env.VITE_DEV_SERVER_URL;
@@ -34,8 +220,13 @@ function getRendererEntry(): string {
   return path.join(__dirname, "../../renderer/index.html");
 }
 
-function createWindow() {
-  mainWindow = new BrowserWindow({
+function createWindow(): BrowserWindow {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    traceMain("createWindow reused existing window");
+    return mainWindow;
+  }
+  traceMain("createWindow creating new BrowserWindow");
+  const win = new BrowserWindow({
     width: 1600,
     height: 1000,
     minWidth: 900,
@@ -51,32 +242,97 @@ function createWindow() {
       webSecurity: true,
     },
   });
+  mainWindow = win;
 
   const entry = getRendererEntry();
   if (entry.startsWith("http")) {
-    void mainWindow.loadURL(entry);
+    void win.loadURL(entry);
   } else {
-    void mainWindow.loadFile(entry);
+    void win.loadFile(entry);
   }
+  traceMain("renderer entry load requested", { entry });
 
-  mainWindow.on("closed", () => {
+  win.webContents.on("did-finish-load", () => {
+    traceMain("renderer did-finish-load");
+  });
+  win.webContents.on("did-fail-load", (_e, code, desc, validatedURL) => {
+    console.error("[main] renderer load failed", { code, desc, validatedURL });
+    appendStartupTrace(
+      `[main] renderer load failed ${JSON.stringify({ code, desc, validatedURL })}`,
+    );
+  });
+  win.webContents.on("render-process-gone", (_e, details) => {
+    console.error("[main] renderer process gone", details);
+    appendStartupTrace(`[main] renderer process gone ${JSON.stringify(details)}`);
+  });
+  win.webContents.on("console-message", (_e, level, message, line, sourceId) => {
+    appendStartupTrace(
+      `[renderer-console] level=${level} ${sourceId}:${line} ${message}`,
+    );
+  });
+  win.on("closed", () => {
+    traceMain("main window closed");
     mainWindow = null;
   });
-  mainWindow.on("maximize", () => mainWindow?.webContents.send("window-state-changed", "maximized"));
-  mainWindow.on("unmaximize", () => mainWindow?.webContents.send("window-state-changed", "normal"));
+  win.on("maximize", () => win.webContents.send("window-state-changed", "maximized"));
+  win.on("unmaximize", () => win.webContents.send("window-state-changed", "normal"));
+  return win;
 }
 
 app.whenReady().then(async () => {
+  traceMain("whenReady started");
   await dataManager.initialize();
-  wireNetworkCapture(session.defaultSession);
+  traceMain("dataManager initialized");
+  try {
+    wireNetworkCapture(session.defaultSession);
+    traceMain("network capture wired");
+  } catch (e) {
+    console.warn("[main] network capture disabled", e);
+    appendStartupTrace(`[main] network capture disabled ${String(e)}`);
+  }
   createWindow();
   app.on("activate", () => {
-    if (!mainWindow) createWindow();
+    traceMain("app activate event");
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow();
   });
 });
 
+app.on("second-instance", () => {
+  traceMain("second-instance event");
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  // In development (non-packaged) a second instance means the user ran `npm start`
+  // to pick up a new build. Reload the renderer in-place so they don't have to
+  // manually close the window first.
+  if (!app.isPackaged) {
+    traceMain("second-instance reloadIgnoringCache (dev mode)");
+    mainWindow.webContents.reloadIgnoringCache();
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+});
+
 app.on("window-all-closed", () => {
+  traceMain("window-all-closed");
   if (process.platform !== "darwin") app.quit();
+});
+
+process.on("uncaughtException", (err) => {
+  appendStartupTrace(`[main] uncaughtException ${err?.stack || String(err)}`);
+});
+process.on("unhandledRejection", (reason) => {
+  appendStartupTrace(`[main] unhandledRejection ${String(reason)}`);
+});
+
+ipcMain.handle("debug-log", (_: IpcMainInvokeEvent, payload: { source?: string; message?: string; data?: unknown }) => {
+  const source = payload?.source || "renderer";
+  const message = payload?.message || "";
+  appendStartupTrace(
+    `[${source}] ${message}${payload?.data !== undefined ? ` ${JSON.stringify(payload.data)}` : ""}`,
+  );
+  return { success: true };
 });
 
 ipcMain.handle("window-minimize", () => mainWindow?.minimize());
@@ -114,6 +370,97 @@ ipcMain.handle("show-notification", (_: IpcMainInvokeEvent, data: { title?: stri
     return { success: true };
   }
   return { success: false };
+});
+
+// ── Background session IPC (Playwright-like) ──────────────────
+ipcMain.handle("bg-session-ensure", async (_: IpcMainInvokeEvent, payload: { sessionId: string }) => {
+  try {
+    const sessionId = String(payload?.sessionId || "").trim();
+    if (!sessionId) return { success: false, error: "sessionId required" };
+    ensureBackgroundSession(sessionId);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+ipcMain.handle("bg-session-kill", async (_: IpcMainInvokeEvent, payload: { sessionId: string }) => {
+  try {
+    const sessionId = String(payload?.sessionId || "").trim();
+    if (!sessionId) return { success: false, error: "sessionId required" };
+    const ok = killBackgroundSession(sessionId);
+    return { success: ok, error: ok ? undefined : "not found" };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+ipcMain.handle("bg-goto", async (_: IpcMainInvokeEvent, payload: { sessionId: string; url: string }) => {
+  try {
+    const sessionId = String(payload?.sessionId || "").trim();
+    const url = String(payload?.url || "").trim();
+    if (!sessionId) return { success: false, error: "sessionId required" };
+    if (!url) return { success: false, error: "url required" };
+    await withBackgroundWebContents(sessionId, async (_wc, win) => {
+      await win.loadURL(url);
+      return true;
+    });
+    return { success: true, data: { url } };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+ipcMain.handle("bg-eval", async (_: IpcMainInvokeEvent, payload: { sessionId: string; script: string }) => {
+  try {
+    const sessionId = String(payload?.sessionId || "").trim();
+    const script = String(payload?.script || "");
+    if (!sessionId) return { success: false, error: "sessionId required" };
+    const data = await withBackgroundWebContents(sessionId, async (wc) => {
+      await waitForDomReady(wc, 12000);
+      return await wc.executeJavaScript(script, true);
+    });
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+ipcMain.handle("bg-url", async (_: IpcMainInvokeEvent, payload: { sessionId: string }) => {
+  try {
+    const sessionId = String(payload?.sessionId || "").trim();
+    if (!sessionId) return { success: false, error: "sessionId required" };
+    const url = await withBackgroundWebContents(sessionId, async (wc) => wc.getURL());
+    return { success: true, data: { url } };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+ipcMain.handle("bg-title", async (_: IpcMainInvokeEvent, payload: { sessionId: string }) => {
+  try {
+    const sessionId = String(payload?.sessionId || "").trim();
+    if (!sessionId) return { success: false, error: "sessionId required" };
+    const title = await withBackgroundWebContents(sessionId, async (wc) => wc.getTitle());
+    return { success: true, data: { title } };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+ipcMain.handle("bg-screenshot", async (_: IpcMainInvokeEvent, payload: { sessionId: string }) => {
+  try {
+    const sessionId = String(payload?.sessionId || "").trim();
+    if (!sessionId) return { success: false, error: "sessionId required" };
+    const dataUrl = await withBackgroundWebContents(sessionId, async (wc) => {
+      await waitForDidFinishLoad(wc, 20000).catch(() => {});
+      const img = await wc.capturePage();
+      return img.toDataURL();
+    });
+    return { success: true, data: { dataUrl } };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
 });
 
 ipcMain.handle("capture-webview", async (_: IpcMainInvokeEvent, payload: { webContentsId: number; rect?: Rectangle }) => {

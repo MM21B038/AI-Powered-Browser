@@ -3,6 +3,17 @@ import type { ToolsHubCategory, ToolsHubItem } from "../../shared/tools-catalog"
 import { getToolTemplateLine, toolUsesQuickCommand } from "../../shared/tools-hub-templates";
 import { delay, ToolHero, toastResult, type ToolsHubBridge } from "./ToolDetailViews";
 
+function useActiveSessionId(bridge: ToolsHubBridge): string {
+  const [sid, setSid] = useState(() => bridge.getActiveSessionId?.() || "s_ab12cd");
+  useEffect(() => {
+    const sync = () => setSid(bridge.getActiveSessionId?.() || "s_ab12cd");
+    sync();
+    const id = window.setInterval(sync, 250);
+    return () => window.clearInterval(id);
+  }, [bridge]);
+  return sid;
+}
+
 function ioExampleFor(command: string): { title: string; output: string; hint?: ReactElement } {
   switch (command) {
     case "url":
@@ -98,8 +109,9 @@ export function ToolsHubIoDetail({
   bridge: ToolsHubBridge;
   onBack: () => void;
 }): ReactElement {
+  const sid = useActiveSessionId(bridge);
   const cmd = item.command;
-  const line = useMemo(() => getToolTemplateLine(cmd) || cmd, [cmd]);
+  const line = useMemo(() => getToolTemplateLine(cmd, sid) || cmd, [cmd, sid]);
   const ex = useMemo(() => ioExampleFor(cmd), [cmd]);
   const simpleDemoClass = useMemo(() => ioSimpleDemoClassFor(cmd), [cmd]);
 
@@ -169,8 +181,9 @@ export function ToolsHubPickerDemoDetail({
   bridge: ToolsHubBridge;
   onBack: () => void;
 }): ReactElement {
+  const sid = useActiveSessionId(bridge);
   const cmd = item.command;
-  const line = useMemo(() => getToolTemplateLine(cmd) || cmd, [cmd]);
+  const line = useMemo(() => getToolTemplateLine(cmd, sid) || cmd, [cmd, sid]);
   const [phase, setPhase] = useState<1 | 2 | 3 | 4>(1);
   const [rm, setRm] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,

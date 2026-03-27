@@ -8,12 +8,14 @@ export type ToolsHubToolDetail =
   | "fill"
   | "type"
   | "click"
+  | "press"
   | "navigate"
   | "navControls"
   | "tabControls"
   | "wait"
   | "io"
   | "pickerDemo"
+  | "session"
   | "simple";
 
 export type ToolsHubItem = {
@@ -63,6 +65,8 @@ const iKeyboard = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" a
 const iScroll = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M8 9l4-4 4 4M8 15l4 4 4-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 const iClock = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.4"/><path d="M12 7v5l3 2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+const iSession = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M8 12h8M12 8v8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+const iKillSession = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.4"/><path d="M9 9l6 6M15 9l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
 
 const iShot = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.4"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.4"/></svg>`;
 
@@ -89,7 +93,7 @@ export const TOOLS_HUB_CATEGORIES: ToolsHubCategory[] = [
       { id: "title", label: "Get title", description: "Shows the page title (example output below).", iconSvg: iTitle, command: "title", detail: "io" },
       {
         id: "navControls",
-        label: "Nav controls (Back / Forward / Reload)",
+        label: "Nav controls",
         description: "Back, forward, or reload the active tab—preview shows a realistic nav gesture.",
         iconSvg: iReload,
         command: "nav",
@@ -98,7 +102,7 @@ export const TOOLS_HUB_CATEGORIES: ToolsHubCategory[] = [
       { id: "tabs", label: "List tabs", description: "Lists tabs as a table with 5-digit TabIds (example below).", iconSvg: iTabs, command: "tabs", detail: "io" },
       {
         id: "tabControls",
-        label: "Tab controls (New / Switch / Close)",
+        label: "Tab controls",
         description: "Shows how tabs change over time—preview cycles through new, switch, and close.",
         iconSvg: iTabs,
         command: "tab",
@@ -145,12 +149,36 @@ export const TOOLS_HUB_CATEGORIES: ToolsHubCategory[] = [
         detail: "scroll",
       },
       {
+        id: "pressHold",
+        label: "Press & hold",
+        description: "Presses and holds an element for a fixed duration.",
+        iconSvg: iClock,
+        command: "press",
+        detail: "press",
+      },
+      {
         id: "wait",
         label: "Wait",
         description: "Pause for milliseconds or seconds—preview shows a timer filling.",
         iconSvg: iClock,
         command: "wait",
         detail: "wait",
+      },
+      {
+        id: "createSession",
+        label: "Create session",
+        description: "Creates a new browser session with headless true or false and returns session id.",
+        iconSvg: iSession,
+        command: "session",
+        detail: "session",
+      },
+      {
+        id: "killSession",
+        label: "Kill session",
+        description: "Fully closes a session and invalidates its session id.",
+        iconSvg: iKillSession,
+        command: "killSession",
+        detail: "session",
       },
     ],
   },
