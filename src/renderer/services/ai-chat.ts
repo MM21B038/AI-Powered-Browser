@@ -25,7 +25,15 @@ export type ChatStreamEvent =
   | { type: "assistant_delta"; text: string }
   | { type: "thinking"; text: string }
   | { type: "tool_start"; name: string; toolCallId: string }
-  | { type: "tool_end"; name: string; toolCallId: string; resultPreview: string; fullResult: string }
+  | {
+      type: "tool_end";
+      name: string;
+      toolCallId: string;
+      /** JSON string of function arguments from the model. */
+      arguments: string;
+      resultPreview: string;
+      fullResult: string;
+    }
   | { type: "error"; message: string }
   | { type: "done" };
 
@@ -48,17 +56,141 @@ function nonEmptyToolName(raw: string): string {
   return t.length > 0 ? t : "unknown_tool";
 }
 
-/** OpenAI-compatible streams: reasoning / thinking may appear under several delta keys (OpenRouter, o-series, etc.). */
+function inferHttpStatusFromProxyError(message: string): number {
+  const m = message.match(/HTTP\s+(\d{3})\b/i);
+  if (m) return parseInt(m[1], 10);
+  return 0;
+}
+
+/**
+ * True when the provider likely rejected the request because tools / function calling
+ * are invalid for this model (retry once without tools).
+ */
+export function responseLooksLikeToolsNotSupported(httpStatus: number, body: string): boolean {
+  const status = httpStatus > 0 ? httpStatus : inferHttpStatusFromProxyError(body);
+  const b = body.toLowerCase();
+  const mentionsTools =
+    b.includes("tool_choice") ||
+    b.includes('"tools"') ||
+    b.includes("tool_calls") ||
+    b.includes("function_call") ||
+    /\bfunctions\b/.test(b) ||
+    b.includes("parallel_tool_calls") ||
+    b.includes("tool use") ||
+    b.includes("tool_use");
+
+  if (status === 400 || status === 422) {
+    return mentionsTools;
+  }
+
+  /** e.g. OpenRouter: "No endpoints found that support tool use" (HTTP 404). */
+  if (status === 404) {
+    return (
+      mentionsTools ||
+      b.includes("support tool use") ||
+      (b.includes("no endpoints") && b.includes("tool"))
+    );
+  }
+
+  if (status === 0 && mentionsTools) {
+    return (
+      b.includes("invalid") ||
+      b.includes("not support") ||
+      b.includes("unsupported") ||
+      b.includes("unknown parameter") ||
+      b.includes("does not support")
+    );
+  }
+
+  return false;
+}
+
+/** OpenAI-compatible streams: reasoning / thinking may appear under several delta keys (OpenRouter, o-series, Gemini, etc.). */
 function extractThinkingDelta(d: Record<string, unknown>): string {
+  const directKeys = [
+    "reasoning",
+    "reasoning_content",
+    "thinking",
+    "thought",
+    "reasoning_content_delta",
+    "reasoning_delta",
+    "chain_of_thought",
+    "model_reasoning",
+    "internal_monologue",
+    "thoughts",
+  ] as const;
   let out = "";
-  for (const k of ["reasoning", "reasoning_content", "thinking", "thought"] as const) {
+  for (const k of directKeys) {
     const v = d[k];
     if (typeof v === "string" && v.length) out += v;
+  }
+  for (const [k, v] of Object.entries(d)) {
+    if (typeof v !== "string" || !v.length) continue;
+    if (k === "content" || k === "role" || k === "refusal" || k === "tool_calls") continue;
+    if (/reason|think|thought|chain|internal|monologue|deliberat|cognitive/i.test(k)) out += v;
   }
   return out;
 }
 
+/** Common in Qwen / DeepSeek-style streams: hide chain-of-thought from the visible reply. */
+const THINK_TAG_OPEN = "\u003cthink\u003e";
+const THINK_TAG_CLOSE = "\u003c/think\u003e";
+
+function mightEndWithPartialOpenTag(buf: string, openTag: string): boolean {
+  const max = Math.min(buf.length, openTag.length - 1);
+  for (let len = 1; len <= max; len++) {
+    if (openTag.startsWith(buf.slice(-len))) return true;
+  }
+  return false;
+}
+
+/**
+ * Streams may split `</think>` across SSE chunks; buffer until we can strip thinking into
+ * separate events (common for local / tag-trained models).
+ */
+function createThinkTagSplitter(
+  onVisible: (text: string) => void,
+  onThinking: (text: string) => void,
+): { feed: (chunk: string) => void; flush: () => void } {
+  let buf = "";
+  const feed = (chunk: string) => {
+    if (!chunk) return;
+    buf += chunk;
+    while (true) {
+      const openIdx = buf.indexOf(THINK_TAG_OPEN);
+      if (openIdx === -1) {
+        if (mightEndWithPartialOpenTag(buf, THINK_TAG_OPEN)) break;
+        if (buf) onVisible(buf);
+        buf = "";
+        break;
+      }
+      if (openIdx > 0) onVisible(buf.slice(0, openIdx));
+      buf = buf.slice(openIdx + THINK_TAG_OPEN.length);
+      const closeIdx = buf.indexOf(THINK_TAG_CLOSE);
+      if (closeIdx === -1) {
+        buf = THINK_TAG_OPEN + buf;
+        break;
+      }
+      const inner = buf.slice(0, closeIdx);
+      if (inner.trim()) onThinking(inner);
+      buf = buf.slice(closeIdx + THINK_TAG_CLOSE.length);
+    }
+  };
+  const flush = () => {
+    if (!buf) return;
+    onVisible(buf);
+    buf = "";
+  };
+  return { feed, flush };
+}
+
 type ToolMsgV2 = Extract<ChatMessageV2, { role: "tool" }>;
+
+function toolArgumentsForApi(t: ToolMsgV2): string {
+  const a = t.arguments;
+  if (typeof a === "string" && a.trim().length > 0) return a;
+  return "{}";
+}
 
 function collectContiguousTools(messages: ChatMessageV2[], start: number): { tools: ToolMsgV2[]; end: number } {
   const tools: ToolMsgV2[] = [];
@@ -94,7 +226,10 @@ function buildOpenAiMessagesFromChatV2(sysContent: string, messages: ChatMessage
           tool_calls: tools.map((t) => ({
             id: t.toolCallId,
             type: "function" as const,
-            function: { name: nonEmptyToolName(t.name), arguments: "{}" },
+            function: {
+              name: nonEmptyToolName(t.name),
+              arguments: toolArgumentsForApi(t),
+            },
           })),
         });
         for (const t of tools) {
@@ -122,7 +257,10 @@ function buildOpenAiMessagesFromChatV2(sysContent: string, messages: ChatMessage
           tool_calls: tools.map((t) => ({
             id: t.toolCallId,
             type: "function" as const,
-            function: { name: nonEmptyToolName(t.name), arguments: "{}" },
+            function: {
+              name: nonEmptyToolName(t.name),
+              arguments: toolArgumentsForApi(t),
+            },
           })),
         });
         for (const t of tools) {
@@ -148,7 +286,10 @@ function buildOpenAiMessagesFromChatV2(sysContent: string, messages: ChatMessage
         tool_calls: tools.map((t) => ({
           id: t.toolCallId,
           type: "function" as const,
-          function: { name: nonEmptyToolName(t.name), arguments: "{}" },
+          function: {
+            name: nonEmptyToolName(t.name),
+            arguments: toolArgumentsForApi(t),
+          },
         })),
       });
       for (const t of tools) {
@@ -289,132 +430,166 @@ async function runOpenAiCompatible(
   const sys = systemPromptForWorkspace(opts.scope);
   const oaMessages = buildOpenAiMessagesFromChatV2(sys, opts.messages);
 
+  const url = openAiStyleChatCompletionsUrl(baseUrl);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+  };
+
+  /** After one tools-not-supported response, omit tools for the rest of this pipeline run. */
+  let toolsOmittedForSession = false;
+
   let rounds = 0;
   while (rounds < maxRounds) {
     rounds++;
-    const body: Record<string, unknown> = {
-      model: modelId,
-      messages: oaMessages,
-      stream: true,
-    };
-    if (openAiTools.length) {
-      body.tools = openAiTools;
-      body.tool_choice = "auto";
-    }
-
-    const url = openAiStyleChatCompletionsUrl(baseUrl);
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    };
-    const bodyStr = JSON.stringify(body);
-
-    let buffer = "";
-    let fullAssistant = "";
-    const toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
-
-    const processSseLine = (lineRaw: string) => {
-      const s = lineRaw.trim();
-      if (!s.startsWith("data:")) return;
-      const payload = s.slice(5).trim();
-      if (payload === "[DONE]") return;
-      try {
-        const chunk = JSON.parse(payload) as {
-          choices?: Array<{
-            delta?: Record<string, unknown> & {
-              content?: string;
-              tool_calls?: Array<{
-                index?: number;
-                id?: string;
-                function?: { name?: string; arguments?: string };
-              }>;
-            };
-          }>;
-        };
-        const choice = chunk.choices?.[0];
-        const d = choice?.delta;
-        if (d && typeof d === "object") {
-          const content = d.content;
-          if (typeof content === "string" && content.length) {
-            fullAssistant += content;
-            opts.onEvent({ type: "assistant_delta", text: content });
-          }
-          const thinkingPart = extractThinkingDelta(d);
-          if (thinkingPart) opts.onEvent({ type: "thinking", text: thinkingPart });
-          const tcalls = d.tool_calls;
-          if (Array.isArray(tcalls) && tcalls.length) {
-            for (const tc of tcalls) {
-              const idx = typeof tc.index === "number" ? tc.index : 0;
-              let row = toolCallMap.get(idx);
-              if (!row) {
-                row = { id: "", name: "", arguments: "" };
-                toolCallMap.set(idx, row);
-              }
-              if (tc.id) row.id = tc.id;
-              if (tc.function?.name) row.name = tc.function.name;
-              if (tc.function?.arguments) row.arguments += tc.function.arguments;
-            }
-          }
-        }
-      } catch {
-        /* ignore */
-      }
-    };
-
-    const feedSseChunk = (text: string) => {
-      buffer += text;
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        processSseLine(line);
-      }
-    };
 
     const proxy = opts.api.aiChatProxyStream;
-    if (proxy) {
-      try {
-        await new Promise<void>((resolve, reject) => {
-          proxy(
-            { url, headers, body: bodyStr },
-            {
-              onChunk: feedSseChunk,
-              onComplete: () => resolve(),
-              onError: (m) => reject(new Error(m)),
-            },
-          );
+
+    let fullAssistant = "";
+    let toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
+
+    streamAttempt: while (true) {
+      let buffer = "";
+      fullAssistant = "";
+      toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
+
+      const { feed: feedAssistantContent, flush: flushAssistantThinkBuffer } = createThinkTagSplitter(
+        (text) => {
+          fullAssistant += text;
+          opts.onEvent({ type: "assistant_delta", text });
+        },
+        (t) => opts.onEvent({ type: "thinking", text: t }),
+      );
+
+      const processSseLine = (lineRaw: string) => {
+        const s = lineRaw.trim();
+        if (!s.startsWith("data:")) return;
+        const payload = s.slice(5).trim();
+        if (payload === "[DONE]") return;
+        try {
+          const chunk = JSON.parse(payload) as {
+            choices?: Array<{
+              delta?: Record<string, unknown> & {
+                content?: string;
+                tool_calls?: Array<{
+                  index?: number;
+                  id?: string;
+                  function?: { name?: string; arguments?: string };
+                }>;
+              };
+            }>;
+          };
+          const choice = chunk.choices?.[0];
+          const d = choice?.delta;
+          if (d && typeof d === "object") {
+            const content = d.content;
+            if (typeof content === "string" && content.length) {
+              feedAssistantContent(content);
+            }
+            const thinkingPart = extractThinkingDelta(d);
+            if (thinkingPart) opts.onEvent({ type: "thinking", text: thinkingPart });
+            const tcalls = d.tool_calls;
+            if (Array.isArray(tcalls) && tcalls.length) {
+              for (const tc of tcalls) {
+                const idx = typeof tc.index === "number" ? tc.index : 0;
+                let row = toolCallMap.get(idx);
+                if (!row) {
+                  row = { id: "", name: "", arguments: "" };
+                  toolCallMap.set(idx, row);
+                }
+                if (tc.id) row.id = tc.id;
+                if (tc.function?.name) row.name = tc.function.name;
+                if (tc.function?.arguments) row.arguments += tc.function.arguments;
+              }
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      };
+
+      const feedSseChunk = (text: string) => {
+        buffer += text;
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          processSseLine(line);
+        }
+      };
+
+      const includeTools = openAiTools.length > 0 && !toolsOmittedForSession;
+      const body: Record<string, unknown> = {
+        model: modelId,
+        messages: oaMessages,
+        stream: true,
+      };
+      if (includeTools) {
+        body.tools = openAiTools;
+        body.tool_choice = "auto";
+      }
+      const bodyStr = JSON.stringify(body);
+
+      if (proxy) {
+        try {
+          const outcome = await new Promise<"done" | "retry">((resolve, reject) => {
+            proxy(
+              { url, headers, body: bodyStr },
+              {
+                onChunk: feedSseChunk,
+                onComplete: () => resolve("done"),
+                onError: (m, httpStatus) => {
+                  if (includeTools && responseLooksLikeToolsNotSupported(httpStatus ?? 0, m)) {
+                    toolsOmittedForSession = true;
+                    resolve("retry");
+                    return;
+                  }
+                  reject(new Error(m));
+                },
+              },
+            );
+          });
+          if (outcome === "retry") continue streamAttempt;
+        } catch (e) {
+          opts.onEvent({ type: "error", message: e instanceof Error ? e.message : String(e) });
+          opts.onEvent({ type: "done" });
+          return;
+        }
+      } else {
+        const res = await fetch(url, {
+          method: "POST",
+          headers,
+          body: bodyStr,
         });
-      } catch (e) {
-        opts.onEvent({ type: "error", message: e instanceof Error ? e.message : String(e) });
-        opts.onEvent({ type: "done" });
-        return;
-      }
-    } else {
-      const res = await fetch(url, {
-        method: "POST",
-        headers,
-        body: bodyStr,
-      });
 
-      if (!res.ok) {
-        const t = await res.text();
-        opts.onEvent({ type: "error", message: t || `HTTP ${res.status}` });
-        opts.onEvent({ type: "done" });
-        return;
+        if (!res.ok) {
+          const t = await res.text();
+          if (includeTools && responseLooksLikeToolsNotSupported(res.status, t)) {
+            toolsOmittedForSession = true;
+            continue streamAttempt;
+          }
+          opts.onEvent({ type: "error", message: t || `HTTP ${res.status}` });
+          opts.onEvent({ type: "done" });
+          return;
+        }
+
+        const reader = res.body?.getReader();
+        if (!reader) {
+          opts.onEvent({ type: "error", message: "No response stream" });
+          opts.onEvent({ type: "done" });
+          return;
+        }
+
+        const dec = new TextDecoder();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          feedSseChunk(dec.decode(value, { stream: true }));
+        }
       }
 
-      const reader = res.body?.getReader();
-      if (!reader) {
-        opts.onEvent({ type: "error", message: "No response stream" });
-        opts.onEvent({ type: "done" });
-        return;
-      }
-
-      const dec = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        feedSseChunk(dec.decode(value, { stream: true }));
-      }
+      feedSseChunk("\n");
+      flushAssistantThinkBuffer();
+      break streamAttempt;
     }
 
     const toolCalls = Array.from(toolCallMap.entries())
@@ -451,7 +626,7 @@ async function runOpenAiCompatible(
         } catch {
           args = {};
         }
-        const ref = dispatch(tc.name);
+        const ref = dispatch(apiToolName);
         let resultText = "";
         try {
           if (!ref) throw new Error("Unknown tool");
@@ -467,6 +642,7 @@ async function runOpenAiCompatible(
           type: "tool_end",
           name: apiToolName,
           toolCallId: tc.id,
+          arguments: tc.arguments || "{}",
           resultPreview: resultText.slice(0, 400),
           fullResult: resultText,
         });

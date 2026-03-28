@@ -19,7 +19,10 @@ export async function proxyOpenAiChatCompletionsStream(
     });
     if (!res.ok) {
       const t = await res.text();
-      sender.send(channel, { error: t || `HTTP ${res.status}` });
+      sender.send(channel, {
+        error: t || `HTTP ${res.status}`,
+        httpStatus: res.status,
+      });
       return;
     }
     if (!res.body) {

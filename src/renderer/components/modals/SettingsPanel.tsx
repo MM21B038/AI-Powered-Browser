@@ -1,6 +1,7 @@
 import {
   useEffect,
   useLayoutEffect,
+  useCallback,
   useMemo,
   useRef,
   useState,
@@ -14,6 +15,50 @@ import type {
   McpBridgeState,
   SystemInfo,
 } from "../../../shared/ipc-types";
+
+function IconRefresh(): ReactElement {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M23 4v6h-6" />
+      <path d="M1 20v-6h6" />
+      <path d="M3.51 9a9 9 0 0 1 14.13-3.36L23 10" />
+      <path d="M20.49 15a9 9 0 0 1-14.13 3.36L1 14" />
+    </svg>
+  );
+}
+
+function IconTrash(): ReactElement {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M9 6V4a1 1 0 1 1 2 0v2" />
+      <path d="M13 6V4a1 1 0 1 1 2 0v2" />
+    </svg>
+  );
+}
 import type { McpRemoteTransport } from "../../../shared/mcp-external-types";
 import { MCP_TOOL_NAMES } from "../../../shared/mcp-tool-registry";
 import { getElectronApi } from "../../services/electron-api";
@@ -26,7 +71,11 @@ import {
   type IntelligentSettingsState,
   type McpServerConfig,
 } from "../../state/session-settings-store";
-import { listGoogleModels, listOpenAiCompatibleModels, testChatHi } from "../../services/ai-models";
+import {
+  listGoogleModels,
+  listOpenAiCompatibleModels,
+  testChatHi,
+} from "../../services/ai-models";
 
 function truncateText(s: string, max: number): string {
   const t = s.trim();
@@ -43,7 +92,10 @@ function mcpServerSubtitle(m: McpServerConfig): string {
   const cmd = (m.command || "").trim();
   if (!cmd) return "Stdio — command not set";
   const argsOneLine = (m.args || "").replace(/\s+/g, " ").trim();
-  const extra = argsOneLine && argsOneLine !== "[]" ? ` ${truncateText(argsOneLine, 36)}` : "";
+  const extra =
+    argsOneLine && argsOneLine !== "[]"
+      ? ` ${truncateText(argsOneLine, 36)}`
+      : "";
   return truncateText(`${cmd}${extra}`, 58);
 }
 
@@ -64,12 +116,25 @@ type AppDataStats = {
   cookies: number;
   passwords: number;
   autofill: number;
-  lastImport: { browser?: string; count?: number; timestamp?: number; dataTypes?: string[] } | null;
+  lastImport: {
+    browser?: string;
+    count?: number;
+    timestamp?: number;
+    dataTypes?: string[];
+  } | null;
 };
 
 const chromeLogo = (
   <svg width="22" height="22" viewBox="0 0 48 48" aria-hidden>
-    <circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" strokeWidth="2.5" opacity="0.35" />
+    <circle
+      cx="24"
+      cy="24"
+      r="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      opacity="0.35"
+    />
     <path
       fill="currentColor"
       d="M24 10c6.5 0 12 4.2 14 10h-14a10 10 0 0 0-9.2 6L13 16c2.8-3.6 7.2-6 11-6zm-12.5 8.5 5.8 10A10 10 0 0 0 24 34c3.2 0 6-1.5 7.8-3.8l-6.5 11.2C17.8 39.5 14 32.2 14 24c0-2 .3-3.9.5-5.5zm25 3A10 10 0 0 1 24 38c-2.2 0-4.3-.7-6-2l14.5-25A15.9 15.9 0 0 1 38 24c0 2.6-.6 5-1.5 7.5z"
@@ -108,8 +173,12 @@ export function SettingsPanel({
   const [sys, setSys] = useState<SystemInfo | null>(null);
   const [browser, setBrowser] = useState<"" | "chrome" | "firefox">("");
   const [profilePath, setProfilePath] = useState("");
-  const [chromeProfiles, setChromeProfiles] = useState<ListedBrowserProfile[]>([]);
-  const [firefoxProfiles, setFirefoxProfiles] = useState<ListedBrowserProfile[]>([]);
+  const [chromeProfiles, setChromeProfiles] = useState<ListedBrowserProfile[]>(
+    [],
+  );
+  const [firefoxProfiles, setFirefoxProfiles] = useState<
+    ListedBrowserProfile[]
+  >([]);
   const [impBm, setImpBm] = useState(true);
   const [impHist, setImpHist] = useState(true);
   const [impCookies, setImpCookies] = useState(false);
@@ -120,24 +189,32 @@ export function SettingsPanel({
   const [importBusy, setImportBusy] = useState(false);
   const [progress, setProgress] = useState({ show: false, pct: 0, text: "" });
   const [activeTheme, setActiveTheme] = useState(
-    () => (typeof localStorage !== "undefined" && localStorage.getItem("theme")) || "dark",
+    () =>
+      (typeof localStorage !== "undefined" && localStorage.getItem("theme")) ||
+      "dark",
   );
-  const [intelligentSettings, setIntelligentSettings] = useState<IntelligentSettingsState>(() =>
-    loadIntelligentSettings(),
-  );
+  const [intelligentSettings, setIntelligentSettings] =
+    useState<IntelligentSettingsState>(() => loadIntelligentSettings());
   const intelligentHydratedRef = useRef(false);
   const [mcpBridge, setMcpBridge] = useState<McpBridgeState | null>(null);
   const [mcpPortDraft, setMcpPortDraft] = useState("");
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelTestBusy, setModelTestBusy] = useState(false);
-  const [aiModelActionFeedback, setAiModelActionFeedback] = useState<string | null>(null);
+  const [aiModelActionFeedback, setAiModelActionFeedback] = useState<
+    string | null
+  >(null);
   const googleApiKeyInputRef = useRef<HTMLInputElement>(null);
   const customApiKeyInputRef = useRef<HTMLInputElement>(null);
   const customBaseUrlInputRef = useRef<HTMLInputElement>(null);
   const [modelListFilter, setModelListFilter] = useState("");
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const modelDropdownRef = useRef<HTMLDivElement>(null);
-  const [expandedMcpServerIds, setExpandedMcpServerIds] = useState<Set<string>>(() => new Set());
+  const [expandedMcpServerIds, setExpandedMcpServerIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [reloadingMcpServerIds, setReloadingMcpServerIds] = useState<
+    Set<string>
+  >(() => new Set());
 
   const notifyAiModelAction = (msg: string) => {
     setAiModelActionFeedback(msg);
@@ -156,7 +233,9 @@ export function SettingsPanel({
     }
     if (layout === "sidePanel") {
       if (open) {
-        document.getElementById("appContainer")?.removeAttribute("data-settings-open");
+        document
+          .getElementById("appContainer")
+          ?.removeAttribute("data-settings-open");
         if (host) host.setAttribute("aria-hidden", "true");
       }
       window.legacyBrowser?.syncRailAndWebview?.();
@@ -190,7 +269,11 @@ export function SettingsPanel({
     setIntelligentSettings(loaded);
     if (panel === "intelligent") {
       setExpandedMcpServerIds(
-        new Set(loaded.mcpServers.filter((m) => !mcpServerHasConnectionParams(m)).map((m) => m.id)),
+        new Set(
+          loaded.mcpServers
+            .filter((m) => !mcpServerHasConnectionParams(m))
+            .map((m) => m.id),
+        ),
       );
     }
     intelligentHydratedRef.current = true;
@@ -217,7 +300,8 @@ export function SettingsPanel({
   }, [open, panel]);
 
   useEffect(() => {
-    if (!open || !intelligentHydratedRef.current || panel !== "intelligent") return;
+    if (!open || !intelligentHydratedRef.current || panel !== "intelligent")
+      return;
     const t = window.setTimeout(() => {
       saveIntelligentSettings(intelligentSettings);
     }, 400);
@@ -265,7 +349,10 @@ export function SettingsPanel({
     if (!modelPickerOpen) return;
     const onDoc: EventListener = (ev) => {
       const e = ev as globalThis.MouseEvent;
-      if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) {
+      if (
+        modelDropdownRef.current &&
+        !modelDropdownRef.current.contains(e.target as Node)
+      ) {
         setModelPickerOpen(false);
       }
     };
@@ -289,6 +376,15 @@ export function SettingsPanel({
     return modelIdsForPicker.filter((id) => id.toLowerCase().includes(q));
   }, [modelIdsForPicker, modelListFilter]);
 
+  const scrollIntelligentSection = useCallback((id: string) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  }, []);
+
   if (!open) return null;
 
   const bridge = window.legacyBrowser;
@@ -310,9 +406,40 @@ export function SettingsPanel({
     const reloaded = loadIntelligentSettings();
     setIntelligentSettings(reloaded);
     setExpandedMcpServerIds(
-      new Set(reloaded.mcpServers.filter((m) => !mcpServerHasConnectionParams(m)).map((m) => m.id)),
+      new Set(
+        reloaded.mcpServers
+          .filter((m) => !mcpServerHasConnectionParams(m))
+          .map((m) => m.id),
+      ),
     );
     bridge?.showToast?.("Reloaded saved settings");
+  };
+
+  const reloadMcpServer = async (id: string) => {
+    if (!api) {
+      bridge?.showToast?.("MCP reload failed: bridge not ready");
+      return;
+    }
+    setReloadingMcpServerIds((prev) => new Set(prev).add(id));
+    try {
+      // force disconnect; next list from AI modal or tool use will reconnect.
+      const res = await api.mcpExternalDisconnect(id);
+      if (res.ok) {
+        bridge?.showToast?.("MCP server reload requested");
+      } else {
+        bridge?.showToast?.(`MCP reload failed: ${res.error ?? "unknown"}`);
+      }
+    } catch (err) {
+      bridge?.showToast?.(
+        `MCP reload failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setReloadingMcpServerIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
   };
 
   const onOverlayClick = (e: MouseEvent) => {
@@ -331,10 +458,14 @@ export function SettingsPanel({
     "aiProvider",
   ]);
 
-  const updateIntelligentSettings = (patch: Partial<IntelligentSettingsState>) => {
+  const updateIntelligentSettings = (
+    patch: Partial<IntelligentSettingsState>,
+  ) => {
     setIntelligentSettings((prev) => {
       const next = { ...prev, ...patch };
-      if (Object.keys(patch).some((k) => AI_SETTINGS_IMMEDIATE_PERSIST.has(k))) {
+      if (
+        Object.keys(patch).some((k) => AI_SETTINGS_IMMEDIATE_PERSIST.has(k))
+      ) {
         saveIntelligentSettings(next);
       }
       return next;
@@ -344,8 +475,12 @@ export function SettingsPanel({
   const updateMcp = (id: string, patch: Partial<McpServerConfig>) => {
     setIntelligentSettings((prev) => ({
       ...prev,
-      mcpServers: prev.mcpServers.map((m) => (m.id === id ? { ...m, ...patch } : m)),
+      mcpServers: prev.mcpServers.map((m) =>
+        m.id === id ? { ...m, ...patch } : m,
+      ),
     }));
+    const api = getElectronApi();
+    if (api) void api.mcpExternalDisconnect(id);
   };
 
   const removeMcp = (id: string) => {
@@ -353,6 +488,9 @@ export function SettingsPanel({
       ...prev,
       mcpServers: prev.mcpServers.filter((m) => m.id !== id),
     }));
+    const api = getElectronApi();
+    if (api) void api.mcpExternalDisconnect(id);
+
     setExpandedMcpServerIds((prev) => {
       const next = new Set(prev);
       next.delete(id);
@@ -383,6 +521,8 @@ export function SettingsPanel({
     const row = intelligentSettings.mcpServers.find((x) => x.id === id);
     const label = row?.name?.trim() || row?.id || "MCP server";
     bridge?.showToast?.(`Saved “${label}”`);
+    const api = getElectronApi();
+    if (api) void api.mcpExternalDisconnect(id);
     setExpandedMcpServerIds((prev) => {
       const next = new Set(prev);
       next.delete(id);
@@ -405,10 +545,14 @@ export function SettingsPanel({
     const list = browser === "chrome" ? chromeProfiles : firefoxProfiles;
     const path = profilePath || list[0]?.path;
     if (!path) {
-      bridge?.showToast?.("No profile path available — install the browser or pick another source");
+      bridge?.showToast?.(
+        "No profile path available — install the browser or pick another source",
+      );
       return;
     }
-    const dataTypes: Array<"bookmarks" | "history" | "cookies" | "passwords" | "autofill"> = [];
+    const dataTypes: Array<
+      "bookmarks" | "history" | "cookies" | "passwords" | "autofill"
+    > = [];
     if (impBm) dataTypes.push("bookmarks");
     if (impHist) dataTypes.push("history");
     if (impCookies) dataTypes.push("cookies");
@@ -421,7 +565,11 @@ export function SettingsPanel({
     setImportBusy(true);
     setProgress({ show: true, pct: 0, text: "Starting import..." });
     try {
-      const result = (await api.importBrowserData({ browser, dataTypes, profilePath: path })) as {
+      const result = (await api.importBrowserData({
+        browser,
+        dataTypes,
+        profilePath: path,
+      })) as {
         success: boolean;
         error?: string;
         results?: Record<string, number>;
@@ -435,7 +583,12 @@ export function SettingsPanel({
           (r.cookies ?? 0) +
           (r.passwords ?? 0) +
           (r.autofill ?? 0);
-        bridge?.showToast?.(`Imported ${n} items (${Object.entries(r).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join(", ")})`);
+        bridge?.showToast?.(
+          `Imported ${n} items (${Object.entries(r)
+            .filter(([, v]) => v)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join(", ")})`,
+        );
         void api.getDataStats().then((raw) => setAppStats(raw as AppDataStats));
         const s = await api.getImportStats({ browser, profilePath: path });
         setSourceStatsLine(formatImportLine(s));
@@ -497,7 +650,7 @@ export function SettingsPanel({
       ? document.getElementById("settingsWorkspaceRoot")
       : layout === "sidePanel"
         ? document.getElementById("browserSettingsPanelRoot")
-        : document.getElementById("webviewOverlayHost") ?? document.body;
+        : (document.getElementById("webviewOverlayHost") ?? document.body);
 
   if (!portalTarget) return null;
 
@@ -535,8 +688,20 @@ export function SettingsPanel({
                 : "Theme, AI provider, and MCP servers"}
             </p>
           </div>
-          <button type="button" className="icon-btn" title="Close" aria-label="Close" onClick={onClose}>
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+          <button
+            type="button"
+            className="icon-btn"
+            title="Close"
+            aria-label="Close"
+            onClick={onClose}
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              fill="none"
+              aria-hidden="true"
+            >
               <path
                 d="M2 2L10 10M10 2L2 10"
                 stroke="currentColor"
@@ -553,237 +718,331 @@ export function SettingsPanel({
               role="region"
               aria-label="Browser settings"
             >
-            <div className="settings-card settings-card--import">
-              <div className="settings-card-head">
-                <div className="settings-card-title">Import</div>
-                <div className="settings-card-sub">Bring your data from installed browsers</div>
-              </div>
-              <div className="settings-section">
-                <p className="settings-hint">
-                  Pick the browser engine, then the exact profile folder (Chrome can have many). Passwords are
-                  imported as metadata where the OS still encrypts secrets.
-                </p>
-                {appStats ? (
-                  <div className="settings-import-app-summary">
-                    <span className="settings-import-app-title">Already in this app</span>
-                    <span className="settings-import-app-counts">
-                      {appStats.bookmarks} bookmarks · {appStats.history} history · {appStats.cookies} cookies ·{" "}
-                      {appStats.passwords} passwords · {appStats.autofill} autofill
-                    </span>
-                    {appStats.lastImport ? (
-                      <span className="settings-import-last">
-                        Last import: {appStats.lastImport.browser ?? "?"} ·{" "}
-                        {appStats.lastImport.timestamp ? new Date(appStats.lastImport.timestamp).toLocaleString() : ""}{" "}
-                        ({(appStats.lastImport.dataTypes ?? []).join(", ")})
+              <div className="settings-card settings-card--import">
+                <div className="settings-card-head">
+                  <div className="settings-card-title">Import</div>
+                  <div className="settings-card-sub">
+                    Bring your data from installed browsers
+                  </div>
+                </div>
+                <div className="settings-section">
+                  <p className="settings-hint">
+                    Pick the browser engine, then the exact profile folder
+                    (Chrome can have many). Passwords are imported as metadata
+                    where the OS still encrypts secrets.
+                  </p>
+                  {appStats ? (
+                    <div className="settings-import-app-summary">
+                      <span className="settings-import-app-title">
+                        Already in this app
                       </span>
-                    ) : (
-                      <span className="settings-import-last muted">No import recorded yet</span>
-                    )}
-                  </div>
-                ) : null}
-                <div className="settings-browser-pick">
-                  <button
-                    type="button"
-                    className={`settings-browser-card${browser === "chrome" ? " active" : ""}`}
-                    onClick={() => selectBrowser("chrome")}
-                  >
-                    <span className="settings-browser-icon">{chromeLogo}</span>
-                    <span className="settings-browser-name">Google Chrome</span>
-                    <span className="settings-browser-sub">Chromium profiles on this PC</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`settings-browser-card${browser === "firefox" ? " active" : ""}`}
-                    onClick={() => selectBrowser("firefox")}
-                  >
-                    <span className="settings-browser-icon">{firefoxLogo}</span>
-                    <span className="settings-browser-name">Mozilla Firefox</span>
-                    <span className="settings-browser-sub">Firefox profile folders</span>
-                  </button>
-                </div>
-                {browser ? (
-                  <>
-                    <label className="settings-label settings-label-mt" htmlFor="profileSelectReact">
-                      Profile folder
-                    </label>
-                    <select
-                      id="profileSelectReact"
-                      className="settings-select"
-                      value={profilePath || profileList[0]?.path || ""}
-                      onChange={(e) => setProfilePath(e.target.value)}
-                    >
-                      {profileList.length === 0 ? (
-                        <option value="">No profiles found</option>
+                      <span className="settings-import-app-counts">
+                        {appStats.bookmarks} bookmarks · {appStats.history}{" "}
+                        history · {appStats.cookies} cookies ·{" "}
+                        {appStats.passwords} passwords · {appStats.autofill}{" "}
+                        autofill
+                      </span>
+                      {appStats.lastImport ? (
+                        <span className="settings-import-last">
+                          Last import: {appStats.lastImport.browser ?? "?"} ·{" "}
+                          {appStats.lastImport.timestamp
+                            ? new Date(
+                                appStats.lastImport.timestamp,
+                              ).toLocaleString()
+                            : ""}{" "}
+                          ({(appStats.lastImport.dataTypes ?? []).join(", ")})
+                        </span>
                       ) : (
-                        profileList.map((p) => (
-                          <option key={p.path} value={p.path}>
-                            {p.label}
-                          </option>
-                        ))
+                        <span className="settings-import-last muted">
+                          No import recorded yet
+                        </span>
                       )}
-                    </select>
-                    <div className="import-options settings-import-options-grid">
-                      <label className="checkbox-label">
-                        <input type="checkbox" checked={impBm} onChange={(e) => setImpBm(e.target.checked)} />
-                        <span>Bookmarks</span>
-                      </label>
-                      <label className="checkbox-label">
-                        <input type="checkbox" checked={impHist} onChange={(e) => setImpHist(e.target.checked)} />
-                        <span>History</span>
-                      </label>
-                      <label className="checkbox-label">
-                        <input
-                          type="checkbox"
-                          checked={impCookies}
-                          onChange={(e) => setImpCookies(e.target.checked)}
-                        />
-                        <span>Cookies</span>
-                      </label>
-                      <label className="checkbox-label">
-                        <input type="checkbox" checked={impPw} onChange={(e) => setImpPw(e.target.checked)} />
-                        <span>Passwords</span>
-                      </label>
-                      <label className="checkbox-label">
-                        <input type="checkbox" checked={impAf} onChange={(e) => setImpAf(e.target.checked)} />
-                        <span>Autofill</span>
-                      </label>
                     </div>
-                    <div className="settings-source-stats">{sourceStatsLine}</div>
-                    <div className="import-actions">
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        disabled={!browser || importBusy || profileList.length === 0}
-                        onClick={() => void startImport()}
+                  ) : null}
+                  <div className="settings-browser-pick">
+                    <button
+                      type="button"
+                      className={`settings-browser-card${browser === "chrome" ? " active" : ""}`}
+                      onClick={() => selectBrowser("chrome")}
+                    >
+                      <span className="settings-browser-icon">
+                        {chromeLogo}
+                      </span>
+                      <span className="settings-browser-name">
+                        Google Chrome
+                      </span>
+                      <span className="settings-browser-sub">
+                        Chromium profiles on this PC
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`settings-browser-card${browser === "firefox" ? " active" : ""}`}
+                      onClick={() => selectBrowser("firefox")}
+                    >
+                      <span className="settings-browser-icon">
+                        {firefoxLogo}
+                      </span>
+                      <span className="settings-browser-name">
+                        Mozilla Firefox
+                      </span>
+                      <span className="settings-browser-sub">
+                        Firefox profile folders
+                      </span>
+                    </button>
+                  </div>
+                  {browser ? (
+                    <>
+                      <label
+                        className="settings-label settings-label-mt"
+                        htmlFor="profileSelectReact"
                       >
-                        Import selected data
-                      </button>
+                        Profile folder
+                      </label>
+                      <select
+                        id="profileSelectReact"
+                        className="settings-select"
+                        value={profilePath || profileList[0]?.path || ""}
+                        onChange={(e) => setProfilePath(e.target.value)}
+                      >
+                        {profileList.length === 0 ? (
+                          <option value="">No profiles found</option>
+                        ) : (
+                          profileList.map((p) => (
+                            <option key={p.path} value={p.path}>
+                              {p.label}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                      <div className="import-options settings-import-options-grid">
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={impBm}
+                            onChange={(e) => setImpBm(e.target.checked)}
+                          />
+                          <span>Bookmarks</span>
+                        </label>
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={impHist}
+                            onChange={(e) => setImpHist(e.target.checked)}
+                          />
+                          <span>History</span>
+                        </label>
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={impCookies}
+                            onChange={(e) => setImpCookies(e.target.checked)}
+                          />
+                          <span>Cookies</span>
+                        </label>
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={impPw}
+                            onChange={(e) => setImpPw(e.target.checked)}
+                          />
+                          <span>Passwords</span>
+                        </label>
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={impAf}
+                            onChange={(e) => setImpAf(e.target.checked)}
+                          />
+                          <span>Autofill</span>
+                        </label>
+                      </div>
+                      <div className="settings-source-stats">
+                        {sourceStatsLine}
+                      </div>
+                      <div className="import-actions">
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          disabled={
+                            !browser || importBusy || profileList.length === 0
+                          }
+                          onClick={() => void startImport()}
+                        >
+                          Import selected data
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
+                  <div
+                    className="import-progress"
+                    style={{ display: progress.show ? "block" : "none" }}
+                  >
+                    <div className="progress-bar">
+                      <div
+                        className="progress-fill"
+                        style={{ width: `${progress.pct}%` }}
+                      />
                     </div>
-                  </>
-                ) : null}
-                <div className="import-progress" style={{ display: progress.show ? "block" : "none" }}>
-                  <div className="progress-bar">
-                    <div className="progress-fill" style={{ width: `${progress.pct}%` }} />
-                  </div>
-                  <div className="progress-text">{progress.text}</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="settings-card settings-card--home">
-              <div className="settings-card-head">
-                <div className="settings-card-title">Home</div>
-                <div className="settings-card-sub">Start page URL</div>
-              </div>
-              <div className="settings-section">
-                <label className="settings-label" htmlFor="homePageInputReact">
-                  Home Page
-                </label>
-                <input
-                  id="homePageInputReact"
-                  type="text"
-                  className="settings-input"
-                  placeholder="https://duckduckgo.com"
-                  value={homePage}
-                  onChange={(e) => setHomePage(e.target.value)}
-                  onBlur={() => bridge?.setHomePage?.(homePage.trim())}
-                />
-              </div>
-            </div>
-
-            <div className="settings-card settings-card--system">
-              <div className="settings-card-head">
-                <div className="settings-card-title">System</div>
-                <div className="settings-card-sub">Runtime details</div>
-              </div>
-              <div className="settings-section">
-                <div className="sysinfo-grid">
-                  <div className="sysinfo-item">
-                    <span className="si-label">Electron</span>
-                    <span className="si-val">{sys?.version ?? "—"}</span>
-                  </div>
-                  <div className="sysinfo-item">
-                    <span className="si-label">Chrome</span>
-                    <span className="si-val">{sys?.chrome ?? "—"}</span>
-                  </div>
-                  <div className="sysinfo-item">
-                    <span className="si-label">Node</span>
-                    <span className="si-val">{sys?.node ?? "—"}</span>
-                  </div>
-                  <div className="sysinfo-item">
-                    <span className="si-label">Memory</span>
-                    <span className="si-val">{sys?.memory ?? "—"}</span>
-                  </div>
-                  <div className="sysinfo-item">
-                    <span className="si-label">Platform</span>
-                    <span className="si-val">{sys?.platform ?? "—"}</span>
-                  </div>
-                  <div className="sysinfo-item">
-                    <span className="si-label">CPUs</span>
-                    <span className="si-val">{sys?.cpus ?? "—"}</span>
+                    <div className="progress-text">{progress.text}</div>
                   </div>
                 </div>
               </div>
-            </div>
 
-            <div className="settings-card settings-card--shortcuts">
-              <div className="settings-card-head">
-                <div className="settings-card-title">Shortcuts</div>
-                <div className="settings-card-sub">Keyboard controls</div>
+              <div className="settings-card settings-card--home">
+                <div className="settings-card-head">
+                  <div className="settings-card-title">Home</div>
+                  <div className="settings-card-sub">Start page URL</div>
+                </div>
+                <div className="settings-section">
+                  <label
+                    className="settings-label"
+                    htmlFor="homePageInputReact"
+                  >
+                    Home Page
+                  </label>
+                  <input
+                    id="homePageInputReact"
+                    type="text"
+                    className="settings-input"
+                    placeholder="https://duckduckgo.com"
+                    value={homePage}
+                    onChange={(e) => setHomePage(e.target.value)}
+                    onBlur={() => bridge?.setHomePage?.(homePage.trim())}
+                  />
+                </div>
               </div>
-              <div className="settings-section">
-                <div className="shortcuts-list">
-                  <div className="shortcut-row">
-                    <kbd>Ctrl+T</kbd>
-                    <span>New Tab</span>
+
+              <div className="settings-card settings-card--system">
+                <div className="settings-card-head">
+                  <div className="settings-card-title">System</div>
+                  <div className="settings-card-sub">Runtime details</div>
+                </div>
+                <div className="settings-section">
+                  <div className="sysinfo-grid">
+                    <div className="sysinfo-item">
+                      <span className="si-label">Electron</span>
+                      <span className="si-val">{sys?.version ?? "—"}</span>
+                    </div>
+                    <div className="sysinfo-item">
+                      <span className="si-label">Chrome</span>
+                      <span className="si-val">{sys?.chrome ?? "—"}</span>
+                    </div>
+                    <div className="sysinfo-item">
+                      <span className="si-label">Node</span>
+                      <span className="si-val">{sys?.node ?? "—"}</span>
+                    </div>
+                    <div className="sysinfo-item">
+                      <span className="si-label">Memory</span>
+                      <span className="si-val">{sys?.memory ?? "—"}</span>
+                    </div>
+                    <div className="sysinfo-item">
+                      <span className="si-label">Platform</span>
+                      <span className="si-val">{sys?.platform ?? "—"}</span>
+                    </div>
+                    <div className="sysinfo-item">
+                      <span className="si-label">CPUs</span>
+                      <span className="si-val">{sys?.cpus ?? "—"}</span>
+                    </div>
                   </div>
-                  <div className="shortcut-row">
-                    <kbd>Ctrl+W</kbd>
-                    <span>Close Tab</span>
-                  </div>
-                  <div className="shortcut-row">
-                    <kbd>Ctrl+L</kbd>
-                    <span>Focus Address Bar</span>
-                  </div>
-                  <div className="shortcut-row">
-                    <kbd>Ctrl+F</kbd>
-                    <span>Find in Page</span>
-                  </div>
-                  <div className="shortcut-row">
-                    <kbd>Ctrl+R / F5</kbd>
-                    <span>Reload</span>
-                  </div>
-                  <div className="shortcut-row">
-                    <kbd>Ctrl+Shift+S</kbd>
-                    <span>Screenshot</span>
-                  </div>
-                  <div className="shortcut-row">
-                    <kbd>Ctrl+= / Ctrl+-</kbd>
-                    <span>Zoom In/Out</span>
-                  </div>
-                  <div className="shortcut-row">
-                    <kbd>Ctrl+0</kbd>
-                    <span>Reset Zoom</span>
-                  </div>
-                  <div className="shortcut-row">
-                    <kbd>F12</kbd>
-                    <span>DevTools</span>
-                  </div>
-                  <div className="shortcut-row">
-                    <kbd>Alt+Left / Alt+Right</kbd>
-                    <span>Back / Forward</span>
+                </div>
+              </div>
+
+              <div className="settings-card settings-card--shortcuts">
+                <div className="settings-card-head">
+                  <div className="settings-card-title">Shortcuts</div>
+                  <div className="settings-card-sub">Keyboard controls</div>
+                </div>
+                <div className="settings-section">
+                  <div className="shortcuts-list">
+                    <div className="shortcut-row">
+                      <kbd>Ctrl+T</kbd>
+                      <span>New Tab</span>
+                    </div>
+                    <div className="shortcut-row">
+                      <kbd>Ctrl+W</kbd>
+                      <span>Close Tab</span>
+                    </div>
+                    <div className="shortcut-row">
+                      <kbd>Ctrl+L</kbd>
+                      <span>Focus Address Bar</span>
+                    </div>
+                    <div className="shortcut-row">
+                      <kbd>Ctrl+F</kbd>
+                      <span>Find in Page</span>
+                    </div>
+                    <div className="shortcut-row">
+                      <kbd>Ctrl+R / F5</kbd>
+                      <span>Reload</span>
+                    </div>
+                    <div className="shortcut-row">
+                      <kbd>Ctrl+Shift+S</kbd>
+                      <span>Screenshot</span>
+                    </div>
+                    <div className="shortcut-row">
+                      <kbd>Ctrl+= / Ctrl+-</kbd>
+                      <span>Zoom In/Out</span>
+                    </div>
+                    <div className="shortcut-row">
+                      <kbd>Ctrl+0</kbd>
+                      <span>Reset Zoom</span>
+                    </div>
+                    <div className="shortcut-row">
+                      <kbd>F12</kbd>
+                      <span>DevTools</span>
+                    </div>
+                    <div className="shortcut-row">
+                      <kbd>Alt+Left / Alt+Right</kbd>
+                      <span>Back / Forward</span>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
           ) : (
             <div
-              className="settings-dashboard settings-dashboard--intelligent-suite"
+              className="settings-dashboard settings-dashboard--intelligent-suite settings-dashboard--intelligent-suite-with-nav"
               role="region"
               aria-label="Intelligent workspace settings"
             >
-              <div className="settings-card settings-card--appearance">
+              <nav
+                className="settings-intelligent-nav"
+                aria-label="Workspace settings sections"
+              >
+                <button
+                  type="button"
+                  className="settings-intelligent-nav__btn"
+                  onClick={() => scrollIntelligentSection("iw-settings-appearance")}
+                >
+                  Appearance
+                </button>
+                <button
+                  type="button"
+                  className="settings-intelligent-nav__btn"
+                  onClick={() => scrollIntelligentSection("iw-settings-ai")}
+                >
+                  AI
+                </button>
+                <button
+                  type="button"
+                  className="settings-intelligent-nav__btn"
+                  onClick={() => scrollIntelligentSection("iw-settings-mcp-bridge")}
+                >
+                  MCP bridge
+                </button>
+                <button
+                  type="button"
+                  className="settings-intelligent-nav__btn"
+                  onClick={() => scrollIntelligentSection("iw-settings-mcp-tools")}
+                >
+                  MCP tools
+                </button>
+              </nav>
+              <div className="settings-intelligent-nav-content">
+              <div
+                className="settings-card settings-card--appearance settings-intelligent-section-anchor"
+                id="iw-settings-appearance"
+              >
                 <div className="settings-card-head">
                   <div className="settings-card-title">Appearance</div>
                   <div className="settings-card-sub">Theme presets</div>
@@ -791,7 +1050,21 @@ export function SettingsPanel({
                 <div className="settings-section">
                   <label className="settings-label">Theme</label>
                   <div className="theme-grid">
-                    {(["dark", "aurora", "ocean", "ember"] as const).map((t) => (
+                    {(
+                      [
+                        "dark",
+                        "ink",
+                        "aurora",
+                        "ocean",
+                        "ember",
+                        "neon",
+                        "forest",
+                        "sunset",
+                        "lavender",
+                        "prism",
+                        "minimal",
+                      ] as const
+                    ).map((t) => (
                       <button
                         key={t}
                         type="button"
@@ -800,14 +1073,25 @@ export function SettingsPanel({
                         onClick={() => applyTheme(t)}
                       >
                         <div className={`theme-preview ${t}-preview`} />
-                        <span>{t === "dark" ? "Void" : t[0].toUpperCase() + t.slice(1)}</span>
+                        <span>
+                          {t === "dark"
+                            ? "Void"
+                            : t === "ink"
+                              ? "Ink"
+                              : t === "prism"
+                                ? "Prism"
+                                : t[0].toUpperCase() + t.slice(1)}
+                        </span>
                       </button>
                     ))}
                   </div>
                 </div>
               </div>
 
-              <div className="settings-card settings-card--intelligent-ai">
+              <div
+                className="settings-card settings-card--intelligent-ai settings-intelligent-section-anchor"
+                id="iw-settings-ai"
+              >
                 <div className="settings-card-head">
                   <div className="settings-card-title">AI</div>
                   <div className="settings-card-sub">Provider and API keys</div>
@@ -816,31 +1100,46 @@ export function SettingsPanel({
                   <p className="settings-hint settings-hint--compact">
                     Keys are stored only on this device in local storage.
                   </p>
-                  <div className="settings-ai-provider" role="radiogroup" aria-label="AI provider">
+                  <div
+                    className="settings-ai-provider"
+                    role="radiogroup"
+                    aria-label="AI provider"
+                  >
                     <label className="settings-radio-tile">
                       <input
                         type="radio"
                         name="aiProviderReact"
                         checked={intelligentSettings.aiProvider === "google"}
-                        onChange={() => updateIntelligentSettings({ aiProvider: "google" })}
+                        onChange={() =>
+                          updateIntelligentSettings({ aiProvider: "google" })
+                        }
                       />
                       <span>Google</span>
-                      <span className="settings-radio-tile-sub">Gemini API key (Google AI Studio)</span>
+                      <span className="settings-radio-tile-sub">
+                        Gemini API key (Google AI Studio)
+                      </span>
                     </label>
                     <label className="settings-radio-tile">
                       <input
                         type="radio"
                         name="aiProviderReact"
                         checked={intelligentSettings.aiProvider === "custom"}
-                        onChange={() => updateIntelligentSettings({ aiProvider: "custom" })}
+                        onChange={() =>
+                          updateIntelligentSettings({ aiProvider: "custom" })
+                        }
                       />
                       <span>Custom</span>
-                      <span className="settings-radio-tile-sub">OpenAI-compatible API (optional base URL)</span>
+                      <span className="settings-radio-tile-sub">
+                        OpenAI-compatible API (optional base URL)
+                      </span>
                     </label>
                   </div>
                   {intelligentSettings.aiProvider === "google" ? (
                     <>
-                      <label className="settings-label settings-label-mt" htmlFor="googleApiKeyReact">
+                      <label
+                        className="settings-label settings-label-mt"
+                        htmlFor="googleApiKeyReact"
+                      >
                         API key
                       </label>
                       <input
@@ -851,12 +1150,19 @@ export function SettingsPanel({
                         autoComplete="off"
                         placeholder="AIza…"
                         value={intelligentSettings.googleApiKey}
-                        onChange={(e) => updateIntelligentSettings({ googleApiKey: e.target.value })}
+                        onChange={(e) =>
+                          updateIntelligentSettings({
+                            googleApiKey: e.target.value,
+                          })
+                        }
                       />
                     </>
                   ) : (
                     <>
-                      <label className="settings-label settings-label-mt" htmlFor="customBaseUrlReact">
+                      <label
+                        className="settings-label settings-label-mt"
+                        htmlFor="customBaseUrlReact"
+                      >
                         Base URL (optional)
                       </label>
                       <input
@@ -866,9 +1172,16 @@ export function SettingsPanel({
                         className="settings-input"
                         placeholder="https://api.openai.com/v1"
                         value={intelligentSettings.customBaseUrl}
-                        onChange={(e) => updateIntelligentSettings({ customBaseUrl: e.target.value.trim() })}
+                        onChange={(e) =>
+                          updateIntelligentSettings({
+                            customBaseUrl: e.target.value.trim(),
+                          })
+                        }
                       />
-                      <label className="settings-label settings-label-mt" htmlFor="customApiKeyReact">
+                      <label
+                        className="settings-label settings-label-mt"
+                        htmlFor="customApiKeyReact"
+                      >
                         API key
                       </label>
                       <input
@@ -879,13 +1192,20 @@ export function SettingsPanel({
                         autoComplete="off"
                         placeholder="sk-…"
                         value={intelligentSettings.customApiKey}
-                        onChange={(e) => updateIntelligentSettings({ customApiKey: e.target.value })}
+                        onChange={(e) =>
+                          updateIntelligentSettings({
+                            customApiKey: e.target.value,
+                          })
+                        }
                       />
                     </>
                   )}
-                  <label className="settings-label settings-label-mt">Model</label>
+                  <label className="settings-label settings-label-mt">
+                    Model
+                  </label>
                   <p className="settings-hint settings-hint--compact settings-model-picker-intro">
-                    Use the dropdown to search loaded models, or set the ID manually below.
+                    Use the dropdown to search loaded models, or set the ID
+                    manually below.
                   </p>
                   <div className="settings-model-actions">
                     <button
@@ -908,18 +1228,30 @@ export function SettingsPanel({
                               intelligentSettings.customBaseUrl.trim();
                             const ids =
                               intelligentSettings.aiProvider === "google"
-                                ? (await listGoogleModels(googleKey)).map((m) => m.id)
-                                : (await listOpenAiCompatibleModels(customBase, customKey)).map((m) => m.id);
+                                ? (await listGoogleModels(googleKey)).map(
+                                    (m) => m.id,
+                                  )
+                                : (
+                                    await listOpenAiCompatibleModels(
+                                      customBase,
+                                      customKey,
+                                    )
+                                  ).map((m) => m.id);
                             updateIntelligentSettings({
                               googleApiKey: googleKey,
                               customApiKey: customKey,
                               customBaseUrl: customBase,
                               cachedModelIds: ids,
-                              selectedModelId: intelligentSettings.selectedModelId || ids[0] || "",
+                              selectedModelId:
+                                intelligentSettings.selectedModelId ||
+                                ids[0] ||
+                                "",
                             });
                             notifyAiModelAction(`Loaded ${ids.length} models.`);
                           } catch (e) {
-                            notifyAiModelAction(e instanceof Error ? e.message : String(e));
+                            notifyAiModelAction(
+                              e instanceof Error ? e.message : String(e),
+                            );
                           } finally {
                             setModelsLoading(false);
                           }
@@ -931,7 +1263,10 @@ export function SettingsPanel({
                     <button
                       type="button"
                       className="btn-secondary btn-secondary--compact"
-                      disabled={modelTestBusy || !intelligentSettings.selectedModelId.trim()}
+                      disabled={
+                        modelTestBusy ||
+                        !intelligentSettings.selectedModelId.trim()
+                      }
                       onClick={() => {
                         void (async () => {
                           setModelTestBusy(true);
@@ -946,20 +1281,30 @@ export function SettingsPanel({
                             const customBase =
                               customBaseUrlInputRef.current?.value?.trim() ||
                               intelligentSettings.customBaseUrl.trim();
-                            const modelId = intelligentSettings.selectedModelId.trim();
+                            const modelId =
+                              intelligentSettings.selectedModelId.trim();
                             if (!modelId) {
-                              notifyAiModelAction("Choose a model from the list or enter a model ID below.");
+                              notifyAiModelAction(
+                                "Choose a model from the list or enter a model ID below.",
+                              );
                               return;
                             }
-                            const r = await testChatHi(intelligentSettings.aiProvider, {
-                              googleApiKey: googleKey,
-                              customBaseUrl: customBase,
-                              customApiKey: customKey,
-                              modelId,
-                            });
-                            notifyAiModelAction(`Test reply: ${r.reply.slice(0, 200)}${r.reply.length > 200 ? "…" : ""}`);
+                            const r = await testChatHi(
+                              intelligentSettings.aiProvider,
+                              {
+                                googleApiKey: googleKey,
+                                customBaseUrl: customBase,
+                                customApiKey: customKey,
+                                modelId,
+                              },
+                            );
+                            notifyAiModelAction(
+                              `Test reply: ${r.reply.slice(0, 200)}${r.reply.length > 200 ? "…" : ""}`,
+                            );
                           } catch (e) {
-                            notifyAiModelAction(e instanceof Error ? e.message : String(e));
+                            notifyAiModelAction(
+                              e instanceof Error ? e.message : String(e),
+                            );
                           } finally {
                             setModelTestBusy(false);
                           }
@@ -970,7 +1315,10 @@ export function SettingsPanel({
                     </button>
                   </div>
                   <div className="settings-model-picker">
-                    <div className="settings-model-dropdown" ref={modelDropdownRef}>
+                    <div
+                      className="settings-model-dropdown"
+                      ref={modelDropdownRef}
+                    >
                       <button
                         type="button"
                         className="settings-model-dropdown__trigger"
@@ -984,9 +1332,14 @@ export function SettingsPanel({
                       >
                         <span className="settings-model-dropdown__value">
                           {intelligentSettings.selectedModelId.trim() ||
-                            (modelIdsForPicker.length === 0 ? "Load models to enable picker…" : "Choose model…")}
+                            (modelIdsForPicker.length === 0
+                              ? "Load models to enable picker…"
+                              : "Choose model…")}
                         </span>
-                        <span className="settings-model-dropdown__caret" aria-hidden>
+                        <span
+                          className="settings-model-dropdown__caret"
+                          aria-hidden
+                        >
                           ▾
                         </span>
                       </button>
@@ -1002,12 +1355,19 @@ export function SettingsPanel({
                             autoComplete="off"
                             autoFocus
                           />
-                          <div className="settings-model-dropdown__list" role="listbox" aria-label="Models">
+                          <div
+                            className="settings-model-dropdown__list"
+                            role="listbox"
+                            aria-label="Models"
+                          >
                             {filteredModelIds.length === 0 ? (
-                              <p className="settings-model-dropdown__empty">No matches.</p>
+                              <p className="settings-model-dropdown__empty">
+                                No matches.
+                              </p>
                             ) : (
                               filteredModelIds.map((id, idx) => {
-                                const active = id === intelligentSettings.selectedModelId;
+                                const active =
+                                  id === intelligentSettings.selectedModelId;
                                 return (
                                   <button
                                     key={id}
@@ -1017,15 +1377,22 @@ export function SettingsPanel({
                                     aria-selected={active}
                                     className={`settings-model-dropdown__opt${active ? " settings-model-dropdown__opt--active" : ""}`}
                                     onClick={() => {
-                                      updateIntelligentSettings({ selectedModelId: id });
+                                      updateIntelligentSettings({
+                                        selectedModelId: id,
+                                      });
                                       setModelPickerOpen(false);
                                       setModelListFilter("");
                                     }}
                                   >
-                                    <span className="settings-model-dropdown__check" aria-hidden>
+                                    <span
+                                      className="settings-model-dropdown__check"
+                                      aria-hidden
+                                    >
                                       {active ? "✓" : ""}
                                     </span>
-                                    <span className="settings-model-dropdown__id">{id}</span>
+                                    <span className="settings-model-dropdown__id">
+                                      {id}
+                                    </span>
                                   </button>
                                 );
                               })
@@ -1036,10 +1403,14 @@ export function SettingsPanel({
                     </div>
                     {modelIdsForPicker.length === 0 ? (
                       <p className="settings-muted settings-hint--compact settings-model-picker__empty-hint">
-                        No list yet — use <strong>Load models</strong>, or enter an ID below.
+                        No list yet — use <strong>Load models</strong>, or enter
+                        an ID below.
                       </p>
                     ) : null}
-                    <label className="settings-label settings-label-mt settings-model-picker__manual-label" htmlFor="modelManualIdReact">
+                    <label
+                      className="settings-label settings-label-mt settings-model-picker__manual-label"
+                      htmlFor="modelManualIdReact"
+                    >
                       Model ID (manual)
                     </label>
                     <input
@@ -1048,45 +1419,71 @@ export function SettingsPanel({
                       className="settings-input settings-input--mono"
                       placeholder="e.g. gemini-2.0-flash, gpt-4o-mini"
                       value={intelligentSettings.selectedModelId}
-                      onChange={(e) => updateIntelligentSettings({ selectedModelId: e.target.value })}
+                      onChange={(e) =>
+                        updateIntelligentSettings({
+                          selectedModelId: e.target.value,
+                        })
+                      }
                       spellCheck={false}
                       autoComplete="off"
                     />
                   </div>
                   {aiModelActionFeedback ? (
-                    <p className="settings-hint settings-hint--compact" role="status">
+                    <p
+                      className="settings-hint settings-hint--compact"
+                      role="status"
+                    >
                       {aiModelActionFeedback}
                     </p>
                   ) : null}
                 </div>
               </div>
 
-              <div className="settings-card settings-card--butcher-mcp">
+              <div
+                className="settings-card settings-card--butcher-mcp settings-intelligent-section-anchor"
+                id="iw-settings-mcp-bridge"
+              >
                 <div className="settings-card-head">
                   <div className="settings-card-title">Butcher MCP bridge</div>
                   <div className="settings-card-sub">
-                    Local TCP bridge (token-gated) for Claude Desktop / Cursor stdio MCP
+                    Local TCP bridge (token-gated) for Claude Desktop / Cursor
+                    stdio MCP
                   </div>
                 </div>
                 <div className="settings-section">
                   <p className="settings-hint settings-hint--compact">
-                    Enable the bridge in this app, then add the bundled stdio server to your MCP client config. The
-                    client must set <code className="settings-code-inline">BUTCHER_MCP_PORT</code> and{" "}
-                    <code className="settings-code-inline">BUTCHER_MCP_TOKEN</code> to match this app.
+                    Enable the bridge in this app, then add the bundled stdio
+                    server to your MCP client config. The client must set{" "}
+                    <code className="settings-code-inline">
+                      BUTCHER_MCP_PORT
+                    </code>{" "}
+                    and{" "}
+                    <code className="settings-code-inline">
+                      BUTCHER_MCP_TOKEN
+                    </code>{" "}
+                    to match this app.
                   </p>
                   {mcpBridge ? (
                     <>
-                      <label className="settings-label settings-label-mt" htmlFor="mcpBridgeToggle">
+                      <label
+                        className="settings-label settings-label-mt"
+                        htmlFor="mcpBridgeToggle"
+                      >
                         Bridge
                       </label>
-                      <label className="checkbox-label" htmlFor="mcpBridgeToggle">
+                      <label
+                        className="checkbox-label"
+                        htmlFor="mcpBridgeToggle"
+                      >
                         <input
                           id="mcpBridgeToggle"
                           type="checkbox"
                           checked={mcpBridge.enabled}
                           onChange={async (e) => {
                             if (!api) return;
-                            const s = await api.mcpBridgeSetEnabled(e.target.checked);
+                            const s = await api.mcpBridgeSetEnabled(
+                              e.target.checked,
+                            );
                             setMcpBridge(s);
                           }}
                         />
@@ -1099,10 +1496,20 @@ export function SettingsPanel({
                               : "off"}
                         </span>
                       </label>
-                      <label className="settings-label settings-label-mt" htmlFor="mcpPortDraft">
+                      <label
+                        className="settings-label settings-label-mt"
+                        htmlFor="mcpPortDraft"
+                      >
                         Port
                       </label>
-                      <div className="settings-ai-provider" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <div
+                        className="settings-ai-provider"
+                        style={{
+                          display: "flex",
+                          gap: 8,
+                          alignItems: "center",
+                        }}
+                      >
                         <input
                           id="mcpPortDraft"
                           type="number"
@@ -1113,14 +1520,24 @@ export function SettingsPanel({
                           value={mcpPortDraft}
                           onChange={(e) => setMcpPortDraft(e.target.value)}
                         />
-                        <button type="button" className="btn-secondary btn-secondary--compact" onClick={() => void applyMcpPort()}>
+                        <button
+                          type="button"
+                          className="btn-secondary btn-secondary--compact"
+                          onClick={() => void applyMcpPort()}
+                        >
                           Apply
                         </button>
                       </div>
-                      <label className="settings-label settings-label-mt" htmlFor="mcpTokenDisplay">
+                      <label
+                        className="settings-label settings-label-mt"
+                        htmlFor="mcpTokenDisplay"
+                      >
                         Token
                       </label>
-                      <div className="settings-ai-provider" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <div
+                        className="settings-ai-provider"
+                        style={{ display: "flex", gap: 8, flexWrap: "wrap" }}
+                      >
                         <input
                           id="mcpTokenDisplay"
                           type="text"
@@ -1136,13 +1553,18 @@ export function SettingsPanel({
                             if (!api) return;
                             const s = await api.mcpBridgeRegenerateToken();
                             setMcpBridge(s);
-                            bridge?.showToast?.("New token saved — update your MCP client env");
+                            bridge?.showToast?.(
+                              "New token saved — update your MCP client env",
+                            );
                           }}
                         >
                           Regenerate
                         </button>
                       </div>
-                      <label className="settings-label settings-label-mt" htmlFor="mcpStdioPath">
+                      <label
+                        className="settings-label settings-label-mt"
+                        htmlFor="mcpStdioPath"
+                      >
                         Stdio script path
                       </label>
                       <input
@@ -1153,15 +1575,25 @@ export function SettingsPanel({
                         value={mcpBridge.stdioServerPath}
                       />
                       <div className="import-actions" style={{ marginTop: 12 }}>
-                        <button type="button" className="btn-primary" onClick={() => void copyMcpClientSnippet()}>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          onClick={() => void copyMcpClientSnippet()}
+                        >
                           Copy MCP client JSON
                         </button>
                       </div>
-                      <label className="settings-label settings-label-mt">Tools exposed to MCP</label>
+                      <label className="settings-label settings-label-mt">
+                        Tools exposed to MCP
+                      </label>
                       <p className="settings-muted" style={{ marginBottom: 8 }}>
-                        {MCP_TOOL_NAMES.length} tools (same registry as Tool Hub automation).
+                        {MCP_TOOL_NAMES.length} tools (same registry as Tool Hub
+                        automation).
                       </p>
-                      <ul className="settings-mcp-tool-list" aria-label="Butcher MCP tool names">
+                      <ul
+                        className="settings-mcp-tool-list"
+                        aria-label="Butcher MCP tool names"
+                      >
                         {MCP_TOOL_NAMES.map((name) => (
                           <li key={name}>
                             <code className="settings-code-inline">{name}</code>
@@ -1175,25 +1607,46 @@ export function SettingsPanel({
                 </div>
               </div>
 
-              <div className="settings-card settings-card--mcp">
+              <div
+                className="settings-card settings-card--mcp settings-intelligent-section-anchor"
+                id="iw-settings-mcp-tools"
+              >
                 <div className="settings-card-head">
                   <div className="settings-card-title">MCP tools</div>
                   <div className="settings-card-sub">
-                    Model Context Protocol: local stdio servers or remote HTTP (Streamable HTTP / SSE)
+                    Model Context Protocol: local stdio servers or remote HTTP
+                    (Streamable HTTP / SSE)
                   </div>
                 </div>
                 <div className="settings-section">
                   <div className="settings-subsection-head settings-subsection-head--mcp">
-                    <p className="settings-hint settings-hint--compact" style={{ margin: 0, flex: "1 1 220px" }}>
-                      Local: <code className="settings-code-inline">args</code> /{" "}
-                      <code className="settings-code-inline">env</code> as JSON. Remote: optional{" "}
-                      <code className="settings-code-inline">headers</code> JSON; requests run from the app (use HTTPS).
+                    <p
+                      className="settings-hint settings-hint--compact"
+                      style={{ margin: 0, flex: "1 1 220px" }}
+                    >
+                      Local: <code className="settings-code-inline">args</code>{" "}
+                      / <code className="settings-code-inline">env</code> as
+                      JSON. Remote: optional{" "}
+                      <code className="settings-code-inline">headers</code>{" "}
+                      JSON; requests run from the app (use HTTPS).
                     </p>
-                    <div className="settings-mcp-config-actions" role="group" aria-label="MCP server list">
-                      <button type="button" className="btn-secondary btn-secondary--compact" onClick={addMcp}>
+                    <div
+                      className="settings-mcp-config-actions"
+                      role="group"
+                      aria-label="MCP server list"
+                    >
+                      <button
+                        type="button"
+                        className="btn-secondary btn-secondary--compact"
+                        onClick={addMcp}
+                      >
                         Add server
                       </button>
-                      <button type="button" className="btn-secondary btn-secondary--compact" onClick={saveAssistantSettingsNow}>
+                      <button
+                        type="button"
+                        className="btn-secondary btn-secondary--compact"
+                        onClick={saveAssistantSettingsNow}
+                      >
                         Save now
                       </button>
                       <button
@@ -1206,26 +1659,36 @@ export function SettingsPanel({
                     </div>
                   </div>
                   <p className="settings-muted settings-mcp-autosave-hint">
-                    Each row can be expanded to edit; <strong>Save server</strong> writes that MCP to disk and
-                    collapses it. Global <strong>Save now</strong> / <strong>Reload saved</strong> still apply to all
-                    assistant settings.
+                    Each row can be expanded to edit;{" "}
+                    <strong>Save server</strong> writes that MCP to disk and
+                    collapses it. Global <strong>Save now</strong> /{" "}
+                    <strong>Reload saved</strong> still apply to all assistant
+                    settings.
                   </p>
                   <div className="settings-butcher-builtin">
-                    <div className="settings-butcher-builtin-title">Butcher (this app)</div>
+                    <div className="settings-butcher-builtin-title">
+                      Butcher (this app)
+                    </div>
                     <p className="settings-hint settings-hint--compact">
-                      Built-in browser automation tools (in-process). Toggle per workspace for the AI assistant.
+                      Built-in browser automation tools (in-process). Toggle per
+                      workspace for the AI assistant.
                     </p>
                     <div className="settings-butcher-builtin-row">
                       <label className="checkbox-label">
                         <input
                           type="checkbox"
-                          checked={intelligentSettings.mcpTogglesBrowser.connectionEnabled[BUTCHER_BUILTIN_MCP_ID] !== false}
+                          checked={
+                            intelligentSettings.mcpTogglesBrowser
+                              .connectionEnabled[BUTCHER_BUILTIN_MCP_ID] !==
+                            false
+                          }
                           onChange={(e) =>
                             updateIntelligentSettings({
                               mcpTogglesBrowser: {
                                 ...intelligentSettings.mcpTogglesBrowser,
                                 connectionEnabled: {
-                                  ...intelligentSettings.mcpTogglesBrowser.connectionEnabled,
+                                  ...intelligentSettings.mcpTogglesBrowser
+                                    .connectionEnabled,
                                   [BUTCHER_BUILTIN_MCP_ID]: e.target.checked,
                                 },
                               },
@@ -1237,13 +1700,18 @@ export function SettingsPanel({
                       <label className="checkbox-label">
                         <input
                           type="checkbox"
-                          checked={intelligentSettings.mcpTogglesIntelligent.connectionEnabled[BUTCHER_BUILTIN_MCP_ID] !== false}
+                          checked={
+                            intelligentSettings.mcpTogglesIntelligent
+                              .connectionEnabled[BUTCHER_BUILTIN_MCP_ID] !==
+                            false
+                          }
                           onChange={(e) =>
                             updateIntelligentSettings({
                               mcpTogglesIntelligent: {
                                 ...intelligentSettings.mcpTogglesIntelligent,
                                 connectionEnabled: {
-                                  ...intelligentSettings.mcpTogglesIntelligent.connectionEnabled,
+                                  ...intelligentSettings.mcpTogglesIntelligent
+                                    .connectionEnabled,
                                   [BUTCHER_BUILTIN_MCP_ID]: e.target.checked,
                                 },
                               },
@@ -1260,7 +1728,8 @@ export function SettingsPanel({
                     <ul className="mcp-server-list">
                       {intelligentSettings.mcpServers.map((m) => {
                         const expanded = expandedMcpServerIds.has(m.id);
-                        const modeLabel = m.serverMode === "remote" ? "Remote" : "Stdio";
+                        const modeLabel =
+                          m.serverMode === "remote" ? "Remote" : "Stdio";
                         return (
                           <li key={m.id} className="mcp-server-card">
                             <div
@@ -1280,29 +1749,55 @@ export function SettingsPanel({
                                   <span className="mcp-server-card__summary-name">
                                     {m.name.trim() || "Untitled server"}
                                   </span>
-                                  <span className="mcp-server-card__summary-badge">{modeLabel}</span>
+                                  <span className="mcp-server-card__summary-badge">
+                                    {modeLabel}
+                                  </span>
                                 </div>
-                                <p className="mcp-server-card__summary-meta">{mcpServerSubtitle(m)}</p>
+                                <p className="mcp-server-card__summary-meta">
+                                  {mcpServerSubtitle(m)}
+                                </p>
                               </div>
                               <div className="mcp-server-card__summary-toolbar">
                                 <button
                                   type="button"
-                                  className="btn-icon-danger"
-                                  title="Remove server"
-                                  aria-label={`Remove ${m.name || "MCP server"}`}
+                                  className="btn-icon btn-icon-secondary"
+                                  title="Reload connection"
+                                  aria-label={`Reload ${m.name || "MCP server"}`}
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    await reloadMcpServer(m.id);
+                                  }}
+                                >
+                                  {reloadingMcpServerIds.has(m.id) ? (
+                                    <span className="spinner" aria-hidden />
+                                  ) : (
+                                    <IconRefresh />
+                                  )}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-icon btn-icon-danger"
+                                  title="Delete server"
+                                  aria-label={`Delete ${m.name || "MCP server"}`}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     removeMcp(m.id);
                                   }}
                                 >
-                                  ×
+                                  <IconTrash />
                                 </button>
-                                <span className="mcp-server-card__summary-chevron" aria-hidden />
+                                <span
+                                  className="mcp-server-card__summary-chevron"
+                                  aria-hidden
+                                />
                               </div>
                             </div>
                             {expanded ? (
                               <div className="mcp-server-card__body">
-                                <label className="settings-label" htmlFor={`mcp-label-${m.id}`}>
+                                <label
+                                  className="settings-label"
+                                  htmlFor={`mcp-label-${m.id}`}
+                                >
                                   Display name
                                 </label>
                                 <input
@@ -1312,9 +1807,14 @@ export function SettingsPanel({
                                   placeholder="Label"
                                   aria-label="MCP label"
                                   value={m.name}
-                                  onChange={(e) => updateMcp(m.id, { name: e.target.value })}
+                                  onChange={(e) =>
+                                    updateMcp(m.id, { name: e.target.value })
+                                  }
                                 />
-                                <label className="settings-label" htmlFor={`mcp-mode-${m.id}`}>
+                                <label
+                                  className="settings-label"
+                                  htmlFor={`mcp-mode-${m.id}`}
+                                >
                                   Connection type
                                 </label>
                                 <select
@@ -1323,16 +1823,26 @@ export function SettingsPanel({
                                   value={m.serverMode}
                                   onChange={(e) =>
                                     updateMcp(m.id, {
-                                      serverMode: e.target.value === "remote" ? "remote" : "stdio",
+                                      serverMode:
+                                        e.target.value === "remote"
+                                          ? "remote"
+                                          : "stdio",
                                     })
                                   }
                                 >
-                                  <option value="stdio">Local command (stdio)</option>
-                                  <option value="remote">Remote URL (HTTP)</option>
+                                  <option value="stdio">
+                                    Local command (stdio)
+                                  </option>
+                                  <option value="remote">
+                                    Remote URL (HTTP)
+                                  </option>
                                 </select>
                                 {m.serverMode === "remote" ? (
                                   <>
-                                    <label className="settings-label" htmlFor={`mcp-url-${m.id}`}>
+                                    <label
+                                      className="settings-label"
+                                      htmlFor={`mcp-url-${m.id}`}
+                                    >
                                       MCP URL
                                     </label>
                                     <input
@@ -1341,9 +1851,14 @@ export function SettingsPanel({
                                       className="settings-input settings-input--mono"
                                       placeholder="https://host.example/mcp"
                                       value={m.url}
-                                      onChange={(e) => updateMcp(m.id, { url: e.target.value })}
+                                      onChange={(e) =>
+                                        updateMcp(m.id, { url: e.target.value })
+                                      }
                                     />
-                                    <label className="settings-label" htmlFor={`mcp-headers-${m.id}`}>
+                                    <label
+                                      className="settings-label"
+                                      htmlFor={`mcp-headers-${m.id}`}
+                                    >
                                       Headers (JSON object)
                                     </label>
                                     <textarea
@@ -1352,9 +1867,16 @@ export function SettingsPanel({
                                       rows={2}
                                       placeholder='{"Authorization":"Bearer …"}'
                                       value={m.headers}
-                                      onChange={(e) => updateMcp(m.id, { headers: e.target.value })}
+                                      onChange={(e) =>
+                                        updateMcp(m.id, {
+                                          headers: e.target.value,
+                                        })
+                                      }
                                     />
-                                    <label className="settings-label" htmlFor={`mcp-rt-${m.id}`}>
+                                    <label
+                                      className="settings-label"
+                                      htmlFor={`mcp-rt-${m.id}`}
+                                    >
                                       Remote transport
                                     </label>
                                     <select
@@ -1363,18 +1885,26 @@ export function SettingsPanel({
                                       value={m.remoteTransport}
                                       onChange={(e) =>
                                         updateMcp(m.id, {
-                                          remoteTransport: e.target.value as McpRemoteTransport,
+                                          remoteTransport: e.target
+                                            .value as McpRemoteTransport,
                                         })
                                       }
                                     >
-                                      <option value="auto">Auto (Streamable HTTP, then SSE)</option>
-                                      <option value="streamableHttp">Streamable HTTP</option>
+                                      <option value="auto">
+                                        Auto (Streamable HTTP, then SSE)
+                                      </option>
+                                      <option value="streamableHttp">
+                                        Streamable HTTP
+                                      </option>
                                       <option value="sse">SSE (legacy)</option>
                                     </select>
                                   </>
                                 ) : (
                                   <>
-                                    <label className="settings-label" htmlFor={`mcp-cmd-${m.id}`}>
+                                    <label
+                                      className="settings-label"
+                                      htmlFor={`mcp-cmd-${m.id}`}
+                                    >
                                       Command
                                     </label>
                                     <input
@@ -1383,9 +1913,16 @@ export function SettingsPanel({
                                       className="settings-input settings-input--mono"
                                       placeholder="npx"
                                       value={m.command}
-                                      onChange={(e) => updateMcp(m.id, { command: e.target.value })}
+                                      onChange={(e) =>
+                                        updateMcp(m.id, {
+                                          command: e.target.value,
+                                        })
+                                      }
                                     />
-                                    <label className="settings-label" htmlFor={`mcp-args-${m.id}`}>
+                                    <label
+                                      className="settings-label"
+                                      htmlFor={`mcp-args-${m.id}`}
+                                    >
                                       Args (JSON array)
                                     </label>
                                     <textarea
@@ -1394,9 +1931,16 @@ export function SettingsPanel({
                                       rows={2}
                                       placeholder='["-y", "@modelcontextprotocol/server-example"]'
                                       value={m.args}
-                                      onChange={(e) => updateMcp(m.id, { args: e.target.value })}
+                                      onChange={(e) =>
+                                        updateMcp(m.id, {
+                                          args: e.target.value,
+                                        })
+                                      }
                                     />
-                                    <label className="settings-label" htmlFor={`mcp-env-${m.id}`}>
+                                    <label
+                                      className="settings-label"
+                                      htmlFor={`mcp-env-${m.id}`}
+                                    >
                                       Env (JSON object)
                                     </label>
                                     <textarea
@@ -1405,12 +1949,18 @@ export function SettingsPanel({
                                       rows={2}
                                       placeholder='{"KEY":"value"}'
                                       value={m.env}
-                                      onChange={(e) => updateMcp(m.id, { env: e.target.value })}
+                                      onChange={(e) =>
+                                        updateMcp(m.id, { env: e.target.value })
+                                      }
                                     />
                                   </>
                                 )}
                                 <div className="mcp-server-card__save-row">
-                                  <button type="button" className="btn-primary" onClick={() => saveMcpServer(m.id)}>
+                                  <button
+                                    type="button"
+                                    className="btn-primary"
+                                    onClick={() => saveMcpServer(m.id)}
+                                  >
                                     Save server
                                   </button>
                                 </div>
@@ -1422,6 +1972,7 @@ export function SettingsPanel({
                     </ul>
                   )}
                 </div>
+              </div>
               </div>
             </div>
           )}

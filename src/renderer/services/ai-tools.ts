@@ -74,6 +74,45 @@ export type ToolDispatch =
   | { kind: "butcher"; name: string }
   | { kind: "external"; server: McpServerConfigPayload; toolName: string };
 
+/** OpenAI-compatible function names: letters, digits, underscore, hyphen. */
+export function sanitizeOpenAiToolFunctionName(raw: string): string {
+  const s = raw
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^-+|-+$/g, "")
+    .replace(/^_|_$/g, "");
+  return s.length > 0 ? s : "tool";
+}
+
+/**
+ * Pick a unique OpenAI function name for an external MCP tool: prefer the sanitized tool name,
+ * then `displayName_toolName`, then include `server.id`, then numeric suffixes.
+ * Exported for unit tests.
+ */
+export function allocateExternalOpenAiFunctionName(
+  used: Set<string>,
+  server: McpServerConfigPayload,
+  toolName: string,
+): string {
+  const label = server.name.trim() || server.id;
+  const base = sanitizeOpenAiToolFunctionName(toolName);
+  if (!used.has(base)) return base;
+
+  const prefixed = sanitizeOpenAiToolFunctionName(`${label}_${toolName}`);
+  if (!used.has(prefixed)) return prefixed;
+
+  const withId = sanitizeOpenAiToolFunctionName(`${label}_${server.id}_${toolName}`);
+  if (!used.has(withId)) return withId;
+
+  let n = 2;
+  let candidate = `${withId}_${n}`;
+  while (used.has(candidate)) {
+    n++;
+    candidate = `${withId}_${n}`;
+  }
+  return candidate;
+}
+
 /** Build OpenAI tool list + resolver for model function names. */
 export function buildToolDispatchMap(
   butcherDefs: typeof MCP_TOOL_DEFINITIONS,
@@ -81,8 +120,10 @@ export function buildToolDispatchMap(
 ): { openAiTools: OpenAiToolDef[]; dispatch: (fn: string) => ToolDispatch | null } {
   const map = new Map<string, ToolDispatch>();
   const openAiTools: OpenAiToolDef[] = [];
+  const usedNames = new Set<string>();
 
   for (const d of butcherDefs) {
+    usedNames.add(d.name);
     map.set(d.name, { kind: "butcher", name: d.name });
     openAiTools.push({
       type: "function",
@@ -94,10 +135,10 @@ export function buildToolDispatchMap(
     });
   }
 
-  let extIdx = 0;
   for (const { server, tools } of external) {
     for (const t of tools) {
-      const fn = `ext_${extIdx++}`;
+      const fn = allocateExternalOpenAiFunctionName(usedNames, server, t.name);
+      usedNames.add(fn);
       map.set(fn, { kind: "external", server, toolName: t.name });
       openAiTools.push({
         type: "function",

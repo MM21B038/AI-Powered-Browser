@@ -1,5 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { ElectronApi, ImportBrowserDataOptions } from "../src/shared/ipc-types";
+import type {
+  ElectronApi,
+  ImportBrowserDataOptions,
+} from "../src/shared/ipc-types";
 
 const electronApi: ElectronApi = {
   windowMinimize: () => ipcRenderer.invoke("window-minimize"),
@@ -7,7 +10,9 @@ const electronApi: ElectronApi = {
   windowClose: () => ipcRenderer.invoke("window-close"),
   windowIsMaximized: () => ipcRenderer.invoke("window-is-maximized"),
   onWindowStateChanged: (cb) => {
-    ipcRenderer.on("window-state-changed", (_, state: "maximized" | "normal") => cb(state));
+    ipcRenderer.on("window-state-changed", (_, state: "maximized" | "normal") =>
+      cb(state),
+    );
   },
   navigateUrl: (url) => ipcRenderer.invoke("navigate-url", url),
   fillFormField: (data) => ipcRenderer.invoke("fill-form-field", data),
@@ -15,38 +20,50 @@ const electronApi: ElectronApi = {
   executeScript: (script) => ipcRenderer.invoke("execute-script", script),
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   getSystemInfo: () => ipcRenderer.invoke("get-system-info"),
-  showNotification: (title, body) => ipcRenderer.invoke("show-notification", { title, body }),
-  captureWebview: (webContentsId, rect) => ipcRenderer.invoke("capture-webview", { webContentsId, rect }),
+  showNotification: (title, body) =>
+    ipcRenderer.invoke("show-notification", { title, body }),
+  captureWebview: (webContentsId, rect) =>
+    ipcRenderer.invoke("capture-webview", { webContentsId, rect }),
   saveScreenshot: (dataUrl) => ipcRenderer.invoke("save-screenshot", dataUrl),
-  bgEnsureSession: (sessionId) => ipcRenderer.invoke("bg-session-ensure", { sessionId }),
-  bgKillSession: (sessionId) => ipcRenderer.invoke("bg-session-kill", { sessionId }),
+  bgEnsureSession: (sessionId) =>
+    ipcRenderer.invoke("bg-session-ensure", { sessionId }),
+  bgKillSession: (sessionId) =>
+    ipcRenderer.invoke("bg-session-kill", { sessionId }),
   bgGoto: (sessionId, url) => ipcRenderer.invoke("bg-goto", { sessionId, url }),
-  bgEval: (sessionId, script) => ipcRenderer.invoke("bg-eval", { sessionId, script }),
+  bgEval: (sessionId, script) =>
+    ipcRenderer.invoke("bg-eval", { sessionId, script }),
   bgGetUrl: (sessionId) => ipcRenderer.invoke("bg-url", { sessionId }),
   bgGetTitle: (sessionId) => ipcRenderer.invoke("bg-title", { sessionId }),
-  bgScreenshot: (sessionId) => ipcRenderer.invoke("bg-screenshot", { sessionId }),
+  bgScreenshot: (sessionId) =>
+    ipcRenderer.invoke("bg-screenshot", { sessionId }),
   showSaveDialog: (options) => ipcRenderer.invoke("show-save-dialog", options),
   setZoom: (level) => ipcRenderer.invoke("set-zoom", level),
   sendChatMessage: (message) => ipcRenderer.invoke("chat-message", message),
   profileList: () => ipcRenderer.invoke("profile-list"),
-  profileSave: (name, data) => ipcRenderer.invoke("profile-save", { name, data }),
+  profileSave: (name, data) =>
+    ipcRenderer.invoke("profile-save", { name, data }),
   profileLoad: (name) => ipcRenderer.invoke("profile-load", name),
   profileDelete: (name) => ipcRenderer.invoke("profile-delete", name),
   browserImport: () => ipcRenderer.invoke("browser-import"),
   getBrowserStats: () => ipcRenderer.invoke("get-browser-stats"),
   getImportStats: (payload) => ipcRenderer.invoke("get-import-stats", payload),
   listBrowserProfiles: () => ipcRenderer.invoke("list-browser-profiles"),
-  importBrowserData: (options: ImportBrowserDataOptions) => ipcRenderer.invoke("import-browser-data", options),
+  importBrowserData: (options: ImportBrowserDataOptions) =>
+    ipcRenderer.invoke("import-browser-data", options),
   runAutomationCommand: (cmd) => ipcRenderer.invoke("automation-command", cmd),
   runAutomationLine: (line) => ipcRenderer.invoke("automation-line", line),
-  requestSaveTemplate: (tpl) => ipcRenderer.invoke("request-save-template", tpl),
+  requestSaveTemplate: (tpl) =>
+    ipcRenderer.invoke("request-save-template", tpl),
   requestListTemplates: () => ipcRenderer.invoke("request-list-templates"),
-  requestDeleteTemplate: (id) => ipcRenderer.invoke("request-delete-template", id),
+  requestDeleteTemplate: (id) =>
+    ipcRenderer.invoke("request-delete-template", id),
   requestRun: (input) => ipcRenderer.invoke("request-run", input),
-  requestListCaptures: (limit) => ipcRenderer.invoke("request-list-captures", limit),
+  requestListCaptures: (limit) =>
+    ipcRenderer.invoke("request-list-captures", limit),
   cookieProfileSetToken: (profile, name, value) =>
     ipcRenderer.invoke("cookie-profile-set-token", { profile, name, value }),
-  cookieProfileGetTokens: (profile) => ipcRenderer.invoke("cookie-profile-get-tokens", profile),
+  cookieProfileGetTokens: (profile) =>
+    ipcRenderer.invoke("cookie-profile-get-tokens", profile),
   getBookmarks: () => ipcRenderer.invoke("get-bookmarks"),
   getHistory: () => ipcRenderer.invoke("get-history"),
   getCookies: () => ipcRenderer.invoke("get-cookies"),
@@ -58,25 +75,32 @@ const electronApi: ElectronApi = {
   clearAllData: () => ipcRenderer.invoke("clear-all-data"),
   debugLog: (payload) => ipcRenderer.invoke("debug-log", payload),
   mcpBridgeGetState: () => ipcRenderer.invoke("mcp-bridge-get-state"),
-  mcpBridgeSetEnabled: (enabled) => ipcRenderer.invoke("mcp-bridge-set-enabled", enabled),
+  mcpBridgeSetEnabled: (enabled) =>
+    ipcRenderer.invoke("mcp-bridge-set-enabled", enabled),
   mcpBridgeSetPort: (port) => ipcRenderer.invoke("mcp-bridge-set-port", port),
-  mcpBridgeRegenerateToken: () => ipcRenderer.invoke("mcp-bridge-regenerate-token"),
-  mcpExternalListTools: (cfg) => ipcRenderer.invoke("mcp-external-list-tools", cfg),
+  mcpBridgeRegenerateToken: () =>
+    ipcRenderer.invoke("mcp-bridge-regenerate-token"),
+  mcpExternalListTools: (cfg) =>
+    ipcRenderer.invoke("mcp-external-list-tools", cfg),
   mcpExternalCallTool: (cfg, toolName, args) =>
     ipcRenderer.invoke("mcp-external-call-tool", { cfg, toolName, args }),
-  aiListGoogleModels: (apiKey) => ipcRenderer.invoke("ai-list-google-models", apiKey),
-  aiListOpenAiModels: (baseUrl, apiKey) => ipcRenderer.invoke("ai-list-openai-models", { baseUrl, apiKey }),
+  mcpExternalDisconnect: (serverId) =>
+    ipcRenderer.invoke("mcp-external-disconnect", serverId),
+  aiListGoogleModels: (apiKey) =>
+    ipcRenderer.invoke("ai-list-google-models", apiKey),
+  aiListOpenAiModels: (baseUrl, apiKey) =>
+    ipcRenderer.invoke("ai-list-openai-models", { baseUrl, apiKey }),
   aiTestChatHi: (payload) => ipcRenderer.invoke("ai-test-chat-hi", payload),
   aiChatProxyStream: (payload, handlers) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     const channel = `ai-chat-proxy:${id}`;
     const listener = (
       _: Electron.IpcRendererEvent,
-      msg: { chunk?: string; error?: string; done?: boolean },
+      msg: { chunk?: string; error?: string; done?: boolean; httpStatus?: number },
     ) => {
       if (msg.error != null && msg.error !== "") {
         ipcRenderer.removeListener(channel, listener);
-        handlers.onError(msg.error);
+        handlers.onError(msg.error, msg.httpStatus);
         return;
       }
       if (msg.done) {
@@ -89,10 +113,12 @@ const electronApi: ElectronApi = {
       }
     };
     ipcRenderer.on(channel, listener);
-    ipcRenderer.invoke("ai-chat-proxy-start", { channel, ...payload }).catch((e) => {
-      ipcRenderer.removeListener(channel, listener);
-      handlers.onError(e instanceof Error ? e.message : String(e));
-    });
+    ipcRenderer
+      .invoke("ai-chat-proxy-start", { channel, ...payload })
+      .catch((e) => {
+        ipcRenderer.removeListener(channel, listener);
+        handlers.onError(e instanceof Error ? e.message : String(e));
+      });
     return () => ipcRenderer.removeListener(channel, listener);
   },
 };

@@ -18,7 +18,12 @@ import { ChromeImporter } from "./import/chrome-importer";
 import { FirefoxImporter } from "./import/firefox-importer";
 import { wireNetworkCapture } from "./network/network-capture";
 import { runRequest } from "./network/request-service";
-import { listCaptures, listTemplates, removeTemplate, upsertTemplate } from "./network/request-store";
+import {
+  listCaptures,
+  listTemplates,
+  removeTemplate,
+  upsertTemplate,
+} from "./network/request-store";
 import { getTokens, setToken } from "./security/cookie-token-store";
 import { registerBackgroundSessionIpc } from "./ipc/background-session-ipc";
 import {
@@ -32,8 +37,15 @@ import {
 } from "./mcp/mcp-bridge";
 import type { McpBridgeState } from "../src/shared/ipc-types";
 import type { McpServerConfigPayload } from "../src/shared/mcp-external-types";
-import { externalMcpCallTool, externalMcpListTools } from "./mcp/mcp-external-pool";
-import { listGoogleModelsMain, listOpenAiCompatibleModelsMain } from "./ai-list-models";
+import {
+  externalMcpCallTool,
+  externalMcpListTools,
+  mcpExternalDisconnect,
+} from "./mcp/mcp-external-pool";
+import {
+  listGoogleModelsMain,
+  listOpenAiCompatibleModelsMain,
+} from "./ai-list-models";
 import { proxyOpenAiChatCompletionsStream } from "./ai-chat-proxy";
 import { testGoogleHiMain, testOpenAiHiMain } from "./ai-test-hi";
 
@@ -83,7 +95,8 @@ function configureAppPaths(): void {
   // We intentionally leave sessionData and cache at their Electron defaults so Chromium
   // never tries to MOVE existing cache files — that move fails with "Access is denied" on
   // Windows when another process holds the cache lock.
-  const appName = app.getName().replace(/[^a-zA-Z0-9._-]/g, "_") || "AutonomousBrowser";
+  const appName =
+    app.getName().replace(/[^a-zA-Z0-9._-]/g, "_") || "AutonomousBrowser";
   const preferredRoot = path.join(app.getPath("appData"), appName);
   const fallbackRoot = path.join(os.tmpdir(), appName);
   const root = ensureDirWritable(preferredRoot) ? preferredRoot : fallbackRoot;
@@ -159,7 +172,9 @@ function createWindow(): BrowserWindow {
   });
   win.webContents.on("render-process-gone", (_e, details) => {
     console.error("[main] renderer process gone", details);
-    appendStartupTrace(`[main] renderer process gone ${JSON.stringify(details)}`);
+    appendStartupTrace(
+      `[main] renderer process gone ${JSON.stringify(details)}`,
+    );
   });
   win.webContents.on("console-message", (event) => {
     const e = event as unknown as {
@@ -173,14 +188,20 @@ function createWindow(): BrowserWindow {
     const message = e.message ?? "";
     const sourceId = e.sourceId ?? "unknown";
     const line = e.lineNumber ?? e.line ?? 0;
-    appendStartupTrace(`[renderer-console] level=${level} ${sourceId}:${line} ${message}`);
+    appendStartupTrace(
+      `[renderer-console] level=${level} ${sourceId}:${line} ${message}`,
+    );
   });
   win.on("closed", () => {
     traceMain("main window closed");
     mainWindow = null;
   });
-  win.on("maximize", () => win.webContents.send("window-state-changed", "maximized"));
-  win.on("unmaximize", () => win.webContents.send("window-state-changed", "normal"));
+  win.on("maximize", () =>
+    win.webContents.send("window-state-changed", "maximized"),
+  );
+  win.on("unmaximize", () =>
+    win.webContents.send("window-state-changed", "normal"),
+  );
   return win;
 }
 
@@ -266,17 +287,25 @@ process.on("unhandledRejection", (reason) => {
   appendStartupTrace(`[main] unhandledRejection ${String(reason)}`);
 });
 
-ipcMain.handle("debug-log", (_: IpcMainInvokeEvent, payload: { source?: string; message?: string; data?: unknown }) => {
-  const source = payload?.source || "renderer";
-  const message = payload?.message || "";
-  appendStartupTrace(
-    `[${source}] ${message}${payload?.data !== undefined ? ` ${JSON.stringify(payload.data)}` : ""}`,
-  );
-  return { success: true };
-});
+ipcMain.handle(
+  "debug-log",
+  (
+    _: IpcMainInvokeEvent,
+    payload: { source?: string; message?: string; data?: unknown },
+  ) => {
+    const source = payload?.source || "renderer";
+    const message = payload?.message || "";
+    appendStartupTrace(
+      `[${source}] ${message}${payload?.data !== undefined ? ` ${JSON.stringify(payload.data)}` : ""}`,
+    );
+    return { success: true };
+  },
+);
 
 ipcMain.handle("window-minimize", () => mainWindow?.minimize());
-ipcMain.handle("window-maximize", () => (mainWindow?.isMaximized() ? mainWindow?.unmaximize() : mainWindow?.maximize()));
+ipcMain.handle("window-maximize", () =>
+  mainWindow?.isMaximized() ? mainWindow?.unmaximize() : mainWindow?.maximize(),
+);
 ipcMain.handle("window-close", () => mainWindow?.close());
 ipcMain.handle("window-is-maximized", () => !!mainWindow?.isMaximized());
 
@@ -304,52 +333,107 @@ ipcMain.handle("get-system-info", () => ({
   cpus: os.cpus().length,
 }));
 
-ipcMain.handle("show-notification", (_: IpcMainInvokeEvent, data: { title?: string; body?: string }) => {
-  if (Notification.isSupported()) {
-    new Notification({ title: data?.title || "Autonomous Browser", body: data?.body || "" }).show();
-    return { success: true };
-  }
-  return { success: false };
-});
+ipcMain.handle(
+  "show-notification",
+  (_: IpcMainInvokeEvent, data: { title?: string; body?: string }) => {
+    if (Notification.isSupported()) {
+      new Notification({
+        title: data?.title || "Autonomous Browser",
+        body: data?.body || "",
+      }).show();
+      return { success: true };
+    }
+    return { success: false };
+  },
+);
 
 registerBackgroundSessionIpc(ipcMain, traceMain);
 
-ipcMain.handle("capture-webview", async (_: IpcMainInvokeEvent, payload: { webContentsId: number; rect?: Rectangle }) => {
-  try {
-    const wc = webContents.fromId(payload.webContentsId);
-    if (!wc) return { success: false, error: "webContents not found" };
-    const img = payload.rect ? await wc.capturePage(payload.rect) : await wc.capturePage();
-    return { success: true, dataUrl: img.toDataURL() };
-  } catch (error) {
-    return { success: false, error: (error as Error).message };
-  }
-});
+ipcMain.handle(
+  "capture-webview",
+  async (
+    _: IpcMainInvokeEvent,
+    payload: { webContentsId: number; rect?: Rectangle },
+  ) => {
+    try {
+      const wc = webContents.fromId(payload.webContentsId);
+      if (!wc) return { success: false, error: "webContents not found" };
+      const img = payload.rect
+        ? await wc.capturePage(payload.rect)
+        : await wc.capturePage();
+      return { success: true, dataUrl: img.toDataURL() };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  },
+);
 
-ipcMain.handle("save-screenshot", async (_: IpcMainInvokeEvent, dataUrl: string) => {
-  try {
-    const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
-    const filename = `screenshot-${Date.now()}.png`;
-    const filepath = path.join(app.getPath("downloads"), filename);
-    fs.writeFileSync(filepath, Buffer.from(base64, "base64"));
-    return { success: true, path: filepath, filename };
-  } catch (error) {
-    return { success: false, error: (error as Error).message };
-  }
-});
+ipcMain.handle(
+  "save-screenshot",
+  async (_: IpcMainInvokeEvent, dataUrl: string) => {
+    try {
+      const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+      const filename = `screenshot-${Date.now()}.png`;
+      const filepath = path.join(app.getPath("downloads"), filename);
+      fs.writeFileSync(filepath, Buffer.from(base64, "base64"));
+      return { success: true, path: filepath, filename };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  },
+);
 
-ipcMain.handle("show-save-dialog", (_: IpcMainInvokeEvent, options) => dialog.showSaveDialog(mainWindow!, options || {}));
+ipcMain.handle("show-save-dialog", (_: IpcMainInvokeEvent, options) =>
+  dialog.showSaveDialog(mainWindow!, options || {}),
+);
 ipcMain.handle("set-zoom", (_: IpcMainInvokeEvent, level: number) => {
   mainWindow?.webContents.setZoomLevel(level);
   return { success: true };
 });
 
-ipcMain.handle("navigate-url", async (_: IpcMainInvokeEvent, url: string) => ({ success: true, url }));
-ipcMain.handle("fill-form-field", async (_: IpcMainInvokeEvent, data) => ({ success: true, data }));
-ipcMain.handle("click-element", async (_: IpcMainInvokeEvent, selector: string) => ({ success: true, selector }));
+ipcMain.handle("navigate-url", async (_: IpcMainInvokeEvent, url: string) => ({
+  success: true,
+  url,
+}));
+ipcMain.handle("fill-form-field", async (_: IpcMainInvokeEvent, data) => ({
+  success: true,
+  data,
+}));
+ipcMain.handle(
+  "click-element",
+  async (_: IpcMainInvokeEvent, selector: string) => ({
+    success: true,
+    selector,
+  }),
+);
 ipcMain.handle("execute-script", async () => ({ success: true }));
-ipcMain.handle("chat-message", async (_: IpcMainInvokeEvent, message: string) => ({ success: true, message }));
-ipcMain.handle("automation-command", async (_: IpcMainInvokeEvent, command) => ({ success: false, kind: "action", op: "ipc", error: "Use renderer bridge legacyBrowser.runAutomationCommand", data: command }));
-ipcMain.handle("automation-line", async (_: IpcMainInvokeEvent, line: string) => ({ success: false, kind: "info", op: "ipc-line", error: "Use renderer bridge legacyBrowser.dispatchAutomationLine", data: { line } }));
+ipcMain.handle(
+  "chat-message",
+  async (_: IpcMainInvokeEvent, message: string) => ({
+    success: true,
+    message,
+  }),
+);
+ipcMain.handle(
+  "automation-command",
+  async (_: IpcMainInvokeEvent, command) => ({
+    success: false,
+    kind: "action",
+    op: "ipc",
+    error: "Use renderer bridge legacyBrowser.runAutomationCommand",
+    data: command,
+  }),
+);
+ipcMain.handle(
+  "automation-line",
+  async (_: IpcMainInvokeEvent, line: string) => ({
+    success: false,
+    kind: "info",
+    op: "ipc-line",
+    error: "Use renderer bridge legacyBrowser.dispatchAutomationLine",
+    data: { line },
+  }),
+);
 
 function getProfilesDir() {
   return path.join(app.getPath("userData"), "profiles");
@@ -366,13 +450,19 @@ ipcMain.handle("profile-list", () => {
     .filter((f) => f.endsWith(".json"))
     .map((f) => f.replace(".json", ""));
 });
-ipcMain.handle("profile-save", (_: IpcMainInvokeEvent, payload: { name: string; data: unknown }) => {
-  ensureProfilesDir();
-  const raw = payload.name.replace(/[^a-zA-Z0-9_\- ]/g, "_").trim();
-  const safe = raw || `profile_${Date.now()}`;
-  fs.writeFileSync(path.join(getProfilesDir(), `${safe}.json`), JSON.stringify(payload.data, null, 2));
-  return { success: true, name: safe };
-});
+ipcMain.handle(
+  "profile-save",
+  (_: IpcMainInvokeEvent, payload: { name: string; data: unknown }) => {
+    ensureProfilesDir();
+    const raw = payload.name.replace(/[^a-zA-Z0-9_\- ]/g, "_").trim();
+    const safe = raw || `profile_${Date.now()}`;
+    fs.writeFileSync(
+      path.join(getProfilesDir(), `${safe}.json`),
+      JSON.stringify(payload.data, null, 2),
+    );
+    return { success: true, name: safe };
+  },
+);
 ipcMain.handle("profile-load", (_: IpcMainInvokeEvent, name: string) => {
   const file = path.join(getProfilesDir(), `${name}.json`);
   return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null;
@@ -385,7 +475,10 @@ ipcMain.handle("profile-delete", (_: IpcMainInvokeEvent, name: string) => {
 
 ipcMain.handle("get-browser-stats", async () => {
   try {
-    const [chrome, firefox] = await Promise.all([chromeImporter.getImportStats(), firefoxImporter.getImportStats()]);
+    const [chrome, firefox] = await Promise.all([
+      chromeImporter.getImportStats(),
+      firefoxImporter.getImportStats(),
+    ]);
     return { chrome, firefox };
   } catch {
     return { chrome: { available: false }, firefox: { available: false } };
@@ -394,12 +487,24 @@ ipcMain.handle("get-browser-stats", async () => {
 
 ipcMain.handle(
   "get-import-stats",
-  async (_: IpcMainInvokeEvent, payload: { browser: "chrome" | "firefox"; profilePath?: string }) => {
+  async (
+    _: IpcMainInvokeEvent,
+    payload: { browser: "chrome" | "firefox"; profilePath?: string },
+  ) => {
     try {
-      const imp = payload.browser === "chrome" ? chromeImporter : firefoxImporter;
+      const imp =
+        payload.browser === "chrome" ? chromeImporter : firefoxImporter;
       return await imp.getImportStats(payload.profilePath);
     } catch {
-      return { available: false, bookmarks: 0, history: 0, cookies: 0, passwords: 0, autofill: 0, browser: null };
+      return {
+        available: false,
+        bookmarks: 0,
+        history: 0,
+        cookies: 0,
+        passwords: 0,
+        autofill: 0,
+        browser: null,
+      };
     }
   },
 );
@@ -410,14 +515,16 @@ ipcMain.handle("list-browser-profiles", async () => {
       chromeImporter.findAllProfiles(),
       firefoxImporter.findAllProfiles(),
     ]);
-    const chrome = (chromeList as { browser: string; path: string }[]).map((p) => {
-      const folder = path.basename(p.path);
-      return {
-        path: p.path,
-        engine: p.browser,
-        label: `${p.browser} · ${folder}`,
-      };
-    });
+    const chrome = (chromeList as { browser: string; path: string }[]).map(
+      (p) => {
+        const folder = path.basename(p.path);
+        return {
+          path: p.path,
+          engine: p.browser,
+          label: `${p.browser} · ${folder}`,
+        };
+      },
+    );
     const firefox = (ffList as { name: string; path: string }[]).map((p) => ({
       path: p.path,
       engine: "firefox",
@@ -437,7 +544,14 @@ ipcMain.handle("browser-import", async () => {
     passwords: any[];
     autofill: any[];
     sources: string[];
-  } = { bookmarks: [], history: [], cookies: [], passwords: [], autofill: [], sources: [] };
+  } = {
+    bookmarks: [],
+    history: [],
+    cookies: [],
+    passwords: [],
+    autofill: [],
+    sources: [],
+  };
   for (const [importer, label] of [
     [chromeImporter, "Chrome"],
     [firefoxImporter, "Firefox"],
@@ -452,7 +566,8 @@ ipcMain.handle("browser-import", async () => {
         importer.importPasswords(),
         importer.importAutofill(),
       ]);
-      if (bm.status === "fulfilled") result.bookmarks.push(...bm.value.bookmarks);
+      if (bm.status === "fulfilled")
+        result.bookmarks.push(...bm.value.bookmarks);
       if (hist.status === "fulfilled") result.history.push(...hist.value);
       if (ck.status === "fulfilled") result.cookies.push(...ck.value);
       if (pw.status === "fulfilled") result.passwords.push(...pw.value);
@@ -469,52 +584,75 @@ ipcMain.handle(
   "import-browser-data",
   async (
     _: IpcMainInvokeEvent,
-    payload: { browser: "chrome" | "firefox"; dataTypes: string[]; profilePath?: string },
+    payload: {
+      browser: "chrome" | "firefox";
+      dataTypes: string[];
+      profilePath?: string;
+    },
   ) => {
-  const importer = payload.browser === "chrome" ? chromeImporter : firefoxImporter;
-  const profilePath = payload.profilePath;
-  const results = { bookmarks: 0, history: 0, cookies: 0, passwords: 0, autofill: 0 };
-  try {
-    if (payload.dataTypes.includes("bookmarks")) {
-      const data = await importer.importBookmarks(profilePath);
-      await dataManager.saveBookmarks({ version: dataManager.version, bookmarks: data.bookmarks, folders: data.folders });
-      results.bookmarks = data.bookmarks.length;
+    const importer =
+      payload.browser === "chrome" ? chromeImporter : firefoxImporter;
+    const profilePath = payload.profilePath;
+    const results = {
+      bookmarks: 0,
+      history: 0,
+      cookies: 0,
+      passwords: 0,
+      autofill: 0,
+    };
+    try {
+      if (payload.dataTypes.includes("bookmarks")) {
+        const data = await importer.importBookmarks(profilePath);
+        await dataManager.saveBookmarks({
+          version: dataManager.version,
+          bookmarks: data.bookmarks,
+          folders: data.folders,
+        });
+        results.bookmarks = data.bookmarks.length;
+      }
+      if (payload.dataTypes.includes("history")) {
+        const data = await importer.importHistory(profilePath);
+        const current: any = await dataManager.getHistory();
+        current.history.push(...data);
+        await dataManager.saveHistory(current);
+        results.history = data.length;
+      }
+      if (payload.dataTypes.includes("cookies")) {
+        const data = await importer.importCookies(profilePath);
+        await dataManager.addCookies(data);
+        results.cookies = data.length;
+      }
+      if (payload.dataTypes.includes("passwords")) {
+        const data = await importer.importPasswords(profilePath);
+        await dataManager.addPasswords(data);
+        results.passwords = data.length;
+      }
+      if (payload.dataTypes.includes("autofill")) {
+        const data = await importer.importAutofill(profilePath);
+        await dataManager.addAutofill(data);
+        results.autofill = data.length;
+      }
+      await dataManager.recordImport(
+        payload.browser,
+        payload.dataTypes,
+        Object.values(results).reduce((a, b) => a + b, 0),
+      );
+      return { success: true, results };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
     }
-    if (payload.dataTypes.includes("history")) {
-      const data = await importer.importHistory(profilePath);
-      const current: any = await dataManager.getHistory();
-      current.history.push(...data);
-      await dataManager.saveHistory(current);
-      results.history = data.length;
-    }
-    if (payload.dataTypes.includes("cookies")) {
-      const data = await importer.importCookies(profilePath);
-      await dataManager.addCookies(data);
-      results.cookies = data.length;
-    }
-    if (payload.dataTypes.includes("passwords")) {
-      const data = await importer.importPasswords(profilePath);
-      await dataManager.addPasswords(data);
-      results.passwords = data.length;
-    }
-    if (payload.dataTypes.includes("autofill")) {
-      const data = await importer.importAutofill(profilePath);
-      await dataManager.addAutofill(data);
-      results.autofill = data.length;
-    }
-    await dataManager.recordImport(payload.browser, payload.dataTypes, Object.values(results).reduce((a, b) => a + b, 0));
-    return { success: true, results };
-  } catch (error) {
-    return { success: false, error: (error as Error).message };
-  }
-});
+  },
+);
 
 ipcMain.handle("get-bookmarks", async () => dataManager.getBookmarks());
 ipcMain.handle("get-history", async () => dataManager.getHistory());
 ipcMain.handle("get-cookies", async () => dataManager.getCookies());
 ipcMain.handle("get-passwords", async () => dataManager.getPasswords());
 ipcMain.handle("get-autofill", async () => dataManager.getAutofill());
-ipcMain.handle("add-bookmark", async (_: IpcMainInvokeEvent, bookmark) => ({ success: true, bookmark: await dataManager.addBookmark(bookmark) }));
+ipcMain.handle("add-bookmark", async (_: IpcMainInvokeEvent, bookmark) => ({
+  success: true,
+  bookmark: await dataManager.addBookmark(bookmark),
+}));
 ipcMain.handle("add-history-entry", async (_: IpcMainInvokeEvent, entry) => {
   await dataManager.addHistoryEntry(entry);
   return { success: true };
@@ -525,35 +663,66 @@ ipcMain.handle("clear-all-data", async () => {
   return { success: true };
 });
 
-ipcMain.handle("request-save-template", async (_: IpcMainInvokeEvent, tpl) => upsertTemplate(tpl));
+ipcMain.handle("request-save-template", async (_: IpcMainInvokeEvent, tpl) =>
+  upsertTemplate(tpl),
+);
 ipcMain.handle("request-list-templates", async () => listTemplates());
-ipcMain.handle("request-delete-template", async (_: IpcMainInvokeEvent, id: string) => {
-  await removeTemplate(id);
-  return { success: true };
-});
-ipcMain.handle("request-run", async (_: IpcMainInvokeEvent, input) => runRequest(input));
-ipcMain.handle("request-list-captures", async (_: IpcMainInvokeEvent, limit?: number) => listCaptures(limit ?? 100));
-ipcMain.handle("cookie-profile-set-token", async (_: IpcMainInvokeEvent, payload: { profile: string; name: string; value: string }) => {
-  await setToken(payload.profile, payload.name, payload.value);
-  return { success: true };
-});
-ipcMain.handle("cookie-profile-get-tokens", async (_: IpcMainInvokeEvent, profile: string) => getTokens(profile));
+ipcMain.handle(
+  "request-delete-template",
+  async (_: IpcMainInvokeEvent, id: string) => {
+    await removeTemplate(id);
+    return { success: true };
+  },
+);
+ipcMain.handle("request-run", async (_: IpcMainInvokeEvent, input) =>
+  runRequest(input),
+);
+ipcMain.handle(
+  "request-list-captures",
+  async (_: IpcMainInvokeEvent, limit?: number) => listCaptures(limit ?? 100),
+);
+ipcMain.handle(
+  "cookie-profile-set-token",
+  async (
+    _: IpcMainInvokeEvent,
+    payload: { profile: string; name: string; value: string },
+  ) => {
+    await setToken(payload.profile, payload.name, payload.value);
+    return { success: true };
+  },
+);
+ipcMain.handle(
+  "cookie-profile-get-tokens",
+  async (_: IpcMainInvokeEvent, profile: string) => getTokens(profile),
+);
 
 ipcMain.handle("mcp-bridge-get-state", () => getMcpBridgeStatePayload());
 
-ipcMain.handle("mcp-bridge-set-enabled", (_: IpcMainInvokeEvent, enabled: boolean) => {
-  const ud = app.getPath("userData");
-  mcpBridgeConfig = { ...(mcpBridgeConfig ?? loadMcpBridgeConfig(ud)), enabled: !!enabled };
-  saveMcpBridgeConfig(ud, mcpBridgeConfig);
-  applyMcpBridgeFromConfig();
-  return getMcpBridgeStatePayload();
-});
+ipcMain.handle(
+  "mcp-bridge-set-enabled",
+  (_: IpcMainInvokeEvent, enabled: boolean) => {
+    const ud = app.getPath("userData");
+    mcpBridgeConfig = {
+      ...(mcpBridgeConfig ?? loadMcpBridgeConfig(ud)),
+      enabled: !!enabled,
+    };
+    saveMcpBridgeConfig(ud, mcpBridgeConfig);
+    applyMcpBridgeFromConfig();
+    return getMcpBridgeStatePayload();
+  },
+);
 
 ipcMain.handle("mcp-bridge-set-port", (_: IpcMainInvokeEvent, port: number) => {
   const ud = app.getPath("userData");
   const p = Math.floor(Number(port));
-  const safe = Number.isFinite(p) && p > 0 && p < 65536 ? p : (mcpBridgeConfig ?? loadMcpBridgeConfig(ud)).port;
-  mcpBridgeConfig = { ...(mcpBridgeConfig ?? loadMcpBridgeConfig(ud)), port: safe };
+  const safe =
+    Number.isFinite(p) && p > 0 && p < 65536
+      ? p
+      : (mcpBridgeConfig ?? loadMcpBridgeConfig(ud)).port;
+  mcpBridgeConfig = {
+    ...(mcpBridgeConfig ?? loadMcpBridgeConfig(ud)),
+    port: safe,
+  };
   saveMcpBridgeConfig(ud, mcpBridgeConfig);
   applyMcpBridgeFromConfig();
   return getMcpBridgeStatePayload();
@@ -561,21 +730,27 @@ ipcMain.handle("mcp-bridge-set-port", (_: IpcMainInvokeEvent, port: number) => {
 
 ipcMain.handle("mcp-bridge-regenerate-token", () => {
   const ud = app.getPath("userData");
-  mcpBridgeConfig = { ...(mcpBridgeConfig ?? loadMcpBridgeConfig(ud)), token: generateMcpToken() };
+  mcpBridgeConfig = {
+    ...(mcpBridgeConfig ?? loadMcpBridgeConfig(ud)),
+    token: generateMcpToken(),
+  };
   saveMcpBridgeConfig(ud, mcpBridgeConfig);
   applyMcpBridgeFromConfig();
   return getMcpBridgeStatePayload();
 });
 
-ipcMain.handle("mcp-external-list-tools", async (_: IpcMainInvokeEvent, cfg: McpServerConfigPayload) => {
-  try {
-    const tools = await externalMcpListTools(cfg);
-    return { ok: true as const, tools };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return { ok: false as const, error: msg, tools: [] as [] };
-  }
-});
+ipcMain.handle(
+  "mcp-external-list-tools",
+  async (_: IpcMainInvokeEvent, cfg: McpServerConfigPayload) => {
+    try {
+      const tools = await externalMcpListTools(cfg);
+      return { ok: true as const, tools };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { ok: false as const, error: msg, tools: [] as [] };
+    }
+  },
+);
 
 ipcMain.handle(
   "mcp-external-call-tool",
@@ -587,18 +762,36 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle("ai-list-google-models", async (_: IpcMainInvokeEvent, apiKey: string) => {
-  try {
-    return await listGoogleModelsMain(String(apiKey ?? ""));
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(msg);
-  }
-});
+ipcMain.handle(
+  "mcp-external-disconnect",
+  async (_: IpcMainInvokeEvent, serverId: string) => {
+    try {
+      await mcpExternalDisconnect(serverId);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  },
+);
+
+ipcMain.handle(
+  "ai-list-google-models",
+  async (_: IpcMainInvokeEvent, apiKey: string) => {
+    try {
+      return await listGoogleModelsMain(String(apiKey ?? ""));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(msg);
+    }
+  },
+);
 
 ipcMain.handle(
   "ai-list-openai-models",
-  async (_: IpcMainInvokeEvent, payload: { baseUrl?: string; apiKey?: string }) => {
+  async (
+    _: IpcMainInvokeEvent,
+    payload: { baseUrl?: string; apiKey?: string },
+  ) => {
     try {
       return await listOpenAiCompatibleModelsMain(
         String(payload?.baseUrl ?? ""),
@@ -611,29 +804,43 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle("ai-test-chat-hi", async (_: IpcMainInvokeEvent, payload: unknown) => {
-  const p = payload as { provider?: string; googleApiKey?: string; customBaseUrl?: string; customApiKey?: string; modelId?: string };
-  const modelId = String(p?.modelId ?? "");
-  try {
-    if (p?.provider === "custom") {
-      return await testOpenAiHiMain(
-        String(p?.customBaseUrl ?? ""),
-        String(p?.customApiKey ?? ""),
-        modelId,
-      );
+ipcMain.handle(
+  "ai-test-chat-hi",
+  async (_: IpcMainInvokeEvent, payload: unknown) => {
+    const p = payload as {
+      provider?: string;
+      googleApiKey?: string;
+      customBaseUrl?: string;
+      customApiKey?: string;
+      modelId?: string;
+    };
+    const modelId = String(p?.modelId ?? "");
+    try {
+      if (p?.provider === "custom") {
+        return await testOpenAiHiMain(
+          String(p?.customBaseUrl ?? ""),
+          String(p?.customApiKey ?? ""),
+          modelId,
+        );
+      }
+      return await testGoogleHiMain(String(p?.googleApiKey ?? ""), modelId);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(msg);
     }
-    return await testGoogleHiMain(String(p?.googleApiKey ?? ""), modelId);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(msg);
-  }
-});
+  },
+);
 
 ipcMain.handle(
   "ai-chat-proxy-start",
   async (
     event: IpcMainInvokeEvent,
-    payload: { channel: string; url: string; headers: Record<string, string>; body: string },
+    payload: {
+      channel: string;
+      url: string;
+      headers: Record<string, string>;
+      body: string;
+    },
   ) => {
     await proxyOpenAiChatCompletionsStream(
       event.sender,

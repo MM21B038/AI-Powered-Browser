@@ -998,40 +998,171 @@
 
       <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• CHAT SECTION â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
       <div class="chat-wrapper" id="chatWrapper">
-        <aside class="chat-history-panel" id="chatHistoryPanel" aria-label="Chat history">
-          <div class="chat-history-header">
-            <span class="chat-history-title">Chats</span>
-            <button type="button" class="chat-history-new-btn" id="newChatBtn" title="New chat">
-              New chat
-            </button>
+        <aside
+          class="chat-history-panel"
+          id="chatHistoryPanel"
+          aria-label="Butcher"
+          aria-expanded="true"
+        >
+          <div
+            class="chat-history-collapsed-rail"
+            id="chatHistoryCollapsedRail"
+            hidden
+            aria-hidden="true"
+          >
+            <div class="chat-history-rail-section chat-history-rail-section--top">
+              <button
+                type="button"
+                class="icon-btn chat-history-rail-btn"
+                id="chatHistoryExpandBtn"
+                title="Expand sidebar"
+                aria-label="Expand sidebar"
+              >
+                <!-- Double chevron right: expand / show panel -->
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M13 7l5 5-5 5M6 7l5 5-5 5"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="icon-btn chat-history-rail-btn"
+                id="chatHistoryRailNewBtn"
+                title="New chat"
+                aria-label="New chat"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M12 5v14M5 12h14"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div class="chat-history-rail-spacer" aria-hidden="true"></div>
+            <div class="chat-history-rail-section chat-history-rail-section--footer">
+              <button
+                type="button"
+                class="icon-btn chat-history-rail-btn chat-history-rail-btn--settings"
+                id="chatHistoryRailSettingsBtn"
+                title="Workspace settings"
+                aria-label="Workspace settings"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                  />
+                  <path
+                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"
+                    stroke="currentColor"
+                    stroke-width="1.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
           </div>
-          <div class="chat-history-list hide-scrollbar" id="chatHistoryList"></div>
-          <div class="chat-history-intelligent-footer" id="intelligentWorkspaceSettingsFooter">
-            <button
-              type="button"
-              class="chat-history-settings-btn"
-              id="intelligentWorkspaceSettingsBtn"
-              title="Models, API keys, and MCP servers"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path
-                  d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
-                  stroke="currentColor"
-                  stroke-width="1.6"
-                  stroke-linecap="round"
-                />
-                <path
-                  d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"
-                  stroke="currentColor"
-                  stroke-width="1.2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-              </svg>
-              <span>Workspace settings</span>
-            </button>
+          <div class="chat-history-expanded-stack" id="chatHistoryExpandedStack">
+            <div class="chat-history-header">
+              <span class="chat-history-title">Butcher</span>
+              <button
+                type="button"
+                class="icon-btn chat-history-collapse-btn"
+                id="chatHistoryCollapseBtn"
+                title="Collapse sidebar"
+                aria-label="Collapse sidebar"
+              >
+                <!-- Double chevron left: collapse / hide panel (common IDE pattern) -->
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M11 7l-5 5 5 5M18 7l-5 5 5 5"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div class="chat-history-new-row">
+              <button type="button" class="chat-history-new-btn" id="newChatBtn" title="New chat">
+                <svg
+                  class="chat-history-new-btn__icon"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M12 5v14M5 12h14"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                <span>New chat</span>
+              </button>
+            </div>
+            <div class="chat-history-list hide-scrollbar" id="chatHistoryList"></div>
+            <div class="chat-history-intelligent-footer" id="intelligentWorkspaceSettingsFooter">
+              <button
+                type="button"
+                class="chat-history-settings-btn"
+                id="intelligentWorkspaceSettingsBtn"
+                title="Models, API keys, and MCP servers"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                  />
+                  <path
+                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"
+                    stroke="currentColor"
+                    stroke-width="1.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                <span>Workspace settings</span>
+              </button>
+            </div>
           </div>
         </aside>
+        <div
+          class="resize-handle resize-handle--history"
+          id="chatHistoryResizeHandle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize chat history and assistant width"
+          title="Drag to resize column width"
+        >
+          <span class="resize-handle__grip" aria-hidden="true">
+            <!-- IDE-style 6-dot vertical drag grip (Cursor / VS Code pattern) -->
+            <svg width="10" height="18" viewBox="0 0 10 18" fill="currentColor">
+              <circle cx="2.5" cy="3.5" r="1.35" />
+              <circle cx="2.5" cy="9" r="1.35" />
+              <circle cx="2.5" cy="14.5" r="1.35" />
+              <circle cx="7.5" cy="3.5" r="1.35" />
+              <circle cx="7.5" cy="9" r="1.35" />
+              <circle cx="7.5" cy="14.5" r="1.35" />
+            </svg>
+          </span>
+        </div>
         <div class="chat-section" id="chatSection">
           <!-- Resize Handle -->
           <div class="resize-handle" id="resizeHandle"></div>

@@ -17,6 +17,7 @@ import {
 } from "../chat/conversation-store-legacy";
 import { loadShellWorkspacePreference, saveShellWorkspacePreference } from "../chat/conversation-store";
 import { initUiTooltips } from "../ui/ui-tooltips";
+import { applyIntelligentWorkspaceLayoutToDom } from "../state/intelligent-workspace-layout";
 
 /**
  * Browser kernel: tab/webview/profile/chat/tools. Call initBrowserKernel() after the shell DOM
@@ -2975,6 +2976,11 @@ function applyShellWorkspaceUi(ws) {
   }
   if (ws === "intelligent") {
     setChatOpen(true);
+    try {
+      applyIntelligentWorkspaceLayoutToDom();
+    } catch {
+      /* ignore */
+    }
   }
   try {
     window.dispatchEvent(

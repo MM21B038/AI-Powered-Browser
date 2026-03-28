@@ -24,7 +24,9 @@ export interface SystemInfo {
 
 export interface ImportBrowserDataOptions {
   browser: "chrome" | "firefox";
-  dataTypes: Array<"bookmarks" | "history" | "cookies" | "passwords" | "autofill">;
+  dataTypes: Array<
+    "bookmarks" | "history" | "cookies" | "passwords" | "autofill"
+  >;
   /** Chromium profile folder (Default, Profile 1, …) or Firefox profile path */
   profilePath?: string;
 }
@@ -44,7 +46,14 @@ export interface ImportStatsDetail extends BrowserImportStats {
   browser?: string | null;
 }
 
-export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+export type HttpMethod =
+  | "GET"
+  | "POST"
+  | "PUT"
+  | "PATCH"
+  | "DELETE"
+  | "HEAD"
+  | "OPTIONS";
 
 export interface RequestTemplate {
   id: string;
@@ -96,12 +105,18 @@ export type ListedAiModel = { id: string; displayName?: string };
 
 export type AiTestChatHiPayload =
   | { provider: "google"; googleApiKey: string; modelId: string }
-  | { provider: "custom"; customBaseUrl: string; customApiKey: string; modelId: string };
+  | {
+      provider: "custom";
+      customBaseUrl: string;
+      customApiKey: string;
+      modelId: string;
+    };
 
 export type AiChatProxyStreamHandlers = {
   onChunk: (text: string) => void;
   onComplete: () => void;
-  onError: (message: string) => void;
+  /** Optional HTTP status when the proxy failed before streaming (e.g. 400). */
+  onError: (message: string, httpStatus?: number) => void;
 };
 
 export interface McpBridgeState {
@@ -143,39 +158,68 @@ export interface ElectronApi {
   openExternal: (url: string) => Promise<IpcResponse>;
   getSystemInfo: () => Promise<SystemInfo>;
   showNotification: (title: string, body: string) => Promise<IpcResponse>;
-  captureWebview: (webContentsId: number, rect?: unknown) => Promise<IpcResponse<{ dataUrl: string }>>;
-  saveScreenshot: (dataUrl: string) => Promise<IpcResponse<{ path: string; filename: string }>>;
+  captureWebview: (
+    webContentsId: number,
+    rect?: unknown,
+  ) => Promise<IpcResponse<{ dataUrl: string }>>;
+  saveScreenshot: (
+    dataUrl: string,
+  ) => Promise<IpcResponse<{ path: string; filename: string }>>;
   // Background (Playwright-like) session APIs (main-process offscreen pages)
   bgEnsureSession: (sessionId: string) => Promise<IpcResponse>;
   bgKillSession: (sessionId: string) => Promise<IpcResponse>;
-  bgGoto: (sessionId: string, url: string) => Promise<IpcResponse<{ url: string }>>;
-  bgEval: <T = unknown>(sessionId: string, script: string) => Promise<IpcResponse<T>>;
+  bgGoto: (
+    sessionId: string,
+    url: string,
+  ) => Promise<IpcResponse<{ url: string }>>;
+  bgEval: <T = unknown>(
+    sessionId: string,
+    script: string,
+  ) => Promise<IpcResponse<T>>;
   bgGetUrl: (sessionId: string) => Promise<IpcResponse<{ url: string }>>;
   bgGetTitle: (sessionId: string) => Promise<IpcResponse<{ title: string }>>;
-  bgScreenshot: (sessionId: string) => Promise<IpcResponse<{ dataUrl: string }>>;
+  bgScreenshot: (
+    sessionId: string,
+  ) => Promise<IpcResponse<{ dataUrl: string }>>;
   showSaveDialog: (options?: unknown) => Promise<unknown>;
   setZoom: (level: number) => Promise<IpcResponse>;
   sendChatMessage: (message: string) => Promise<IpcResponse>;
   profileList: () => Promise<string[]>;
-  profileSave: (name: string, data: unknown) => Promise<IpcResponse<{ name: string }>>;
+  profileSave: (
+    name: string,
+    data: unknown,
+  ) => Promise<IpcResponse<{ name: string }>>;
   profileLoad: (name: string) => Promise<unknown>;
   profileDelete: (name: string) => Promise<IpcResponse>;
   browserImport: () => Promise<unknown>;
-  getBrowserStats: () => Promise<{ chrome: BrowserImportStats; firefox: BrowserImportStats }>;
+  getBrowserStats: () => Promise<{
+    chrome: BrowserImportStats;
+    firefox: BrowserImportStats;
+  }>;
   getImportStats: (payload: {
     browser: "chrome" | "firefox";
     profilePath?: string;
   }) => Promise<ImportStatsDetail>;
   listBrowserProfiles: () => Promise<ListBrowserProfilesResult>;
-  importBrowserData: (options: ImportBrowserDataOptions) => Promise<IpcResponse<{ results: Record<string, number> }>>;
+  importBrowserData: (
+    options: ImportBrowserDataOptions,
+  ) => Promise<IpcResponse<{ results: Record<string, number> }>>;
   runAutomationCommand: (cmd: AutomationCommand) => Promise<AutomationResult>;
   runAutomationLine: (line: string) => Promise<AutomationResult>;
-  requestSaveTemplate: (tpl: Omit<RequestTemplate, "id" | "createdAt" | "updatedAt"> & { id?: string }) => Promise<RequestTemplate>;
+  requestSaveTemplate: (
+    tpl: Omit<RequestTemplate, "id" | "createdAt" | "updatedAt"> & {
+      id?: string;
+    },
+  ) => Promise<RequestTemplate>;
   requestListTemplates: () => Promise<RequestTemplate[]>;
   requestDeleteTemplate: (id: string) => Promise<IpcResponse>;
   requestRun: (input: RequestRunInput) => Promise<RequestRunResult>;
   requestListCaptures: (limit?: number) => Promise<CapturedRequestRecord[]>;
-  cookieProfileSetToken: (profile: string, name: string, value: string) => Promise<IpcResponse>;
+  cookieProfileSetToken: (
+    profile: string,
+    name: string,
+    value: string,
+  ) => Promise<IpcResponse>;
   cookieProfileGetTokens: (profile: string) => Promise<Record<string, string>>;
   getBookmarks: () => Promise<unknown>;
   getHistory: () => Promise<unknown>;
@@ -196,15 +240,23 @@ export interface ElectronApi {
   mcpBridgeSetPort: (port: number) => Promise<McpBridgeState>;
   mcpBridgeRegenerateToken: () => Promise<McpBridgeState>;
   /** Never rejects; use `ok` to detect failures (avoids Electron logging IPC handler errors). */
-  mcpExternalListTools: (cfg: McpServerConfigPayload) => Promise<McpExternalListToolsResult>;
+  mcpExternalListTools: (
+    cfg: McpServerConfigPayload,
+  ) => Promise<McpExternalListToolsResult>;
   mcpExternalCallTool: (
     cfg: McpServerConfigPayload,
     toolName: string,
     args: unknown,
   ) => Promise<{ content: unknown[]; isError?: boolean }>;
+  mcpExternalDisconnect: (
+    serverId: string,
+  ) => Promise<{ ok: boolean; error?: string }>;
   /** Main-process fetch (avoids renderer CORS for Google / some APIs). */
   aiListGoogleModels: (apiKey: string) => Promise<ListedAiModel[]>;
-  aiListOpenAiModels: (baseUrl: string, apiKey: string) => Promise<ListedAiModel[]>;
+  aiListOpenAiModels: (
+    baseUrl: string,
+    apiKey: string,
+  ) => Promise<ListedAiModel[]>;
   aiTestChatHi: (payload: AiTestChatHiPayload) => Promise<{ reply: string }>;
   /** Stream POST body to OpenAI-compatible chat/completions from main. Returns unsubscribe. */
   aiChatProxyStream: (

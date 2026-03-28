@@ -38,7 +38,15 @@ export type ChatMessageV2 =
       /** Wall-clock duration of the thinking stream, for “Thought · 2.1s” UI. */
       thinkingDurationMs?: number;
     }
-  | { id: string; role: "tool"; toolCallId: string; name: string; content: string };
+  | {
+      id: string;
+      role: "tool";
+      toolCallId: string;
+      name: string;
+      content: string;
+      /** JSON string of arguments passed to the tool (model output). */
+      arguments?: string;
+    };
 
 export type Conversation = {
   id: string;
@@ -91,12 +99,15 @@ function isChatMessageV2(x: unknown): x is ChatMessageV2 {
     case "user":
     case "assistant":
       return typeof m.content === "string";
-    case "tool":
+    case "tool": {
+      const tm = m as Record<string, unknown>;
       return (
-        typeof m.toolCallId === "string" &&
-        typeof m.name === "string" &&
-        typeof m.content === "string"
+        typeof tm.toolCallId === "string" &&
+        typeof tm.name === "string" &&
+        typeof tm.content === "string" &&
+        (tm.arguments === undefined || typeof tm.arguments === "string")
       );
+    }
     default:
       return false;
   }
