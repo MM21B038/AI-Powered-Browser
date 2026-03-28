@@ -109,10 +109,34 @@ declare global {
     closeToolsHub?: () => void;
     toggleToolsHub?: () => void;
     runQuickCommand?: (cmd: string, opts?: { closeHub?: boolean }) => void;
+    /** Title bar / shell workspace switching (browser vs intelligent). */
+    enterBrowserWorkspace?: () => void;
+    enterIntelligentWorkspace?: () => void;
+    /** @deprecated Prefer `openIntelligentAssistantSettings`. Browser: side panel; intelligent: same modal. */
+    enterSettingsWorkspace?: (panel?: "browser" | "intelligent") => void;
+    /** Switches to intelligent workspace if needed and opens the assistant settings modal. */
+    openIntelligentAssistantSettings?: () => void;
+    /** Toggles browser settings side panel (browser workspace rail Settings). */
+    openBrowserChromeSettingsOverlay?: () => void;
+    closeBrowserSettingsSidePanel?: () => void;
+    /** Append picked element / snapshot context into the React composer (browser agent). */
+    startBrowserPagePickerAny?: () => void;
+    startBrowserPagePickerInteractive?: () => void;
+    startBrowserPageElementScreenshot?: () => void;
   }
 
   interface Window {
     electronAPI: ElectronApi;
+    /** MCP localhost bridge: main calls this via executeJavaScript (set by kernel). */
+    __mcpInvokeAutomation?: (cmd: AutomationCommand) => Promise<AutomationResult>;
+    /** React AI chat (when AiChatBridge mounted). */
+    __aiChatSubmit?: (text: string) => void;
+    __aiChatNewConversation?: () => void;
+    __aiChatClearConversation?: () => void;
+    /** When true, kernel must not overwrite `#chatHistoryList` (React v2 store drives it). */
+    __reactAiChatOwnsHistoryList?: boolean;
+    /** Repaint `#chatHistoryList` from legacy kernel store (after React releases ownership). */
+    __kernelRefreshChatHistoryList?: () => void;
     legacyBrowser?: LegacyBrowserBridge;
     __FEATURE_FLAGS__?: {
       USE_REACT_MODALS: boolean;

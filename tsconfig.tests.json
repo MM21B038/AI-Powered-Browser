@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client", "vitest/globals", "node"],
+    "noEmit": true
+  },
+  "include": ["src/renderer/**/test-*.ts", "electron/**/test-*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

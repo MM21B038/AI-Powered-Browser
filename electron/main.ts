@@ -14,142 +14,35 @@ import {
   type Rectangle,
 } from "electron";
 import { DataManager } from "./data-manager";
-import { ChromeImporter } from "./chrome-importer";
-import { FirefoxImporter } from "./firefox-importer";
-import { wireNetworkCapture } from "./network-capture";
-import { runRequest } from "./request-service";
-import { listCaptures, listTemplates, removeTemplate, upsertTemplate } from "./request-store";
+import { ChromeImporter } from "./import/chrome-importer";
+import { FirefoxImporter } from "./import/firefox-importer";
+import { wireNetworkCapture } from "./network/network-capture";
+import { runRequest } from "./network/request-service";
+import { listCaptures, listTemplates, removeTemplate, upsertTemplate } from "./network/request-store";
 import { getTokens, setToken } from "./security/cookie-token-store";
+import { registerBackgroundSessionIpc } from "./ipc/background-session-ipc";
+import {
+  generateMcpToken,
+  getBridgeListeningPort,
+  loadMcpBridgeConfig,
+  saveMcpBridgeConfig,
+  startMcpBridge,
+  stopMcpBridge,
+  type McpBridgeFileConfig,
+} from "./mcp/mcp-bridge";
+import type { McpBridgeState } from "../src/shared/ipc-types";
+import type { McpServerConfigPayload } from "../src/shared/mcp-external-types";
+import { externalMcpCallTool, externalMcpListTools } from "./mcp/mcp-external-pool";
+import { listGoogleModelsMain, listOpenAiCompatibleModelsMain } from "./ai-list-models";
+import { proxyOpenAiChatCompletionsStream } from "./ai-chat-proxy";
+import { testGoogleHiMain, testOpenAiHiMain } from "./ai-test-hi";
 
 let mainWindow: BrowserWindow | null = null;
+let mcpBridgeConfig: McpBridgeFileConfig | null = null;
 const dataManager = new DataManager();
 const chromeImporter = new ChromeImporter();
 const firefoxImporter = new FirefoxImporter();
 const STARTUP_TRACE_FILE = "startup-trace.log";
-
-// ─────────────────────────────────────────────────────────────
-// Background sessions (Playwright-like)
-// One hidden/offscreen BrowserWindow per sessionId + partition.
-// This allows headless/non-active sessions to navigate/eval/screenshot
-// without hijacking the visible renderer <webview>.
-// ─────────────────────────────────────────────────────────────
-type BgSession = { win: BrowserWindow; sessionId: string };
-const backgroundSessions = new Map<string, BgSession>();
-
-function getPartitionForSession(sessionId: string): string {
-  return `persist:orion_${sessionId}`;
-}
-
-async function waitForDomReady(wc: Electron.WebContents, timeoutMs = 12000): Promise<void> {
-  if (wc.isDestroyed()) throw new Error("webContents destroyed");
-  // dom-ready can fire very quickly; if the page is already interactive, don't hang.
-  // Using isLoading as a cheap guard.
-  if (!wc.isLoading()) return;
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error("dom-ready timeout"));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      wc.removeListener("dom-ready", onReady);
-      wc.removeListener("destroyed", onDestroyed);
-    };
-    const onDestroyed = () => {
-      cleanup();
-      reject(new Error("webContents destroyed"));
-    };
-    const onReady = () => {
-      cleanup();
-      resolve();
-    };
-    wc.once("destroyed", onDestroyed);
-    wc.once("dom-ready", onReady);
-  });
-}
-
-async function waitForDidFinishLoad(wc: Electron.WebContents, timeoutMs = 20000): Promise<void> {
-  if (wc.isDestroyed()) throw new Error("webContents destroyed");
-  if (!wc.isLoading()) return;
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error("did-finish-load timeout"));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      wc.removeListener("did-finish-load", onFinish);
-      wc.removeListener("did-fail-load", onFail);
-      wc.removeListener("destroyed", onDestroyed);
-    };
-    const onDestroyed = () => {
-      cleanup();
-      reject(new Error("webContents destroyed"));
-    };
-    const onFail = (_e: unknown, code: number, desc: string) => {
-      cleanup();
-      reject(new Error(`did-fail-load ${code}: ${desc}`));
-    };
-    const onFinish = () => {
-      cleanup();
-      resolve();
-    };
-    wc.once("destroyed", onDestroyed);
-    wc.once("did-fail-load", onFail as never);
-    wc.once("did-finish-load", onFinish);
-  });
-}
-
-function ensureBackgroundSession(sessionId: string): BgSession {
-  const existing = backgroundSessions.get(sessionId);
-  if (existing && !existing.win.isDestroyed()) return existing;
-
-  const partition = getPartitionForSession(sessionId);
-  traceMain("bg ensure session", { sessionId, partition });
-
-  const win = new BrowserWindow({
-    show: false,
-    width: 1280,
-    height: 720,
-    backgroundColor: "#000000",
-    webPreferences: {
-      offscreen: true,
-      partition,
-      contextIsolation: true,
-      sandbox: true,
-      nodeIntegration: false,
-      backgroundThrottling: false,
-    },
-  });
-  win.on("closed", () => {
-    backgroundSessions.delete(sessionId);
-  });
-  // Keep a simple, deterministic start page.
-  void win.loadURL("about:blank").catch(() => {});
-
-  const s: BgSession = { win, sessionId };
-  backgroundSessions.set(sessionId, s);
-  return s;
-}
-
-function killBackgroundSession(sessionId: string): boolean {
-  const s = backgroundSessions.get(sessionId);
-  if (!s) return false;
-  backgroundSessions.delete(sessionId);
-  try {
-    if (!s.win.isDestroyed()) s.win.destroy();
-  } catch {
-    /* ignore */
-  }
-  return true;
-}
-
-async function withBackgroundWebContents<T>(sessionId: string, fn: (wc: Electron.WebContents, win: BrowserWindow) => Promise<T>): Promise<T> {
-  const s = ensureBackgroundSession(sessionId);
-  const wc = s.win.webContents;
-  if (wc.isDestroyed()) throw new Error("webContents destroyed");
-  return await fn(wc, s.win);
-}
 
 function appendStartupTrace(message: string): void {
   try {
@@ -166,7 +59,10 @@ function appendStartupTrace(message: string): void {
 function traceMain(message: string, extra?: unknown): void {
   const suffix = extra === undefined ? "" : ` ${JSON.stringify(extra)}`;
   const full = `${message}${suffix}`;
-  console.log(`[main] ${full}`);
+  // Keep startup trace in file by default; avoid noisy terminal logs in normal runs.
+  if (process.env.ORION_VERBOSE_MAIN_LOGS === "1") {
+    console.log(`[main] ${full}`);
+  }
   appendStartupTrace(`[main] ${full}`);
 }
 
@@ -265,10 +161,19 @@ function createWindow(): BrowserWindow {
     console.error("[main] renderer process gone", details);
     appendStartupTrace(`[main] renderer process gone ${JSON.stringify(details)}`);
   });
-  win.webContents.on("console-message", (_e, level, message, line, sourceId) => {
-    appendStartupTrace(
-      `[renderer-console] level=${level} ${sourceId}:${line} ${message}`,
-    );
+  win.webContents.on("console-message", (event) => {
+    const e = event as unknown as {
+      level?: number;
+      message?: string;
+      sourceId?: string;
+      line?: number;
+      lineNumber?: number;
+    };
+    const level = e.level ?? 0;
+    const message = e.message ?? "";
+    const sourceId = e.sourceId ?? "unknown";
+    const line = e.lineNumber ?? e.line ?? 0;
+    appendStartupTrace(`[renderer-console] level=${level} ${sourceId}:${line} ${message}`);
   });
   win.on("closed", () => {
     traceMain("main window closed");
@@ -291,6 +196,8 @@ app.whenReady().then(async () => {
     appendStartupTrace(`[main] network capture disabled ${String(e)}`);
   }
   createWindow();
+  mcpBridgeConfig = loadMcpBridgeConfig(app.getPath("userData"));
+  applyMcpBridgeFromConfig();
   app.on("activate", () => {
     traceMain("app activate event");
     if (!mainWindow || mainWindow.isDestroyed()) createWindow();
@@ -318,6 +225,39 @@ app.on("window-all-closed", () => {
   traceMain("window-all-closed");
   if (process.platform !== "darwin") app.quit();
 });
+
+app.on("before-quit", () => {
+  stopMcpBridge();
+});
+
+function getStdioServerPath(): string {
+  return path.join(__dirname, "mcp", "stdio-server.js");
+}
+
+function getMcpBridgeStatePayload(): McpBridgeState {
+  const cfg = mcpBridgeConfig ?? loadMcpBridgeConfig(app.getPath("userData"));
+  return {
+    enabled: cfg.enabled,
+    port: cfg.port,
+    token: cfg.token,
+    listeningPort: getBridgeListeningPort(),
+    stdioServerPath: getStdioServerPath(),
+  };
+}
+
+function applyMcpBridgeFromConfig(): void {
+  if (!mcpBridgeConfig) return;
+  if (mcpBridgeConfig.enabled) {
+    startMcpBridge(
+      () => mainWindow,
+      mcpBridgeConfig.port,
+      mcpBridgeConfig.token,
+      (msg) => traceMain("mcp bridge tcp error", { msg }),
+    );
+  } else {
+    stopMcpBridge();
+  }
+}
 
 process.on("uncaughtException", (err) => {
   appendStartupTrace(`[main] uncaughtException ${err?.stack || String(err)}`);
@@ -372,96 +312,7 @@ ipcMain.handle("show-notification", (_: IpcMainInvokeEvent, data: { title?: stri
   return { success: false };
 });
 
-// ── Background session IPC (Playwright-like) ──────────────────
-ipcMain.handle("bg-session-ensure", async (_: IpcMainInvokeEvent, payload: { sessionId: string }) => {
-  try {
-    const sessionId = String(payload?.sessionId || "").trim();
-    if (!sessionId) return { success: false, error: "sessionId required" };
-    ensureBackgroundSession(sessionId);
-    return { success: true };
-  } catch (error) {
-    return { success: false, error: (error as Error).message };
-  }
-});
-
-ipcMain.handle("bg-session-kill", async (_: IpcMainInvokeEvent, payload: { sessionId: string }) => {
-  try {
-    const sessionId = String(payload?.sessionId || "").trim();
-    if (!sessionId) return { success: false, error: "sessionId required" };
-    const ok = killBackgroundSession(sessionId);
-    return { success: ok, error: ok ? undefined : "not found" };
-  } catch (error) {
-    return { success: false, error: (error as Error).message };
-  }
-});
-
-ipcMain.handle("bg-goto", async (_: IpcMainInvokeEvent, payload: { sessionId: string; url: string }) => {
-  try {
-    const sessionId = String(payload?.sessionId || "").trim();
-    const url = String(payload?.url || "").trim();
-    if (!sessionId) return { success: false, error: "sessionId required" };
-    if (!url) return { success: false, error: "url required" };
-    await withBackgroundWebContents(sessionId, async (_wc, win) => {
-      await win.loadURL(url);
-      return true;
-    });
-    return { success: true, data: { url } };
-  } catch (error) {
-    return { success: false, error: (error as Error).message };
-  }
-});
-
-ipcMain.handle("bg-eval", async (_: IpcMainInvokeEvent, payload: { sessionId: string; script: string }) => {
-  try {
-    const sessionId = String(payload?.sessionId || "").trim();
-    const script = String(payload?.script || "");
-    if (!sessionId) return { success: false, error: "sessionId required" };
-    const data = await withBackgroundWebContents(sessionId, async (wc) => {
-      await waitForDomReady(wc, 12000);
-      return await wc.executeJavaScript(script, true);
-    });
-    return { success: true, data };
-  } catch (error) {
-    return { success: false, error: (error as Error).message };
-  }
-});
-
-ipcMain.handle("bg-url", async (_: IpcMainInvokeEvent, payload: { sessionId: string }) => {
-  try {
-    const sessionId = String(payload?.sessionId || "").trim();
-    if (!sessionId) return { success: false, error: "sessionId required" };
-    const url = await withBackgroundWebContents(sessionId, async (wc) => wc.getURL());
-    return { success: true, data: { url } };
-  } catch (error) {
-    return { success: false, error: (error as Error).message };
-  }
-});
-
-ipcMain.handle("bg-title", async (_: IpcMainInvokeEvent, payload: { sessionId: string }) => {
-  try {
-    const sessionId = String(payload?.sessionId || "").trim();
-    if (!sessionId) return { success: false, error: "sessionId required" };
-    const title = await withBackgroundWebContents(sessionId, async (wc) => wc.getTitle());
-    return { success: true, data: { title } };
-  } catch (error) {
-    return { success: false, error: (error as Error).message };
-  }
-});
-
-ipcMain.handle("bg-screenshot", async (_: IpcMainInvokeEvent, payload: { sessionId: string }) => {
-  try {
-    const sessionId = String(payload?.sessionId || "").trim();
-    if (!sessionId) return { success: false, error: "sessionId required" };
-    const dataUrl = await withBackgroundWebContents(sessionId, async (wc) => {
-      await waitForDidFinishLoad(wc, 20000).catch(() => {});
-      const img = await wc.capturePage();
-      return img.toDataURL();
-    });
-    return { success: true, data: { dataUrl } };
-  } catch (error) {
-    return { success: false, error: (error as Error).message };
-  }
-});
+registerBackgroundSessionIpc(ipcMain, traceMain);
 
 ipcMain.handle("capture-webview", async (_: IpcMainInvokeEvent, payload: { webContentsId: number; rect?: Rectangle }) => {
   try {
@@ -687,3 +538,109 @@ ipcMain.handle("cookie-profile-set-token", async (_: IpcMainInvokeEvent, payload
   return { success: true };
 });
 ipcMain.handle("cookie-profile-get-tokens", async (_: IpcMainInvokeEvent, profile: string) => getTokens(profile));
+
+ipcMain.handle("mcp-bridge-get-state", () => getMcpBridgeStatePayload());
+
+ipcMain.handle("mcp-bridge-set-enabled", (_: IpcMainInvokeEvent, enabled: boolean) => {
+  const ud = app.getPath("userData");
+  mcpBridgeConfig = { ...(mcpBridgeConfig ?? loadMcpBridgeConfig(ud)), enabled: !!enabled };
+  saveMcpBridgeConfig(ud, mcpBridgeConfig);
+  applyMcpBridgeFromConfig();
+  return getMcpBridgeStatePayload();
+});
+
+ipcMain.handle("mcp-bridge-set-port", (_: IpcMainInvokeEvent, port: number) => {
+  const ud = app.getPath("userData");
+  const p = Math.floor(Number(port));
+  const safe = Number.isFinite(p) && p > 0 && p < 65536 ? p : (mcpBridgeConfig ?? loadMcpBridgeConfig(ud)).port;
+  mcpBridgeConfig = { ...(mcpBridgeConfig ?? loadMcpBridgeConfig(ud)), port: safe };
+  saveMcpBridgeConfig(ud, mcpBridgeConfig);
+  applyMcpBridgeFromConfig();
+  return getMcpBridgeStatePayload();
+});
+
+ipcMain.handle("mcp-bridge-regenerate-token", () => {
+  const ud = app.getPath("userData");
+  mcpBridgeConfig = { ...(mcpBridgeConfig ?? loadMcpBridgeConfig(ud)), token: generateMcpToken() };
+  saveMcpBridgeConfig(ud, mcpBridgeConfig);
+  applyMcpBridgeFromConfig();
+  return getMcpBridgeStatePayload();
+});
+
+ipcMain.handle("mcp-external-list-tools", async (_: IpcMainInvokeEvent, cfg: McpServerConfigPayload) => {
+  try {
+    const tools = await externalMcpListTools(cfg);
+    return { ok: true as const, tools };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false as const, error: msg, tools: [] as [] };
+  }
+});
+
+ipcMain.handle(
+  "mcp-external-call-tool",
+  async (
+    _: IpcMainInvokeEvent,
+    payload: { cfg: McpServerConfigPayload; toolName: string; args: unknown },
+  ) => {
+    return externalMcpCallTool(payload.cfg, payload.toolName, payload.args);
+  },
+);
+
+ipcMain.handle("ai-list-google-models", async (_: IpcMainInvokeEvent, apiKey: string) => {
+  try {
+    return await listGoogleModelsMain(String(apiKey ?? ""));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(msg);
+  }
+});
+
+ipcMain.handle(
+  "ai-list-openai-models",
+  async (_: IpcMainInvokeEvent, payload: { baseUrl?: string; apiKey?: string }) => {
+    try {
+      return await listOpenAiCompatibleModelsMain(
+        String(payload?.baseUrl ?? ""),
+        String(payload?.apiKey ?? ""),
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(msg);
+    }
+  },
+);
+
+ipcMain.handle("ai-test-chat-hi", async (_: IpcMainInvokeEvent, payload: unknown) => {
+  const p = payload as { provider?: string; googleApiKey?: string; customBaseUrl?: string; customApiKey?: string; modelId?: string };
+  const modelId = String(p?.modelId ?? "");
+  try {
+    if (p?.provider === "custom") {
+      return await testOpenAiHiMain(
+        String(p?.customBaseUrl ?? ""),
+        String(p?.customApiKey ?? ""),
+        modelId,
+      );
+    }
+    return await testGoogleHiMain(String(p?.googleApiKey ?? ""), modelId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(msg);
+  }
+});
+
+ipcMain.handle(
+  "ai-chat-proxy-start",
+  async (
+    event: IpcMainInvokeEvent,
+    payload: { channel: string; url: string; headers: Record<string, string>; body: string },
+  ) => {
+    await proxyOpenAiChatCompletionsStream(
+      event.sender,
+      payload.channel,
+      payload.url,
+      payload.headers,
+      payload.body,
+    );
+  },
+);

@@ -3,9 +3,20 @@
 import { dispatchAutomationLine, runAutomationCommand } from "./automation/router";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { SPOTLIGHT_ICON_SVGS } from "../shared/spotlightIconSvgs";
+import { SPOTLIGHT_ICON_SVGS } from "../shared/spotlight-icon-svgs";
 import { QUICK_COMMAND_ENTRIES } from "../shared/quick-command-entries";
 import { getToolTemplateLine } from "../shared/tools-hub-templates";
+import { normalizeHomePageUrl, urlsMatchForTabSwitch } from "./kernel-utils";
+import {
+  loadConversationState,
+  saveConversationState,
+  createDebouncedSave,
+  createNewConversation,
+  generateMessageId,
+  titleFromFirstLine,
+} from "../chat/conversation-store-legacy";
+import { loadShellWorkspacePreference, saveShellWorkspacePreference } from "../chat/conversation-store";
+import { initUiTooltips } from "../ui/ui-tooltips";
 
 /**
  * Browser kernel: tab/webview/profile/chat/tools. Call initBrowserKernel() after the shell DOM
@@ -36,6 +47,7 @@ const USE_REACT_MODALS = true;
 const USE_REACT_TOAST = true;
 /** Chat panel resize drag handled in ChatShellBridge (single listener set). */
 const USE_REACT_CHAT_RESIZE = true;
+
 
 /** Per-<webview> lifecycle listeners (one Electron <webview> per tab). */
 const webviewsWithListeners = new WeakSet();
@@ -207,18 +219,6 @@ let zoomLevel = parseFloat(localStorage.getItem("zoomLevel") ?? "-1");
 let isLoading = false;
 let loadingTimer = null;
 let findActive = false;
-function normalizeHomePageUrl(stored) {
-  const fallback = "https://duckduckgo.com";
-  const s = (stored || "").trim();
-  if (!s) return fallback;
-  try {
-    const u = new URL(s);
-    if (u.protocol !== "http:" && u.protocol !== "https:") return fallback;
-    return u.href;
-  } catch {
-    return fallback;
-  }
-}
 
 let homePage = normalizeHomePageUrl(localStorage.getItem("homePage"));
 
@@ -300,6 +300,11 @@ let toast;
 let tbMinimize;
 let tbMaximize;
 let tbClose;
+let titlebarBrowserBtn;
+let titlebarIntelligentBtn;
+let appContainer;
+let chatSubtitle;
+let newChatBtn;
 let homePageInput;
 let chatSection;
 let chatWrapper;
@@ -398,6 +403,11 @@ function refreshDomRefsFromDocument() {
   tbMinimize = document.getElementById("tbMinimize");
   tbMaximize = document.getElementById("tbMaximize");
   tbClose = document.getElementById("tbClose");
+  titlebarBrowserBtn = document.getElementById("titlebarBrowserBtn");
+  titlebarIntelligentBtn = document.getElementById("titlebarIntelligentBtn");
+  appContainer = document.getElementById("appContainer");
+  chatSubtitle = document.getElementById("chatSubtitle");
+  newChatBtn = document.getElementById("newChatBtn");
   homePageInput = document.getElementById("homePageInput");
   chatSection = document.getElementById("chatSection");
   chatWrapper = document.getElementById("chatWrapper");
@@ -467,8 +477,10 @@ type TopSurface =
   | "bookmarks"
   | "history"
   | "passwords"
+  | "sessions"
   | "toolsHub"
   | "settings"
+  | "browserSettings"
   | "networkWorkbench";
 
 let lastToolsHubCrumbs: string[] = ["Tool Hub"];
@@ -513,9 +525,9 @@ function syncTopChromeForSurface(): void {
 
   const hub = document.getElementById("toolsHubRoot");
   const hubOpen = !!(hub && hub.classList.contains("tools-hub--open"));
-  const settingsOpen = !!document
-    .getElementById("webviewContainer")
-    ?.hasAttribute("data-settings-open");
+  const settingsOpen =
+    shellWorkspace === "settings" ||
+    !!document.getElementById("appContainer")?.hasAttribute("data-settings-open");
   const workbenchOpen = !!document
     .getElementById("webviewContainer")
     ?.hasAttribute("data-workbench-open");
@@ -523,14 +535,20 @@ function syncTopChromeForSurface(): void {
   const bookmarksOpen = !!document.getElementById("bookmarksPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
   const historyOpen = !!document.getElementById("historyPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
   const passwordsOpen = !!document.getElementById("passwordsPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
+  const sessionsOpen = !!document.getElementById("sessionsPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
+  const browserChromeSettingsOpen = !!document
+    .getElementById("browserSettingsPanel")
+    ?.classList.contains(SIDE_PANEL_OPEN_CLASS);
 
   let surface: TopSurface = "webview";
   if (hubOpen) surface = "toolsHub";
   else if (workbenchOpen) surface = "networkWorkbench";
   else if (settingsOpen) surface = "settings";
+  else if (browserChromeSettingsOpen) surface = "browserSettings";
   else if (historyOpen) surface = "history";
   else if (bookmarksOpen) surface = "bookmarks";
   else if (passwordsOpen) surface = "passwords";
+  else if (sessionsOpen) surface = "sessions";
 
   bsec.setAttribute("data-surface", surface);
 
@@ -538,7 +556,9 @@ function syncTopChromeForSurface(): void {
   else if (surface === "history") setCrumbParts(["History"]);
   else if (surface === "bookmarks") setCrumbParts(["Bookmarks"]);
   else if (surface === "passwords") setCrumbParts(["Saved passwords"]);
+  else if (surface === "sessions") setCrumbParts(["Sessions"]);
   else if (surface === "settings") setCrumbParts(["Settings"]);
+  else if (surface === "browserSettings") setCrumbParts(["Browser settings"]);
   else if (surface === "toolsHub") setCrumbParts(lastToolsHubCrumbs.length ? lastToolsHubCrumbs : ["Tool Hub"]);
   else if (surface === "networkWorkbench") setCrumbParts(["Network", "Workbench"]);
 }
@@ -575,25 +595,70 @@ setProfileGateBackdrop(USE_REACT_MODALS && tabs.length === 0);
 
 let chatOpen = true;
 
+let convState = loadConversationState();
+const scheduleConvSave = createDebouncedSave(400);
+let shellWorkspace = "browser";
+
 // ── Init ─────────────────────────────────────────────────────
 function hideLegacyModalContainers() {
   [
-    "settingsOverlay",
-    "settingsPanel",
     "firstRunOverlay",
     "profileOverlay",
     "importWizard",
     "importOverlay",
   ].forEach((id) => {
     const el = document.getElementById(id);
-    if (el) el.style.display = "none";
+    if (el) {
+      el.style.display = "none";
+      el.setAttribute("aria-hidden", "true");
+    }
   });
+  document.getElementById("webviewOverlayHost")?.setAttribute("aria-hidden", "true");
 }
 
-/** Clears settings DOM state and notifies React — call after the next surface is visible when possible. */
+/** Clears intelligent-settings modal flag over webview and notifies embedded UIs. */
 function leaveSettingsSurfaceSync() {
-  document.getElementById("webviewContainer")?.removeAttribute("data-settings-open");
+  document.getElementById("appContainer")?.removeAttribute("data-settings-open");
+  const host = document.getElementById("webviewOverlayHost");
+  if (host) host.setAttribute("aria-hidden", "true");
   window.dispatchEvent(new CustomEvent("react-close-settings"));
+}
+
+function notifyBrowserChromeSettingsSide(open) {
+  try {
+    window.dispatchEvent(new CustomEvent("browser-chrome-settings-side", { detail: { open } }));
+  } catch {
+    /* ignore */
+  }
+}
+
+function closeBrowserSettingsSidePanel() {
+  const p = document.getElementById("browserSettingsPanel");
+  if (!p?.classList.contains(SIDE_PANEL_OPEN_CLASS)) return;
+  p.classList.remove(SIDE_PANEL_OPEN_CLASS);
+  p.setAttribute("aria-hidden", "true");
+  notifyBrowserChromeSettingsSide(false);
+  syncRailPanelActive();
+  syncWebviewInteractionLayer();
+}
+
+/** Close browser settings column + clear modal overlay flag (intelligent settings modal). */
+function closeBrowserChromeSettingsOverlay() {
+  closeBrowserSettingsSidePanel();
+  document.getElementById("appContainer")?.removeAttribute("data-settings-open");
+  const host = document.getElementById("webviewOverlayHost");
+  if (host) host.setAttribute("aria-hidden", "true");
+}
+
+/** @deprecated Use rail Settings (toggles side panel). Kept for API compatibility. */
+function openBrowserChromeSettingsOverlay() {
+  toggleSidePanel("browserSettingsPanel");
+}
+
+let browserChromeSettingsOverlayControlsWired = false;
+function wireBrowserChromeSettingsOverlayControls() {
+  if (browserChromeSettingsOverlayControlsWired) return;
+  browserChromeSettingsOverlayControlsWired = true;
 }
 
 /** Clears workbench DOM state and notifies React — call after the next surface is visible when possible. */
@@ -602,34 +667,53 @@ function leaveWorkbenchSurfaceSync() {
   window.dispatchEvent(new CustomEvent("react-close-workbench"));
 }
 
+/** Intelligent assistant: large modal (intelligent workspace). Browser: side panel. */
+function openIntelligentAssistantSettings() {
+  closeBrowserSettingsSidePanel();
+  closeBrowserChromeSettingsOverlay();
+  closeSidePanels();
+  const hub = document.getElementById("toolsHubRoot");
+  if (hub && hub.classList.contains("tools-hub--open")) {
+    closeToolsHub();
+  }
+  leaveWorkbenchSurfaceSync();
+  document.getElementById("appContainer")?.removeAttribute("data-settings-open");
+  if (shellWorkspace !== "intelligent") {
+    enterIntelligentWorkspace();
+  }
+  window.dispatchEvent(new CustomEvent("intelligent-assistant-settings-open"));
+  syncRailPanelActive();
+  syncWebviewInteractionLayer();
+}
+
+function enterSettingsWorkspace(panel) {
+  if (panel === "browser") {
+    toggleSidePanel("browserSettingsPanel");
+    return;
+  }
+  openIntelligentAssistantSettings();
+}
+
 function wireReactSettingsButtons() {
+  wireBrowserChromeSettingsOverlayControls();
   const s = document.getElementById("settingsBtn");
-  const open = () => {
-    closeSidePanels();
-    const hub = document.getElementById("toolsHubRoot");
-    const hubWasOpen = !!(hub && hub.classList.contains("tools-hub--open"));
-    leaveWorkbenchSurfaceSync();
-    document.getElementById("webviewContainer")?.setAttribute("data-settings-open", "");
-    window.dispatchEvent(new CustomEvent("react-open-settings"));
-    syncRailPanelActive();
-    syncWebviewInteractionLayer();
-    if (hubWasOpen) {
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        window.removeEventListener("react-settings-mounted", onMounted);
-        closeToolsHub();
-      };
-      const onMounted = () => finish();
-      window.addEventListener("react-settings-mounted", onMounted);
-      window.setTimeout(finish, 250);
-    }
-  };
-  if (s) s.onclick = open;
+  const chatSettings = document.getElementById("settingsBtnChat");
+  if (s) {
+    s.onclick = () => {
+      if (shellWorkspace === "browser") {
+        toggleSidePanel("browserSettingsPanel");
+      } else {
+        openIntelligentAssistantSettings();
+      }
+    };
+  }
+  if (chatSettings) chatSettings.onclick = () => openIntelligentAssistantSettings();
+  const iwSettings = document.getElementById("intelligentWorkspaceSettingsBtn");
+  if (iwSettings) iwSettings.onclick = () => openIntelligentAssistantSettings();
 }
 
 function showWebviewOnly() {
+  closeBrowserChromeSettingsOverlay();
   closeSidePanels();
   closeToolsHub();
   leaveWorkbenchSurfaceSync();
@@ -839,16 +923,6 @@ function spawnTab(triggerEl) {
 }
 
 let webviewReady = false;
-
-function urlsMatchForTabSwitch(a, b) {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  try {
-    return new URL(a).href === new URL(b).href;
-  } catch {
-    return false;
-  }
-}
 
 function isActiveWebview(wv) {
   const t = getTab(activeTabId);
@@ -1996,6 +2070,13 @@ function setupTitleBar() {
   tbMaximize.onclick = () => window.electronAPI.windowMaximize();
   tbClose.onclick = () => window.electronAPI.windowClose();
 
+  if (titlebarBrowserBtn) {
+    titlebarBrowserBtn.onclick = () => enterBrowserWorkspace();
+  }
+  if (titlebarIntelligentBtn) {
+    titlebarIntelligentBtn.onclick = () => enterIntelligentWorkspace();
+  }
+
   window.electronAPI.onWindowStateChanged((state) => {
     tbMaximize.title = state === "maximized" ? "Restore" : "Maximize";
   });
@@ -2023,19 +2104,34 @@ function applyTheme(name) {
 // ═══════════════════════════════════════════════════════════
 
 function setupSettings() {
+  if (!settingsPanel || !settingsOverlay) {
+    if (settingsBtn)
+      settingsBtn.onclick = () => {
+        toggleSidePanel("browserSettingsPanel");
+      };
+    return;
+  }
   const openSettings = () => {
     settingsPanel.style.display = "flex";
     settingsOverlay.style.display = "block";
     homePageInput.value = homePage;
+    document.getElementById("appContainer")?.setAttribute("data-settings-open", "");
+    document.getElementById("webviewOverlayHost")?.setAttribute("aria-hidden", "false");
+    settingsPanel.removeAttribute("aria-hidden");
+    settingsOverlay.setAttribute("aria-hidden", "false");
   };
   const closeSettings = () => {
     settingsPanel.style.display = "none";
     settingsOverlay.style.display = "none";
+    document.getElementById("appContainer")?.removeAttribute("data-settings-open");
+    document.getElementById("webviewOverlayHost")?.setAttribute("aria-hidden", "true");
+    settingsPanel.setAttribute("aria-hidden", "true");
+    settingsOverlay.setAttribute("aria-hidden", "true");
   };
 
   if (settingsBtn) settingsBtn.onclick = openSettings;
   if (settingsBtnChat) settingsBtnChat.onclick = openSettings;
-  closeSettingsBtn.onclick = closeSettings;
+  if (closeSettingsBtn) closeSettingsBtn.onclick = closeSettings;
   settingsOverlay.onclick = closeSettings;
 
   document.querySelectorAll(".theme-card").forEach((btn) => {
@@ -2412,12 +2508,29 @@ function setupChat() {
   });
 
   clearChatBtn.onclick = () => {
-    chatMessages.innerHTML = "";
-    addBotMessage("Chat cleared. How can I help?");
+    if (typeof window.__aiChatClearConversation === "function") window.__aiChatClearConversation();
+    else clearActiveConversationMessages();
   };
 }
 
 function submitChat() {
+  if (typeof window.__aiChatSubmit === "function") {
+    const chatInputEl = document.getElementById("chatInput");
+    const chatInputMd = document.getElementById("chatInputMd");
+    const text = (chatInputEl?.value ?? "").trim();
+    if (!text) return;
+    window.__aiChatSubmit(text);
+    if (chatInputEl) {
+      chatInputEl.value = "";
+      chatInputEl.style.height = "auto";
+      chatInputEl.style.display = "block";
+    }
+    if (chatInputMd) {
+      chatInputMd.style.display = "none";
+      chatInputMd.innerHTML = "";
+    }
+    return;
+  }
   const chatInputEl = document.getElementById("chatInput");
   const chatInputMd = document.getElementById("chatInputMd");
   const text = chatInputEl.value.trim();
@@ -2626,9 +2739,152 @@ async function processCommand(text) {
   const result = await dispatchAutomationLine(text, getKernelAutomationContext());
   if (result.message) addBotMessage(result.message);
 }
-// ── Message helpers ───────────────────────────────────────────
 
-function addUserMessage(text) {
+// ── Conversations (persisted) ─────────────────────────────────
+function ensureConversationBootstrap() {
+  if (!convState.conversations.length) {
+    const c = createNewConversation();
+    convState.conversations.push(c);
+    convState.activeConversationId = c.id;
+    saveConversationState(convState);
+  }
+  if (
+    !convState.activeConversationId ||
+    !convState.conversations.some((c) => c.id === convState.activeConversationId)
+  ) {
+    convState.activeConversationId = convState.conversations[0].id;
+  }
+}
+
+function getActiveConversation() {
+  ensureConversationBootstrap();
+  return convState.conversations.find((c) => c.id === convState.activeConversationId) || null;
+}
+
+function persistConvStateImmediate() {
+  saveConversationState(convState);
+}
+
+function pushUserMessageToStore(text) {
+  const c = getActiveConversation();
+  if (!c) return;
+  c.messages.push({ id: generateMessageId(), kind: "user", markdown: text });
+  c.updatedAt = Date.now();
+  const userMsgs = c.messages.filter((m) => m.kind === "user");
+  if (userMsgs.length === 1) c.title = titleFromFirstLine(text);
+  scheduleConvSave(convState);
+  refreshChatHistoryList();
+}
+
+function pushAssistantMessageToStore(text) {
+  const c = getActiveConversation();
+  if (!c) return;
+  c.messages.push({ id: generateMessageId(), kind: "assistant", markdown: text });
+  c.updatedAt = Date.now();
+  scheduleConvSave(convState);
+  refreshChatHistoryList();
+}
+
+function pushScreenshotSentToStore(dataUrl, filename) {
+  const c = getActiveConversation();
+  if (!c) return;
+  c.messages.push({
+    id: generateMessageId(),
+    kind: "screenshot_sent",
+    dataUrl,
+    filename,
+  });
+  c.updatedAt = Date.now();
+  scheduleConvSave(convState);
+  refreshChatHistoryList();
+}
+
+function pushPickerMessageToStore(sel, info, canFill, isCheckable) {
+  const c = getActiveConversation();
+  if (!c) return;
+  c.messages.push({
+    id: generateMessageId(),
+    kind: "picker",
+    selector: sel,
+    tag: info.tag || "",
+    type: info.type || "",
+    text: (info.text || "").trim(),
+    canFill: !!canFill,
+    isCheckable: !!isCheckable,
+  });
+  c.updatedAt = Date.now();
+  scheduleConvSave(convState);
+  refreshChatHistoryList();
+}
+
+function refreshChatHistoryList() {
+  if (typeof window !== "undefined" && window.__reactAiChatOwnsHistoryList) return;
+  const list = document.getElementById("chatHistoryList");
+  if (!list) return;
+  convState.conversations.sort((a, b) => b.updatedAt - a.updatedAt);
+  list.innerHTML = "";
+  for (const c of convState.conversations) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "chat-history-row";
+    if (c.id === convState.activeConversationId) row.classList.add("chat-history-row--active");
+    row.dataset.conversationId = c.id;
+    row.textContent = c.title || "Chat";
+    row.title = c.title || "Chat";
+    row.onclick = () => switchToConversation(c.id);
+    list.appendChild(row);
+  }
+}
+
+if (typeof window !== "undefined") {
+  window.__kernelRefreshChatHistoryList = refreshChatHistoryList;
+}
+
+function switchToConversation(id) {
+  if (id === convState.activeConversationId) return;
+  convState.activeConversationId = id;
+  persistConvStateImmediate();
+  renderChatFromActiveConversation();
+  refreshChatHistoryList();
+}
+
+function startNewConversation() {
+  const c = createNewConversation();
+  convState.conversations.unshift(c);
+  convState.activeConversationId = c.id;
+  persistConvStateImmediate();
+  renderChatFromActiveConversation();
+  refreshChatHistoryList();
+}
+
+function renderChatFromActiveConversation() {
+  const c = getActiveConversation();
+  if (!c || !chatMessages) return;
+  chatMessages.innerHTML = "";
+  for (const m of c.messages) {
+    renderStoreMessageToDom(m);
+  }
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function renderStoreMessageToDom(m) {
+  if (m.kind === "user") {
+    appendUserMessageDomOnly(m.markdown);
+  } else if (m.kind === "assistant") {
+    appendBotMessageDomOnly(m.markdown);
+  } else if (m.kind === "screenshot_sent") {
+    appendScreenshotSentDomOnly(m.dataUrl, m.filename);
+  } else if (m.kind === "picker") {
+    const info = {
+      tag: m.tag,
+      type: m.type,
+      text: m.text,
+    };
+    showPickerActionPopup(m.selector, info, m.canFill, m.isCheckable, false);
+  }
+}
+
+function appendUserMessageDomOnly(text) {
   const div = document.createElement("div");
   div.className = "message user-message";
   div.innerHTML = `<div class="msg-bubble">${mdToHtml(text)}</div>`;
@@ -2636,7 +2892,127 @@ function addUserMessage(text) {
     if (!e.target.closest("button")) div.classList.toggle("msg-selected");
   };
   chatMessages.appendChild(div);
+}
+
+function appendBotMessageDomOnly(text) {
+  const div = document.createElement("div");
+  div.className = "message bot-message";
+  div.innerHTML = `
+    <div class="msg-avatar bot-avatar">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <circle cx="7" cy="7" r="6" stroke="var(--accent)" stroke-width="1.2"/>
+        <path d="M4 7C4 7 5 9 7 9C9 9 10 7 10 7" stroke="var(--accent)" stroke-width="1.2" stroke-linecap="round"/>
+        <circle cx="5" cy="5.5" r="0.8" fill="var(--accent)"/>
+        <circle cx="9" cy="5.5" r="0.8" fill="var(--accent)"/>
+      </svg>
+    </div>
+    <div class="msg-bubble">${mdToHtml(text)}</div>`;
+  div.onclick = (e) => {
+    if (!e.target.closest("button")) div.classList.toggle("msg-selected");
+  };
+  chatMessages.appendChild(div);
+}
+
+function appendScreenshotSentDomOnly(dataUrl, filename) {
+  const final = document.createElement("div");
+  final.className = "message bot-message";
+  final.innerHTML = `
+    <div class="msg-avatar bot-avatar">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <circle cx="7" cy="7" r="6" stroke="var(--accent)" stroke-width="1.2"/>
+        <path d="M4 7C4 7 5 9 7 9C9 9 10 7 10 7" stroke="var(--accent)" stroke-width="1.2" stroke-linecap="round"/>
+        <circle cx="5" cy="5.5" r="0.8" fill="var(--accent)"/>
+        <circle cx="9" cy="5.5" r="0.8" fill="var(--accent)"/>
+      </svg>
+    </div>
+    <div class="msg-bubble screenshot-bubble sent">
+      <img src="${dataUrl}" class="ss-sent-thumb" alt="screenshot"/>
+      <div class="ss-preview-meta"><span class="ss-filename">📸 ${filename}</span></div>
+    </div>`;
+  final.onclick = (e) => {
+    if (!e.target.closest("button")) final.classList.toggle("msg-selected");
+  };
+  chatMessages.appendChild(final);
+}
+
+function clearActiveConversationMessages() {
+  const c = getActiveConversation();
+  if (!c) return;
+  c.messages = [
+    {
+      id: generateMessageId(),
+      kind: "assistant",
+      markdown: "Chat cleared. How can I help?",
+    },
+  ];
+  c.updatedAt = Date.now();
+  persistConvStateImmediate();
+  renderChatFromActiveConversation();
+}
+
+function applyShellWorkspaceUi(ws) {
+  shellWorkspace = ws;
+  if (appContainer) appContainer.setAttribute("data-shell-workspace", ws);
+  if (ws === "browser" || ws === "intelligent") {
+    saveShellWorkspacePreference(ws);
+  }
+  if (titlebarBrowserBtn) {
+    titlebarBrowserBtn.setAttribute("aria-pressed", ws === "browser" ? "true" : "false");
+  }
+  if (titlebarIntelligentBtn) {
+    titlebarIntelligentBtn.setAttribute("aria-pressed", ws === "intelligent" ? "true" : "false");
+  }
+  const settingsWorkspaceEl = document.getElementById("settingsWorkspace");
+  if (settingsWorkspaceEl) settingsWorkspaceEl.setAttribute("aria-hidden", "true");
+  if (chatSubtitle) {
+    if (ws === "intelligent") chatSubtitle.textContent = "General assistant";
+    else chatSubtitle.textContent = "Browser agent";
+  }
+  const closeBtn = document.getElementById("closeChatBtn");
+  if (closeBtn) {
+    closeBtn.title =
+      ws === "intelligent" ? "Back to browser" : "Close AI Chat";
+  }
+  if (ws === "intelligent") {
+    setChatOpen(true);
+  }
+  try {
+    window.dispatchEvent(
+      new CustomEvent("shell-workspace-changed", {
+        detail: { workspace: ws },
+      }),
+    );
+  } catch {
+    /* ignore */
+  }
+
+  /* Header gear hidden in intelligent workspace (CSS); browser workspace already hides #settingsBtnChat. */
+  const quickBarWrap = document.getElementById("quickPanelBtn")?.parentElement;
+  if (quickBarWrap?.classList.contains("tools-bar-wrap")) {
+    quickBarWrap.style.display = ws === "browser" ? "none" : "";
+  }
+  const toolsBarToolsWrap = document.getElementById("toolsPanelBtn")?.parentElement;
+  if (toolsBarToolsWrap?.classList.contains("tools-bar-wrap")) {
+    toolsBarToolsWrap.style.display = ws === "browser" ? "none" : "";
+  }
+}
+
+function enterBrowserWorkspace() {
+  showWebviewOnly();
+  applyShellWorkspaceUi("browser");
+}
+
+function enterIntelligentWorkspace() {
+  showWebviewOnly();
+  applyShellWorkspaceUi("intelligent");
+}
+
+// ── Message helpers ───────────────────────────────────────────
+
+function addUserMessage(text) {
+  appendUserMessageDomOnly(text);
   chatMessages.scrollTop = chatMessages.scrollHeight;
+  pushUserMessageToStore(text);
 }
 
 // Adds a screenshot preview bubble — small thumbnail + Enter to send / Esc to cancel
@@ -2687,6 +3063,7 @@ function addScreenshotMessage(dataUrl, filename) {
       </div>`;
     chatMessages.appendChild(final);
     chatMessages.scrollTop = chatMessages.scrollHeight;
+    pushScreenshotSentToStore(dataUrl, filename);
   };
 
   div.querySelector(".ss-discard-btn").onclick = () => {
@@ -2696,23 +3073,9 @@ function addScreenshotMessage(dataUrl, filename) {
 }
 
 function addBotMessage(text) {
-  const div = document.createElement("div");
-  div.className = "message bot-message";
-  div.innerHTML = `
-    <div class="msg-avatar bot-avatar">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <circle cx="7" cy="7" r="6" stroke="var(--accent)" stroke-width="1.2"/>
-        <path d="M4 7C4 7 5 9 7 9C9 9 10 7 10 7" stroke="var(--accent)" stroke-width="1.2" stroke-linecap="round"/>
-        <circle cx="5" cy="5.5" r="0.8" fill="var(--accent)"/>
-        <circle cx="9" cy="5.5" r="0.8" fill="var(--accent)"/>
-      </svg>
-    </div>
-    <div class="msg-bubble">${mdToHtml(text)}</div>`;
-  div.onclick = (e) => {
-    if (!e.target.closest("button")) div.classList.toggle("msg-selected");
-  };
-  chatMessages.appendChild(div);
+  appendBotMessageDomOnly(text);
   chatMessages.scrollTop = chatMessages.scrollHeight;
+  pushAssistantMessageToStore(text);
 }
 
 function escapeHtml(str) {
@@ -2868,12 +3231,14 @@ function setupChatPanelLinks() {
         return;
       }
       if (/^https?:\/\//i.test(trimmed)) {
+        if (shellWorkspace === "intelligent" || shellWorkspace === "settings") enterBrowserWorkspace();
         window.legacyBrowser?.createTabWithUrl?.(trimmed);
         return;
       }
       try {
         const abs = new URL(trimmed, window.location.href).href;
         if (/^https?:\/\//i.test(abs)) {
+          if (shellWorkspace === "intelligent" || shellWorkspace === "settings") enterBrowserWorkspace();
           window.legacyBrowser?.createTabWithUrl?.(abs);
           return;
         }
@@ -2887,9 +3252,13 @@ function setupChatPanelLinks() {
 }
 
 function setChatOpen(open) {
+  if (shellWorkspace === "intelligent" && !open) {
+    enterBrowserWorkspace();
+    return;
+  }
   chatOpen = open;
   chatWrapper.classList.toggle("chat-closed", !open);
-  aiChatToggleBtn.classList.toggle("active", open);
+  if (aiChatToggleBtn) aiChatToggleBtn.classList.toggle("active", open);
   if (USE_REACT_CHAT_RESIZE) {
     window.dispatchEvent(
       new CustomEvent("legacy-chat-open", { detail: { open } }),
@@ -3129,11 +3498,13 @@ function setupToolsPanel() {
 
   function togglePanel(btn, p, otherBtn, otherP) {
     const open = p.style.display === "none";
-    otherP.style.display = "none";
-    otherBtn.classList.remove("tools-open");
+    if (otherP) otherP.style.display = "none";
+    if (otherBtn) otherBtn.classList.remove("tools-open");
     p.style.display = open ? "block" : "none";
     btn.classList.toggle("tools-open", open);
   }
+
+  if (!panelBtn || !panel || !closeBtn || !list) return;
 
   // Render tool cards
   function renderTools() {
@@ -3176,12 +3547,19 @@ function setupToolsPanel() {
 
   panelBtn.onclick = (e) => {
     e.stopPropagation();
-    togglePanel(panelBtn, panel, quickBtn, quickPanel);
+    if (quickBtn && quickPanel) togglePanel(panelBtn, panel, quickBtn, quickPanel);
+    else {
+      const open = panel.style.display === "none";
+      panel.style.display = open ? "block" : "none";
+      panelBtn.classList.toggle("tools-open", open);
+    }
   };
-  quickBtn.onclick = (e) => {
-    e.stopPropagation();
-    togglePanel(quickBtn, quickPanel, panelBtn, panel);
-  };
+  if (quickBtn && quickPanel) {
+    quickBtn.onclick = (e) => {
+      e.stopPropagation();
+      togglePanel(quickBtn, quickPanel, panelBtn, panel);
+    };
+  }
 
   closeBtn.onclick = () => {
     panel.style.display = "none";
@@ -3193,7 +3571,7 @@ function setupToolsPanel() {
       panel.style.display = "none";
       panelBtn.classList.remove("tools-open");
     }
-    if (!quickPanel.contains(e.target) && e.target !== quickBtn) {
+    if (quickPanel && quickBtn && !quickPanel.contains(e.target) && e.target !== quickBtn) {
       quickPanel.style.display = "none";
       quickBtn.classList.remove("tools-open");
     }
@@ -3327,10 +3705,11 @@ function startElementScreenshot(rearm = false) {
   elemShotActive = true;
   syncToolState("elemshot", true);
   showToast("📷 Click any element to screenshot it...");
-  if (!rearm)
+  if (!rearm && !isReactAiChatShellActive()) {
     addBotMessage(
       "📷 **Element Screenshot active** — click any element. Press Esc to cancel.",
     );
+  }
 
   injectPickerOverlay(
     async (r) => {
@@ -3351,6 +3730,14 @@ function startElementScreenshot(rearm = false) {
         const saved = await window.electronAPI.saveScreenshot(dataUrl);
         if (saved.success) {
           showToast(`✅ Element captured: ${saved.filename}`);
+          if (isReactAiChatShellActive()) {
+            insertIntoAiComposerText(
+              `📷 **Element snapshot** saved as \`${saved.filename}\`. Describe what to do with this region.`,
+            );
+            elemShotActive = false;
+            stopElementScreenshot();
+            return;
+          }
           addScreenshotMessage(dataUrl, saved.filename);
         } else {
           showToast("❌ Save failed");
@@ -3361,11 +3748,11 @@ function startElementScreenshot(rearm = false) {
       }
       // Re-arm after capture completes
       elemShotActive = false;
-      startElementScreenshot(true);
+      if (!isReactAiChatShellActive()) startElementScreenshot(true);
     },
     () => {
       stopElementScreenshot();
-      addBotMessage("📷 Element screenshot cancelled.");
+      if (!isReactAiChatShellActive()) addBotMessage("📷 Element screenshot cancelled.");
     },
   );
 }
@@ -3477,11 +3864,13 @@ function startElementPicker(mode = "any") {
       ? "🎯 Click an interactive element (button/input/link) to pick it..."
       : "🎯 Click any element on the page to pick its selector...",
   );
-  addBotMessage(
-    mode === "interactive"
-      ? "🎯 **Interactive Picker active** — click a button/input/link. Press Esc to cancel."
-      : "🎯 **Picker active** — click any element on the page. Press Esc to cancel.",
-  );
+  if (!isReactAiChatShellActive()) {
+    addBotMessage(
+      mode === "interactive"
+        ? "🎯 **Interactive Picker active** — click a button/input/link. Press Esc to cancel."
+        : "🎯 **Picker active** — click any element on the page. Press Esc to cancel.",
+    );
+  }
 
   browserFrame
     .executeJavaScript(
@@ -3636,7 +4025,7 @@ function startElementPicker(mode = "any") {
       );
       if (sel === "__cancelled__") {
         stopElementPicker();
-        addBotMessage("🎯 Picker cancelled.");
+        if (!isReactAiChatShellActive()) addBotMessage("🎯 Picker cancelled.");
         return;
       }
       const info = await browserFrame
@@ -3684,8 +4073,41 @@ function stopElementPicker() {
     .catch(() => {});
 }
 
+function isReactAiChatShellActive() {
+  const h = document.getElementById("aiChatReactHost");
+  if (!h) return false;
+  return getComputedStyle(h).display !== "none";
+}
+
+function insertIntoAiComposerText(text) {
+  if (!text) return;
+  try {
+    window.dispatchEvent(new CustomEvent("ai-chat-append-composer", { detail: { text } }));
+  } catch {
+    /* ignore */
+  }
+}
+
+function formatPickerContextForComposer(sel, info) {
+  const lines = [
+    "**Page element**",
+    `- CSS selector: \`${sel}\``,
+    `- Tag: \`${(info && info.tag) || "?"}\``,
+  ];
+  if (info && info.type) lines.push(`- Type: \`${info.type}\``);
+  if (info && info.text)
+    lines.push(`- Visible text: "${String(info.text).replace(/"/g, '\\"').slice(0, 200)}"`);
+  lines.push("", "_Use this target with the browser automation tools._");
+  return lines.join("\n");
+}
+
 // Shows an inline action card in chat after the picker selects an element
-function showPickerActionPopup(sel, info, canFill, isCheckable) {
+function showPickerActionPopup(sel, info, canFill, isCheckable, recordStore = true) {
+  if (isReactAiChatShellActive()) {
+    insertIntoAiComposerText(formatPickerContextForComposer(sel, info));
+    showToast("Added page element to your message");
+    return;
+  }
   const div = document.createElement("div");
   div.className = "message bot-message";
 
@@ -3830,6 +4252,8 @@ function showPickerActionPopup(sel, info, canFill, isCheckable) {
         chatInputEl.focus();
       });
   };
+
+  if (recordStore) pushPickerMessageToStore(sel, info, canFill, isCheckable);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4205,9 +4629,9 @@ function syncWebviewInteractionLayer() {
   const sideOpen = !!document.querySelector(".side-panel.side-panel--open");
   const hub = document.getElementById("toolsHubRoot");
   const hubOpen = !!(hub && hub.classList.contains("tools-hub--open"));
-  const settingsOpen = !!document
-    .getElementById("webviewContainer")
-    ?.hasAttribute("data-settings-open");
+  const settingsOpen =
+    shellWorkspace === "settings" ||
+    !!document.getElementById("appContainer")?.hasAttribute("data-settings-open");
   const workbenchOpen = !!document
     .getElementById("webviewContainer")
     ?.hasAttribute("data-workbench-open");
@@ -4234,9 +4658,11 @@ function syncWebviewInteractionLayer() {
 
 function syncRailPanelActive() {
   const map = {
+    browserSettingsPanel: "settingsBtn",
     bookmarksPanel: "bookmarksBtn",
     historyPanel: "historyBtn",
     passwordsPanel: "passwordsBtn",
+    sessionsPanel: "sessionsBtn",
   };
   document.querySelectorAll("#leftToolRail .rail-btn").forEach((b) => {
     b.classList.remove("rail-btn-active");
@@ -4250,11 +4676,17 @@ function syncRailPanelActive() {
     document.getElementById("networkWorkbenchBtn")?.classList.add("rail-btn-active");
     return;
   }
-  if (document.getElementById("webviewContainer")?.hasAttribute("data-settings-open")) {
+  if (document.getElementById("appContainer")?.hasAttribute("data-settings-open")) {
     document.getElementById("settingsBtn")?.classList.add("rail-btn-active");
     return;
   }
-  for (const pid of ["bookmarksPanel", "historyPanel", "passwordsPanel"]) {
+  for (const pid of [
+    "browserSettingsPanel",
+    "bookmarksPanel",
+    "historyPanel",
+    "passwordsPanel",
+    "sessionsPanel",
+  ]) {
     const p = document.getElementById(pid);
     if (p && p.classList.contains(SIDE_PANEL_OPEN_CLASS)) {
       const bid = map[pid];
@@ -4266,13 +4698,20 @@ function syncRailPanelActive() {
 }
 
 function closeSidePanels() {
-  ["bookmarksPanel", "historyPanel", "passwordsPanel"].forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) {
-      el.classList.remove(SIDE_PANEL_OPEN_CLASS);
-      el.setAttribute("aria-hidden", "true");
-    }
-  });
+  let browserSettingsWasOpen = false;
+  ["browserSettingsPanel", "bookmarksPanel", "historyPanel", "passwordsPanel", "sessionsPanel"].forEach(
+    (id) => {
+      const el = document.getElementById(id);
+      if (el) {
+        if (id === "browserSettingsPanel" && el.classList.contains(SIDE_PANEL_OPEN_CLASS)) {
+          browserSettingsWasOpen = true;
+        }
+        el.classList.remove(SIDE_PANEL_OPEN_CLASS);
+        el.setAttribute("aria-hidden", "true");
+      }
+    },
+  );
+  if (browserSettingsWasOpen) notifyBrowserChromeSettingsSide(false);
   syncRailPanelActive();
   syncWebviewInteractionLayer();
 }
@@ -4315,13 +4754,14 @@ function toggleSidePanel(id) {
   if (panel.classList.contains(SIDE_PANEL_OPEN_CLASS)) {
     panel.classList.remove(SIDE_PANEL_OPEN_CLASS);
     panel.setAttribute("aria-hidden", "true");
+    if (id === "browserSettingsPanel") notifyBrowserChromeSettingsSide(false);
     syncRailPanelActive();
     syncWebviewInteractionLayer();
     return;
   }
 
   const settingsWasOpen = !!document
-    .getElementById("webviewContainer")
+    .getElementById("appContainer")
     ?.hasAttribute("data-settings-open");
   const workbenchWasOpen = !!document
     .getElementById("webviewContainer")
@@ -4331,6 +4771,7 @@ function toggleSidePanel(id) {
 
   const prev = document.querySelector(".side-panel.side-panel--open");
   if (prev && prev !== panel) {
+    if (prev.id === "browserSettingsPanel") notifyBrowserChromeSettingsSide(false);
     panel.classList.add(SIDE_PANEL_INSTANT_CLASS);
     prev.classList.add(SIDE_PANEL_INSTANT_CLASS);
     panel.classList.add(SIDE_PANEL_OPEN_CLASS);
@@ -4351,6 +4792,7 @@ function toggleSidePanel(id) {
       syncRailPanelActive();
       syncWebviewInteractionLayer();
     }
+    if (id === "browserSettingsPanel") notifyBrowserChromeSettingsSide(true);
     return;
   }
 
@@ -4372,6 +4814,7 @@ function toggleSidePanel(id) {
     syncRailPanelActive();
     syncWebviewInteractionLayer();
   }
+  if (id === "browserSettingsPanel") notifyBrowserChromeSettingsSide(true);
 }
 
 function runQuickCommand(cmd, opts) {
@@ -4502,6 +4945,7 @@ async function runBrowserImport(target) {
 function setupDataPanelButtons() {
   // Nav bar buttons
   document.getElementById("railWebviewBtn").onclick = () => showWebviewOnly();
+  document.getElementById("sessionsBtn").onclick = () => toggleSidePanel("sessionsPanel");
   document.getElementById("bookmarksBtn").onclick = () =>
     toggleSidePanel("bookmarksPanel");
   document.getElementById("historyBtn").onclick = () =>
@@ -4533,6 +4977,7 @@ function setupDataPanelButtons() {
   document.getElementById("closeBookmarksBtn").onclick = closeSidePanels;
   document.getElementById("closeHistoryBtn").onclick = closeSidePanels;
   document.getElementById("closePasswordsBtn").onclick = closeSidePanels;
+  document.getElementById("closeSessionsBtn").onclick = closeSidePanels;
 
   // Import buttons
   document.getElementById("importBookmarksBtn").onclick = () =>
@@ -4634,7 +5079,7 @@ function setupDataPanelButtons() {
     (e) => {
       if (!document.querySelector(".side-panel.side-panel--open")) return;
       const t = e.target;
-      if (t.closest("#bookmarksPanel,#historyPanel,#passwordsPanel")) return;
+      if (t.closest("#bookmarksPanel,#historyPanel,#passwordsPanel,#sessionsPanel")) return;
       if (t.closest("#leftToolRail")) return;
       closeSidePanels();
     },
@@ -4909,7 +5354,19 @@ window.legacyBrowser = {
   closeToolsHub: () => closeToolsHub(),
   toggleToolsHub: () => toggleToolsHub(),
   runQuickCommand: (cmd, opts) => runQuickCommand(cmd, opts),
+  enterBrowserWorkspace: () => enterBrowserWorkspace(),
+  enterIntelligentWorkspace: () => enterIntelligentWorkspace(),
+  enterSettingsWorkspace: (panel) => enterSettingsWorkspace(panel === "browser" ? "browser" : "intelligent"),
+  openIntelligentAssistantSettings: () => openIntelligentAssistantSettings(),
+  /** Toggles browser settings side column (same as rail Settings in browser workspace). */
+  openBrowserChromeSettingsOverlay: () => toggleSidePanel("browserSettingsPanel"),
+  closeBrowserSettingsSidePanel: () => closeBrowserSettingsSidePanel(),
+  startBrowserPagePickerAny: () => startElementPicker("any"),
+  startBrowserPagePickerInteractive: () => startElementPicker("interactive"),
+  startBrowserPageElementScreenshot: () => startElementScreenshot(),
 };
+
+  window.__mcpInvokeAutomation = async (cmd) => runAutomationCommand(cmd, getKernelAutomationContext());
 
   // ── Register startup gate callbacks FIRST — before any setup that might throw ──
   // This guarantees tabs are created and the loading overlay is cleared regardless
@@ -4969,5 +5426,23 @@ window.legacyBrowser = {
   try { syncRailPanelActive(); } catch (e) { /* ignore */ }
   try { syncWebviewInteractionLayer(); } catch (e) { /* ignore */ }
   ensureActiveShellReady();
+  try {
+    ensureConversationBootstrap();
+    renderChatFromActiveConversation();
+    refreshChatHistoryList();
+    if (newChatBtn)
+      newChatBtn.onclick = () => {
+        if (typeof window.__aiChatNewConversation === "function") window.__aiChatNewConversation();
+        else startNewConversation();
+      };
+    applyShellWorkspaceUi(loadShellWorkspacePreference());
+  } catch (e) {
+    console.warn("[kernel] conversation / workspace bootstrap:", e);
+  }
+  try {
+    initUiTooltips();
+  } catch (e) {
+    console.warn("[kernel] initUiTooltips:", e);
+  }
   traceKernel("initBrowserKernel completed");
 }

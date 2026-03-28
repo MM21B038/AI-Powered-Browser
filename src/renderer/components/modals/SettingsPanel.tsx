@@ -1,11 +1,61 @@
-import { useEffect, useLayoutEffect, useState, type MouseEvent, type ReactElement } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactElement,
+} from "react";
 import { createPortal } from "react-dom";
-import type { ImportStatsDetail, ListedBrowserProfile, SystemInfo } from "../../../shared/ipc-types";
+import type {
+  ImportStatsDetail,
+  ListedBrowserProfile,
+  McpBridgeState,
+  SystemInfo,
+} from "../../../shared/ipc-types";
+import type { McpRemoteTransport } from "../../../shared/mcp-external-types";
+import { MCP_TOOL_NAMES } from "../../../shared/mcp-tool-registry";
 import { getElectronApi } from "../../services/electron-api";
+import {
+  BUTCHER_BUILTIN_MCP_ID,
+  createEmptyMcpServer,
+  loadIntelligentSettings,
+  mcpServerHasConnectionParams,
+  saveIntelligentSettings,
+  type IntelligentSettingsState,
+  type McpServerConfig,
+} from "../../state/session-settings-store";
+import { listGoogleModels, listOpenAiCompatibleModels, testChatHi } from "../../services/ai-models";
+
+function truncateText(s: string, max: number): string {
+  const t = s.trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max - 1)}…`;
+}
+
+/** One-line summary for a collapsed MCP server row. */
+function mcpServerSubtitle(m: McpServerConfig): string {
+  if (m.serverMode === "remote") {
+    const u = (m.url || "").trim();
+    return u ? truncateText(u, 54) : "Remote — URL not set";
+  }
+  const cmd = (m.command || "").trim();
+  if (!cmd) return "Stdio — command not set";
+  const argsOneLine = (m.args || "").replace(/\s+/g, " ").trim();
+  const extra = argsOneLine && argsOneLine !== "[]" ? ` ${truncateText(argsOneLine, 36)}` : "";
+  return truncateText(`${cmd}${extra}`, 58);
+}
 
 type SettingsPanelProps = {
   open: boolean;
   onClose: () => void;
+  /** Rail → browser chrome only; chat gear → intelligent (theme, AI, MCP). */
+  panel?: "browser" | "intelligent";
+  /** `workspace` = full main column; `sidePanel` = webview column like bookmarks/history. */
+  layout?: "modal" | "workspace" | "sidePanel";
+  /** Wider centered modal for assistant settings. */
+  modalSize?: "default" | "xl";
 };
 
 type AppDataStats = {
@@ -47,7 +97,13 @@ function formatImportLine(s: ImportStatsDetail | null): string {
   return `${b} bookmarks · ${h} history · ${c} cookies · ${p} passwords · ${a} autofill rows`;
 }
 
-export function SettingsPanel({ open, onClose }: SettingsPanelProps): ReactElement | null {
+export function SettingsPanel({
+  open,
+  onClose,
+  panel = "browser",
+  layout = "modal",
+  modalSize = "default",
+}: SettingsPanelProps): ReactElement | null {
   const [homePage, setHomePage] = useState("");
   const [sys, setSys] = useState<SystemInfo | null>(null);
   const [browser, setBrowser] = useState<"" | "chrome" | "firefox">("");
@@ -66,12 +122,51 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps): ReactEleme
   const [activeTheme, setActiveTheme] = useState(
     () => (typeof localStorage !== "undefined" && localStorage.getItem("theme")) || "dark",
   );
+  const [intelligentSettings, setIntelligentSettings] = useState<IntelligentSettingsState>(() =>
+    loadIntelligentSettings(),
+  );
+  const intelligentHydratedRef = useRef(false);
+  const [mcpBridge, setMcpBridge] = useState<McpBridgeState | null>(null);
+  const [mcpPortDraft, setMcpPortDraft] = useState("");
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelTestBusy, setModelTestBusy] = useState(false);
+  const [aiModelActionFeedback, setAiModelActionFeedback] = useState<string | null>(null);
+  const googleApiKeyInputRef = useRef<HTMLInputElement>(null);
+  const customApiKeyInputRef = useRef<HTMLInputElement>(null);
+  const customBaseUrlInputRef = useRef<HTMLInputElement>(null);
+  const [modelListFilter, setModelListFilter] = useState("");
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
+  const [expandedMcpServerIds, setExpandedMcpServerIds] = useState<Set<string>>(() => new Set());
+
+  const notifyAiModelAction = (msg: string) => {
+    setAiModelActionFeedback(msg);
+    window.dispatchEvent(
+      new CustomEvent("legacy-toast", { detail: { msg, duration: 4500 } }),
+    );
+    window.legacyBrowser?.showToast?.(msg, 4500);
+  };
 
   useLayoutEffect(() => {
-    const wv = document.getElementById("webviewContainer");
-    if (wv) wv.toggleAttribute("data-settings-open", open);
+    const host = document.getElementById("webviewOverlayHost");
+    if (layout === "workspace") {
+      if (host) host.setAttribute("aria-hidden", "true");
+      window.legacyBrowser?.syncRailAndWebview?.();
+      return;
+    }
+    if (layout === "sidePanel") {
+      if (open) {
+        document.getElementById("appContainer")?.removeAttribute("data-settings-open");
+        if (host) host.setAttribute("aria-hidden", "true");
+      }
+      window.legacyBrowser?.syncRailAndWebview?.();
+      return;
+    }
+    const shell = document.getElementById("appContainer");
+    if (shell) shell.toggleAttribute("data-settings-open", open);
+    if (host) host.setAttribute("aria-hidden", open ? "false" : "true");
     window.legacyBrowser?.syncRailAndWebview?.();
-  }, [open]);
+  }, [open, layout]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -82,10 +177,23 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps): ReactEleme
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      intelligentHydratedRef.current = false;
+      setExpandedMcpServerIds(new Set());
+      setModelPickerOpen(false);
+      return;
+    }
     const hp = window.legacyBrowser?.getHomePage?.() ?? "";
     setHomePage(hp);
     setActiveTheme(localStorage.getItem("theme") || "dark");
+    const loaded = loadIntelligentSettings();
+    setIntelligentSettings(loaded);
+    if (panel === "intelligent") {
+      setExpandedMcpServerIds(
+        new Set(loaded.mcpServers.filter((m) => !mcpServerHasConnectionParams(m)).map((m) => m.id)),
+      );
+    }
+    intelligentHydratedRef.current = true;
     const api = getElectronApi();
     if (!api) return;
     void api.getSystemInfo().then(setSys);
@@ -97,7 +205,24 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps): ReactEleme
       const d = raw as AppDataStats;
       setAppStats(d);
     });
-  }, [open]);
+    if (panel === "intelligent") {
+      void api.mcpBridgeGetState().then((s) => {
+        setMcpBridge(s);
+        setMcpPortDraft(String(s.port));
+      });
+    }
+    return () => {
+      intelligentHydratedRef.current = false;
+    };
+  }, [open, panel]);
+
+  useEffect(() => {
+    if (!open || !intelligentHydratedRef.current || panel !== "intelligent") return;
+    const t = window.setTimeout(() => {
+      saveIntelligentSettings(intelligentSettings);
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [open, panel, intelligentSettings]);
 
   useEffect(() => {
     if (!browser) return;
@@ -129,10 +254,66 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps): ReactEleme
     };
   }, [open, browser, profilePath, chromeProfiles, firefoxProfiles]);
 
+  useEffect(() => {
+    if (open && panel === "intelligent") {
+      setModelListFilter("");
+      setModelPickerOpen(false);
+    }
+  }, [open, panel]);
+
+  useEffect(() => {
+    if (!modelPickerOpen) return;
+    const onDoc: EventListener = (ev) => {
+      const e = ev as globalThis.MouseEvent;
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) {
+        setModelPickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc, true);
+    return () => document.removeEventListener("mousedown", onDoc, true);
+  }, [modelPickerOpen]);
+
+  const modelIdsForPicker = useMemo(() => {
+    const fromCache = intelligentSettings.cachedModelIds;
+    const sel = intelligentSettings.selectedModelId.trim();
+    if (fromCache.length > 0) {
+      if (sel && !fromCache.includes(sel)) return [sel, ...fromCache];
+      return fromCache;
+    }
+    return sel ? [sel] : [];
+  }, [intelligentSettings.cachedModelIds, intelligentSettings.selectedModelId]);
+
+  const filteredModelIds = useMemo(() => {
+    const q = modelListFilter.trim().toLowerCase();
+    if (!q) return modelIdsForPicker;
+    return modelIdsForPicker.filter((id) => id.toLowerCase().includes(q));
+  }, [modelIdsForPicker, modelListFilter]);
+
   if (!open) return null;
 
   const bridge = window.legacyBrowser;
   const api = getElectronApi();
+
+  const saveAssistantSettingsNow = () => {
+    saveIntelligentSettings(intelligentSettings);
+    bridge?.showToast?.("Assistant settings saved");
+  };
+
+  const reloadAssistantSettingsFromDisk = () => {
+    if (
+      !window.confirm(
+        "Reload saved assistant settings from disk? Unsaved changes in this panel (including MCP servers) will be lost.",
+      )
+    ) {
+      return;
+    }
+    const reloaded = loadIntelligentSettings();
+    setIntelligentSettings(reloaded);
+    setExpandedMcpServerIds(
+      new Set(reloaded.mcpServers.filter((m) => !mcpServerHasConnectionParams(m)).map((m) => m.id)),
+    );
+    bridge?.showToast?.("Reloaded saved settings");
+  };
 
   const onOverlayClick = (e: MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -141,6 +322,72 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps): ReactEleme
   const applyTheme = (name: string) => {
     bridge?.applyTheme?.(name);
     setActiveTheme(name);
+  };
+
+  /** Model / provider only — API key typing stays debounced to avoid spamming localStorage + chat reloads. */
+  const AI_SETTINGS_IMMEDIATE_PERSIST = new Set([
+    "selectedModelId",
+    "cachedModelIds",
+    "aiProvider",
+  ]);
+
+  const updateIntelligentSettings = (patch: Partial<IntelligentSettingsState>) => {
+    setIntelligentSettings((prev) => {
+      const next = { ...prev, ...patch };
+      if (Object.keys(patch).some((k) => AI_SETTINGS_IMMEDIATE_PERSIST.has(k))) {
+        saveIntelligentSettings(next);
+      }
+      return next;
+    });
+  };
+
+  const updateMcp = (id: string, patch: Partial<McpServerConfig>) => {
+    setIntelligentSettings((prev) => ({
+      ...prev,
+      mcpServers: prev.mcpServers.map((m) => (m.id === id ? { ...m, ...patch } : m)),
+    }));
+  };
+
+  const removeMcp = (id: string) => {
+    setIntelligentSettings((prev) => ({
+      ...prev,
+      mcpServers: prev.mcpServers.filter((m) => m.id !== id),
+    }));
+    setExpandedMcpServerIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  };
+
+  const addMcp = () => {
+    const fresh = createEmptyMcpServer();
+    setIntelligentSettings((prev) => ({
+      ...prev,
+      mcpServers: [...prev.mcpServers, fresh],
+    }));
+    setExpandedMcpServerIds((prev) => new Set(prev).add(fresh.id));
+  };
+
+  const toggleMcpServerExpanded = (id: string) => {
+    setExpandedMcpServerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const saveMcpServer = (id: string) => {
+    saveIntelligentSettings(intelligentSettings);
+    const row = intelligentSettings.mcpServers.find((x) => x.id === id);
+    const label = row?.name?.trim() || row?.id || "MCP server";
+    bridge?.showToast?.(`Saved “${label}”`);
+    setExpandedMcpServerIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   };
 
   const selectBrowser = (b: "chrome" | "firefox") => {
@@ -206,17 +453,88 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps): ReactEleme
 
   const profileList = browser === "chrome" ? chromeProfiles : firefoxProfiles;
 
+  const copyMcpClientSnippet = async () => {
+    if (!mcpBridge || !api) return;
+    const snippet = JSON.stringify(
+      {
+        mcpServers: {
+          butcher: {
+            command: "node",
+            args: [mcpBridge.stdioServerPath],
+            env: {
+              BUTCHER_MCP_PORT: String(mcpBridge.port),
+              BUTCHER_MCP_TOKEN: mcpBridge.token,
+            },
+          },
+        },
+      },
+      null,
+      2,
+    );
+    try {
+      await navigator.clipboard.writeText(snippet);
+      bridge?.showToast?.("MCP config JSON copied");
+    } catch {
+      bridge?.showToast?.("Copy failed");
+    }
+  };
+
+  const applyMcpPort = async () => {
+    if (!api) return;
+    const n = Number.parseInt(mcpPortDraft.trim(), 10);
+    if (!Number.isFinite(n) || n < 1 || n > 65535) {
+      bridge?.showToast?.("Invalid port");
+      return;
+    }
+    const s = await api.mcpBridgeSetPort(n);
+    setMcpBridge(s);
+    setMcpPortDraft(String(s.port));
+    bridge?.showToast?.("Port updated");
+  };
+
+  const portalTarget =
+    layout === "workspace"
+      ? document.getElementById("settingsWorkspaceRoot")
+      : layout === "sidePanel"
+        ? document.getElementById("browserSettingsPanelRoot")
+        : document.getElementById("webviewOverlayHost") ?? document.body;
+
+  if (!portalTarget) return null;
+
   return createPortal(
     <>
+      {layout === "modal" ? (
+        <div
+          className="settings-overlay"
+          style={{ display: "block" }}
+          onClick={onOverlayClick}
+          role="presentation"
+        />
+      ) : null}
       <div
-        className="settings-overlay"
-        style={{ display: "block" }}
-        onClick={onOverlayClick}
-        role="presentation"
-      />
-      <div className="settings-panel" style={{ display: "flex" }} onClick={(e) => e.stopPropagation()}>
+        className={`settings-panel${
+          layout === "workspace"
+            ? " settings-panel--workspace"
+            : layout === "sidePanel"
+              ? " settings-panel--side"
+              : layout === "modal" && modalSize === "xl"
+                ? " settings-panel--modal-xl"
+                : ""
+        }`}
+        style={{ display: "flex" }}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="settings-header">
-          <h3>Settings</h3>
+          <div className="settings-header-text">
+            <h3>{panel === "browser" ? "Browser" : "Intelligent"}</h3>
+            <p className="settings-header-sub">
+              {panel === "browser"
+                ? layout === "sidePanel"
+                  ? "Theme, import, home page, system info, and shortcuts"
+                  : "Import, home page, and shortcuts"
+                : "Theme, AI provider, and MCP servers"}
+            </p>
+          </div>
           <button type="button" className="icon-btn" title="Close" aria-label="Close" onClick={onClose}>
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
               <path
@@ -229,31 +547,12 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps): ReactEleme
           </button>
         </div>
         <div className="settings-body">
-          <div className="settings-dashboard" role="region" aria-label="Settings dashboard">
-            <div className="settings-card settings-card--appearance">
-              <div className="settings-card-head">
-                <div className="settings-card-title">Appearance</div>
-                <div className="settings-card-sub">Theme presets</div>
-              </div>
-              <div className="settings-section">
-                <label className="settings-label">Theme</label>
-                <div className="theme-grid">
-                  {(["dark", "aurora", "ocean", "ember"] as const).map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      className={`theme-card${activeTheme === t ? " active" : ""}`}
-                      data-theme={t}
-                      onClick={() => applyTheme(t)}
-                    >
-                      <div className={`theme-preview ${t}-preview`} />
-                      <span>{t === "dark" ? "Void" : t[0].toUpperCase() + t.slice(1)}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
+          {panel === "browser" ? (
+            <div
+              className="settings-dashboard settings-dashboard--browser-only"
+              role="region"
+              aria-label="Browser settings"
+            >
             <div className="settings-card settings-card--import">
               <div className="settings-card-head">
                 <div className="settings-card-title">Import</div>
@@ -478,9 +777,657 @@ export function SettingsPanel({ open, onClose }: SettingsPanelProps): ReactEleme
               </div>
             </div>
           </div>
+          ) : (
+            <div
+              className="settings-dashboard settings-dashboard--intelligent-suite"
+              role="region"
+              aria-label="Intelligent workspace settings"
+            >
+              <div className="settings-card settings-card--appearance">
+                <div className="settings-card-head">
+                  <div className="settings-card-title">Appearance</div>
+                  <div className="settings-card-sub">Theme presets</div>
+                </div>
+                <div className="settings-section">
+                  <label className="settings-label">Theme</label>
+                  <div className="theme-grid">
+                    {(["dark", "aurora", "ocean", "ember"] as const).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        className={`theme-card${activeTheme === t ? " active" : ""}`}
+                        data-theme={t}
+                        onClick={() => applyTheme(t)}
+                      >
+                        <div className={`theme-preview ${t}-preview`} />
+                        <span>{t === "dark" ? "Void" : t[0].toUpperCase() + t.slice(1)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="settings-card settings-card--intelligent-ai">
+                <div className="settings-card-head">
+                  <div className="settings-card-title">AI</div>
+                  <div className="settings-card-sub">Provider and API keys</div>
+                </div>
+                <div className="settings-section">
+                  <p className="settings-hint settings-hint--compact">
+                    Keys are stored only on this device in local storage.
+                  </p>
+                  <div className="settings-ai-provider" role="radiogroup" aria-label="AI provider">
+                    <label className="settings-radio-tile">
+                      <input
+                        type="radio"
+                        name="aiProviderReact"
+                        checked={intelligentSettings.aiProvider === "google"}
+                        onChange={() => updateIntelligentSettings({ aiProvider: "google" })}
+                      />
+                      <span>Google</span>
+                      <span className="settings-radio-tile-sub">Gemini API key (Google AI Studio)</span>
+                    </label>
+                    <label className="settings-radio-tile">
+                      <input
+                        type="radio"
+                        name="aiProviderReact"
+                        checked={intelligentSettings.aiProvider === "custom"}
+                        onChange={() => updateIntelligentSettings({ aiProvider: "custom" })}
+                      />
+                      <span>Custom</span>
+                      <span className="settings-radio-tile-sub">OpenAI-compatible API (optional base URL)</span>
+                    </label>
+                  </div>
+                  {intelligentSettings.aiProvider === "google" ? (
+                    <>
+                      <label className="settings-label settings-label-mt" htmlFor="googleApiKeyReact">
+                        API key
+                      </label>
+                      <input
+                        ref={googleApiKeyInputRef}
+                        id="googleApiKeyReact"
+                        type="password"
+                        className="settings-input"
+                        autoComplete="off"
+                        placeholder="AIza…"
+                        value={intelligentSettings.googleApiKey}
+                        onChange={(e) => updateIntelligentSettings({ googleApiKey: e.target.value })}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <label className="settings-label settings-label-mt" htmlFor="customBaseUrlReact">
+                        Base URL (optional)
+                      </label>
+                      <input
+                        ref={customBaseUrlInputRef}
+                        id="customBaseUrlReact"
+                        type="url"
+                        className="settings-input"
+                        placeholder="https://api.openai.com/v1"
+                        value={intelligentSettings.customBaseUrl}
+                        onChange={(e) => updateIntelligentSettings({ customBaseUrl: e.target.value.trim() })}
+                      />
+                      <label className="settings-label settings-label-mt" htmlFor="customApiKeyReact">
+                        API key
+                      </label>
+                      <input
+                        ref={customApiKeyInputRef}
+                        id="customApiKeyReact"
+                        type="password"
+                        className="settings-input"
+                        autoComplete="off"
+                        placeholder="sk-…"
+                        value={intelligentSettings.customApiKey}
+                        onChange={(e) => updateIntelligentSettings({ customApiKey: e.target.value })}
+                      />
+                    </>
+                  )}
+                  <label className="settings-label settings-label-mt">Model</label>
+                  <p className="settings-hint settings-hint--compact settings-model-picker-intro">
+                    Use the dropdown to search loaded models, or set the ID manually below.
+                  </p>
+                  <div className="settings-model-actions">
+                    <button
+                      type="button"
+                      className="btn-secondary btn-secondary--compact"
+                      disabled={modelsLoading}
+                      onClick={() => {
+                        void (async () => {
+                          setModelsLoading(true);
+                          setAiModelActionFeedback(null);
+                          try {
+                            const googleKey =
+                              googleApiKeyInputRef.current?.value?.trim() ||
+                              intelligentSettings.googleApiKey.trim();
+                            const customKey =
+                              customApiKeyInputRef.current?.value?.trim() ||
+                              intelligentSettings.customApiKey.trim();
+                            const customBase =
+                              customBaseUrlInputRef.current?.value?.trim() ||
+                              intelligentSettings.customBaseUrl.trim();
+                            const ids =
+                              intelligentSettings.aiProvider === "google"
+                                ? (await listGoogleModels(googleKey)).map((m) => m.id)
+                                : (await listOpenAiCompatibleModels(customBase, customKey)).map((m) => m.id);
+                            updateIntelligentSettings({
+                              googleApiKey: googleKey,
+                              customApiKey: customKey,
+                              customBaseUrl: customBase,
+                              cachedModelIds: ids,
+                              selectedModelId: intelligentSettings.selectedModelId || ids[0] || "",
+                            });
+                            notifyAiModelAction(`Loaded ${ids.length} models.`);
+                          } catch (e) {
+                            notifyAiModelAction(e instanceof Error ? e.message : String(e));
+                          } finally {
+                            setModelsLoading(false);
+                          }
+                        })();
+                      }}
+                    >
+                      {modelsLoading ? "Loading…" : "Load models"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-secondary--compact"
+                      disabled={modelTestBusy || !intelligentSettings.selectedModelId.trim()}
+                      onClick={() => {
+                        void (async () => {
+                          setModelTestBusy(true);
+                          setAiModelActionFeedback(null);
+                          try {
+                            const googleKey =
+                              googleApiKeyInputRef.current?.value?.trim() ||
+                              intelligentSettings.googleApiKey.trim();
+                            const customKey =
+                              customApiKeyInputRef.current?.value?.trim() ||
+                              intelligentSettings.customApiKey.trim();
+                            const customBase =
+                              customBaseUrlInputRef.current?.value?.trim() ||
+                              intelligentSettings.customBaseUrl.trim();
+                            const modelId = intelligentSettings.selectedModelId.trim();
+                            if (!modelId) {
+                              notifyAiModelAction("Choose a model from the list or enter a model ID below.");
+                              return;
+                            }
+                            const r = await testChatHi(intelligentSettings.aiProvider, {
+                              googleApiKey: googleKey,
+                              customBaseUrl: customBase,
+                              customApiKey: customKey,
+                              modelId,
+                            });
+                            notifyAiModelAction(`Test reply: ${r.reply.slice(0, 200)}${r.reply.length > 200 ? "…" : ""}`);
+                          } catch (e) {
+                            notifyAiModelAction(e instanceof Error ? e.message : String(e));
+                          } finally {
+                            setModelTestBusy(false);
+                          }
+                        })();
+                      }}
+                    >
+                      {modelTestBusy ? "Testing…" : "Test (hi)"}
+                    </button>
+                  </div>
+                  <div className="settings-model-picker">
+                    <div className="settings-model-dropdown" ref={modelDropdownRef}>
+                      <button
+                        type="button"
+                        className="settings-model-dropdown__trigger"
+                        aria-expanded={modelPickerOpen}
+                        aria-haspopup="listbox"
+                        disabled={modelIdsForPicker.length === 0}
+                        onClick={() => {
+                          if (modelIdsForPicker.length === 0) return;
+                          setModelPickerOpen((v) => !v);
+                        }}
+                      >
+                        <span className="settings-model-dropdown__value">
+                          {intelligentSettings.selectedModelId.trim() ||
+                            (modelIdsForPicker.length === 0 ? "Load models to enable picker…" : "Choose model…")}
+                        </span>
+                        <span className="settings-model-dropdown__caret" aria-hidden>
+                          ▾
+                        </span>
+                      </button>
+                      {modelPickerOpen && modelIdsForPicker.length > 0 ? (
+                        <div className="settings-model-dropdown__menu">
+                          <input
+                            type="search"
+                            className="settings-input settings-model-dropdown__search"
+                            placeholder="Search models…"
+                            aria-label="Search models"
+                            value={modelListFilter}
+                            onChange={(e) => setModelListFilter(e.target.value)}
+                            autoComplete="off"
+                            autoFocus
+                          />
+                          <div className="settings-model-dropdown__list" role="listbox" aria-label="Models">
+                            {filteredModelIds.length === 0 ? (
+                              <p className="settings-model-dropdown__empty">No matches.</p>
+                            ) : (
+                              filteredModelIds.map((id, idx) => {
+                                const active = id === intelligentSettings.selectedModelId;
+                                return (
+                                  <button
+                                    key={id}
+                                    type="button"
+                                    id={`settings-model-opt-${idx}`}
+                                    role="option"
+                                    aria-selected={active}
+                                    className={`settings-model-dropdown__opt${active ? " settings-model-dropdown__opt--active" : ""}`}
+                                    onClick={() => {
+                                      updateIntelligentSettings({ selectedModelId: id });
+                                      setModelPickerOpen(false);
+                                      setModelListFilter("");
+                                    }}
+                                  >
+                                    <span className="settings-model-dropdown__check" aria-hidden>
+                                      {active ? "✓" : ""}
+                                    </span>
+                                    <span className="settings-model-dropdown__id">{id}</span>
+                                  </button>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                    {modelIdsForPicker.length === 0 ? (
+                      <p className="settings-muted settings-hint--compact settings-model-picker__empty-hint">
+                        No list yet — use <strong>Load models</strong>, or enter an ID below.
+                      </p>
+                    ) : null}
+                    <label className="settings-label settings-label-mt settings-model-picker__manual-label" htmlFor="modelManualIdReact">
+                      Model ID (manual)
+                    </label>
+                    <input
+                      id="modelManualIdReact"
+                      type="text"
+                      className="settings-input settings-input--mono"
+                      placeholder="e.g. gemini-2.0-flash, gpt-4o-mini"
+                      value={intelligentSettings.selectedModelId}
+                      onChange={(e) => updateIntelligentSettings({ selectedModelId: e.target.value })}
+                      spellCheck={false}
+                      autoComplete="off"
+                    />
+                  </div>
+                  {aiModelActionFeedback ? (
+                    <p className="settings-hint settings-hint--compact" role="status">
+                      {aiModelActionFeedback}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="settings-card settings-card--butcher-mcp">
+                <div className="settings-card-head">
+                  <div className="settings-card-title">Butcher MCP bridge</div>
+                  <div className="settings-card-sub">
+                    Local TCP bridge (token-gated) for Claude Desktop / Cursor stdio MCP
+                  </div>
+                </div>
+                <div className="settings-section">
+                  <p className="settings-hint settings-hint--compact">
+                    Enable the bridge in this app, then add the bundled stdio server to your MCP client config. The
+                    client must set <code className="settings-code-inline">BUTCHER_MCP_PORT</code> and{" "}
+                    <code className="settings-code-inline">BUTCHER_MCP_TOKEN</code> to match this app.
+                  </p>
+                  {mcpBridge ? (
+                    <>
+                      <label className="settings-label settings-label-mt" htmlFor="mcpBridgeToggle">
+                        Bridge
+                      </label>
+                      <label className="checkbox-label" htmlFor="mcpBridgeToggle">
+                        <input
+                          id="mcpBridgeToggle"
+                          type="checkbox"
+                          checked={mcpBridge.enabled}
+                          onChange={async (e) => {
+                            if (!api) return;
+                            const s = await api.mcpBridgeSetEnabled(e.target.checked);
+                            setMcpBridge(s);
+                          }}
+                        />
+                        <span>
+                          Listen on 127.0.0.1 —{" "}
+                          {mcpBridge.listeningPort != null
+                            ? `active (port ${mcpBridge.listeningPort})`
+                            : mcpBridge.enabled
+                              ? "starting…"
+                              : "off"}
+                        </span>
+                      </label>
+                      <label className="settings-label settings-label-mt" htmlFor="mcpPortDraft">
+                        Port
+                      </label>
+                      <div className="settings-ai-provider" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <input
+                          id="mcpPortDraft"
+                          type="number"
+                          min={1}
+                          max={65535}
+                          className="settings-input"
+                          style={{ maxWidth: 120 }}
+                          value={mcpPortDraft}
+                          onChange={(e) => setMcpPortDraft(e.target.value)}
+                        />
+                        <button type="button" className="btn-secondary btn-secondary--compact" onClick={() => void applyMcpPort()}>
+                          Apply
+                        </button>
+                      </div>
+                      <label className="settings-label settings-label-mt" htmlFor="mcpTokenDisplay">
+                        Token
+                      </label>
+                      <div className="settings-ai-provider" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <input
+                          id="mcpTokenDisplay"
+                          type="text"
+                          readOnly
+                          className="settings-input settings-input--mono"
+                          value={mcpBridge.token}
+                          style={{ flex: 1, minWidth: 200 }}
+                        />
+                        <button
+                          type="button"
+                          className="btn-secondary btn-secondary--compact"
+                          onClick={async () => {
+                            if (!api) return;
+                            const s = await api.mcpBridgeRegenerateToken();
+                            setMcpBridge(s);
+                            bridge?.showToast?.("New token saved — update your MCP client env");
+                          }}
+                        >
+                          Regenerate
+                        </button>
+                      </div>
+                      <label className="settings-label settings-label-mt" htmlFor="mcpStdioPath">
+                        Stdio script path
+                      </label>
+                      <input
+                        id="mcpStdioPath"
+                        type="text"
+                        readOnly
+                        className="settings-input settings-input--mono"
+                        value={mcpBridge.stdioServerPath}
+                      />
+                      <div className="import-actions" style={{ marginTop: 12 }}>
+                        <button type="button" className="btn-primary" onClick={() => void copyMcpClientSnippet()}>
+                          Copy MCP client JSON
+                        </button>
+                      </div>
+                      <label className="settings-label settings-label-mt">Tools exposed to MCP</label>
+                      <p className="settings-muted" style={{ marginBottom: 8 }}>
+                        {MCP_TOOL_NAMES.length} tools (same registry as Tool Hub automation).
+                      </p>
+                      <ul className="settings-mcp-tool-list" aria-label="Butcher MCP tool names">
+                        {MCP_TOOL_NAMES.map((name) => (
+                          <li key={name}>
+                            <code className="settings-code-inline">{name}</code>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : (
+                    <p className="settings-muted">Loading bridge…</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="settings-card settings-card--mcp">
+                <div className="settings-card-head">
+                  <div className="settings-card-title">MCP tools</div>
+                  <div className="settings-card-sub">
+                    Model Context Protocol: local stdio servers or remote HTTP (Streamable HTTP / SSE)
+                  </div>
+                </div>
+                <div className="settings-section">
+                  <div className="settings-subsection-head settings-subsection-head--mcp">
+                    <p className="settings-hint settings-hint--compact" style={{ margin: 0, flex: "1 1 220px" }}>
+                      Local: <code className="settings-code-inline">args</code> /{" "}
+                      <code className="settings-code-inline">env</code> as JSON. Remote: optional{" "}
+                      <code className="settings-code-inline">headers</code> JSON; requests run from the app (use HTTPS).
+                    </p>
+                    <div className="settings-mcp-config-actions" role="group" aria-label="MCP server list">
+                      <button type="button" className="btn-secondary btn-secondary--compact" onClick={addMcp}>
+                        Add server
+                      </button>
+                      <button type="button" className="btn-secondary btn-secondary--compact" onClick={saveAssistantSettingsNow}>
+                        Save now
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary btn-secondary--compact"
+                        onClick={reloadAssistantSettingsFromDisk}
+                      >
+                        Reload saved
+                      </button>
+                    </div>
+                  </div>
+                  <p className="settings-muted settings-mcp-autosave-hint">
+                    Each row can be expanded to edit; <strong>Save server</strong> writes that MCP to disk and
+                    collapses it. Global <strong>Save now</strong> / <strong>Reload saved</strong> still apply to all
+                    assistant settings.
+                  </p>
+                  <div className="settings-butcher-builtin">
+                    <div className="settings-butcher-builtin-title">Butcher (this app)</div>
+                    <p className="settings-hint settings-hint--compact">
+                      Built-in browser automation tools (in-process). Toggle per workspace for the AI assistant.
+                    </p>
+                    <div className="settings-butcher-builtin-row">
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={intelligentSettings.mcpTogglesBrowser.connectionEnabled[BUTCHER_BUILTIN_MCP_ID] !== false}
+                          onChange={(e) =>
+                            updateIntelligentSettings({
+                              mcpTogglesBrowser: {
+                                ...intelligentSettings.mcpTogglesBrowser,
+                                connectionEnabled: {
+                                  ...intelligentSettings.mcpTogglesBrowser.connectionEnabled,
+                                  [BUTCHER_BUILTIN_MCP_ID]: e.target.checked,
+                                },
+                              },
+                            })
+                          }
+                        />
+                        <span>Enabled in Browser workspace</span>
+                      </label>
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={intelligentSettings.mcpTogglesIntelligent.connectionEnabled[BUTCHER_BUILTIN_MCP_ID] !== false}
+                          onChange={(e) =>
+                            updateIntelligentSettings({
+                              mcpTogglesIntelligent: {
+                                ...intelligentSettings.mcpTogglesIntelligent,
+                                connectionEnabled: {
+                                  ...intelligentSettings.mcpTogglesIntelligent.connectionEnabled,
+                                  [BUTCHER_BUILTIN_MCP_ID]: e.target.checked,
+                                },
+                              },
+                            })
+                          }
+                        />
+                        <span>Enabled in Intelligent workspace</span>
+                      </label>
+                    </div>
+                  </div>
+                  {intelligentSettings.mcpServers.length === 0 ? (
+                    <p className="settings-muted">No MCP servers configured.</p>
+                  ) : (
+                    <ul className="mcp-server-list">
+                      {intelligentSettings.mcpServers.map((m) => {
+                        const expanded = expandedMcpServerIds.has(m.id);
+                        const modeLabel = m.serverMode === "remote" ? "Remote" : "Stdio";
+                        return (
+                          <li key={m.id} className="mcp-server-card">
+                            <div
+                              className={`mcp-server-card__summary${expanded ? " mcp-server-card__summary--open" : ""}`}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => toggleMcpServerExpanded(m.id)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  toggleMcpServerExpanded(m.id);
+                                }
+                              }}
+                            >
+                              <div className="mcp-server-card__summary-text">
+                                <div className="mcp-server-card__summary-top">
+                                  <span className="mcp-server-card__summary-name">
+                                    {m.name.trim() || "Untitled server"}
+                                  </span>
+                                  <span className="mcp-server-card__summary-badge">{modeLabel}</span>
+                                </div>
+                                <p className="mcp-server-card__summary-meta">{mcpServerSubtitle(m)}</p>
+                              </div>
+                              <div className="mcp-server-card__summary-toolbar">
+                                <button
+                                  type="button"
+                                  className="btn-icon-danger"
+                                  title="Remove server"
+                                  aria-label={`Remove ${m.name || "MCP server"}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    removeMcp(m.id);
+                                  }}
+                                >
+                                  ×
+                                </button>
+                                <span className="mcp-server-card__summary-chevron" aria-hidden />
+                              </div>
+                            </div>
+                            {expanded ? (
+                              <div className="mcp-server-card__body">
+                                <label className="settings-label" htmlFor={`mcp-label-${m.id}`}>
+                                  Display name
+                                </label>
+                                <input
+                                  id={`mcp-label-${m.id}`}
+                                  type="text"
+                                  className="settings-input"
+                                  placeholder="Label"
+                                  aria-label="MCP label"
+                                  value={m.name}
+                                  onChange={(e) => updateMcp(m.id, { name: e.target.value })}
+                                />
+                                <label className="settings-label" htmlFor={`mcp-mode-${m.id}`}>
+                                  Connection type
+                                </label>
+                                <select
+                                  id={`mcp-mode-${m.id}`}
+                                  className="settings-input"
+                                  value={m.serverMode}
+                                  onChange={(e) =>
+                                    updateMcp(m.id, {
+                                      serverMode: e.target.value === "remote" ? "remote" : "stdio",
+                                    })
+                                  }
+                                >
+                                  <option value="stdio">Local command (stdio)</option>
+                                  <option value="remote">Remote URL (HTTP)</option>
+                                </select>
+                                {m.serverMode === "remote" ? (
+                                  <>
+                                    <label className="settings-label" htmlFor={`mcp-url-${m.id}`}>
+                                      MCP URL
+                                    </label>
+                                    <input
+                                      id={`mcp-url-${m.id}`}
+                                      type="url"
+                                      className="settings-input settings-input--mono"
+                                      placeholder="https://host.example/mcp"
+                                      value={m.url}
+                                      onChange={(e) => updateMcp(m.id, { url: e.target.value })}
+                                    />
+                                    <label className="settings-label" htmlFor={`mcp-headers-${m.id}`}>
+                                      Headers (JSON object)
+                                    </label>
+                                    <textarea
+                                      id={`mcp-headers-${m.id}`}
+                                      className="settings-textarea settings-textarea--mono"
+                                      rows={2}
+                                      placeholder='{"Authorization":"Bearer …"}'
+                                      value={m.headers}
+                                      onChange={(e) => updateMcp(m.id, { headers: e.target.value })}
+                                    />
+                                    <label className="settings-label" htmlFor={`mcp-rt-${m.id}`}>
+                                      Remote transport
+                                    </label>
+                                    <select
+                                      id={`mcp-rt-${m.id}`}
+                                      className="settings-input"
+                                      value={m.remoteTransport}
+                                      onChange={(e) =>
+                                        updateMcp(m.id, {
+                                          remoteTransport: e.target.value as McpRemoteTransport,
+                                        })
+                                      }
+                                    >
+                                      <option value="auto">Auto (Streamable HTTP, then SSE)</option>
+                                      <option value="streamableHttp">Streamable HTTP</option>
+                                      <option value="sse">SSE (legacy)</option>
+                                    </select>
+                                  </>
+                                ) : (
+                                  <>
+                                    <label className="settings-label" htmlFor={`mcp-cmd-${m.id}`}>
+                                      Command
+                                    </label>
+                                    <input
+                                      id={`mcp-cmd-${m.id}`}
+                                      type="text"
+                                      className="settings-input settings-input--mono"
+                                      placeholder="npx"
+                                      value={m.command}
+                                      onChange={(e) => updateMcp(m.id, { command: e.target.value })}
+                                    />
+                                    <label className="settings-label" htmlFor={`mcp-args-${m.id}`}>
+                                      Args (JSON array)
+                                    </label>
+                                    <textarea
+                                      id={`mcp-args-${m.id}`}
+                                      className="settings-textarea settings-textarea--mono"
+                                      rows={2}
+                                      placeholder='["-y", "@modelcontextprotocol/server-example"]'
+                                      value={m.args}
+                                      onChange={(e) => updateMcp(m.id, { args: e.target.value })}
+                                    />
+                                    <label className="settings-label" htmlFor={`mcp-env-${m.id}`}>
+                                      Env (JSON object)
+                                    </label>
+                                    <textarea
+                                      id={`mcp-env-${m.id}`}
+                                      className="settings-textarea settings-textarea--mono"
+                                      rows={2}
+                                      placeholder='{"KEY":"value"}'
+                                      value={m.env}
+                                      onChange={(e) => updateMcp(m.id, { env: e.target.value })}
+                                    />
+                                  </>
+                                )}
+                                <div className="mcp-server-card__save-row">
+                                  <button type="button" className="btn-primary" onClick={() => saveMcpServer(m.id)}>
+                                    Save server
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </>,
-    document.getElementById("webviewOverlayHost") ?? document.body,
+    portalTarget,
   );
 }

@@ -28,6 +28,24 @@
           </svg>
         </div>
         <span class="app-name">Butcher</span>
+        <button
+          type="button"
+          class="titlebar-browser-pill"
+          id="titlebarBrowserBtn"
+          title="Browser workspace"
+          aria-pressed="true"
+        >
+          Browser
+        </button>
+        <button
+          type="button"
+          class="titlebar-intelligent-pill"
+          id="titlebarIntelligentBtn"
+          title="Intelligent workspace"
+          aria-pressed="false"
+        >
+          Intelligent
+        </button>
       </div>
       <div class="titlebar-right flex items-center gap-0.5">
         <button class="tb-btn" id="tbMinimize" title="Minimize">
@@ -42,7 +60,16 @@
       </div>
     </div>
 
-    <div class="app-container flex min-h-0 flex-1 gap-1.5 overflow-hidden p-1.5">
+    <div
+      class="browser-workspace flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      id="browserWorkspace"
+      aria-labelledby="titlebarBrowserBtn"
+    >
+    <div
+      class="app-container flex min-h-0 flex-1 gap-1.5 overflow-hidden p-1.5"
+      id="appContainer"
+      data-shell-workspace="browser"
+    >
       <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• BROWSER SECTION â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
       <div class="browser-section flex min-h-0 min-w-0 flex-1 flex-col" id="browserSection">
         <!-- Tab Bar -->
@@ -57,7 +84,7 @@
           <aside
             class="left-tool-rail"
             id="leftToolRail"
-            aria-label="Page, bookmarks, history, passwords, tools hub, and settings"
+            aria-label="Page, sessions, bookmarks, history, passwords, network, tools hub, and settings"
           >
             <button
               type="button"
@@ -70,6 +97,21 @@
                 <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
                   <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.5" />
                   <path d="M5 6h6M5 9h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+                </svg>
+              </span>
+            </button>
+            <button
+              type="button"
+              class="rail-btn"
+              id="sessionsBtn"
+              title="Sessions"
+              aria-label="Sessions"
+            >
+              <span class="rail-btn-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
+                  <rect x="2" y="2" width="10" height="8" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="4" y="4" width="10" height="8" rx="1.2" stroke="currentColor" stroke-width="1.35" opacity="0.9" />
+                  <rect x="6" y="6" width="10" height="8" rx="1.2" stroke="currentColor" stroke-width="1.35" />
                 </svg>
               </span>
             </button>
@@ -566,6 +608,30 @@
             aria-hidden="true"
           ></div>
           <!-- Side panels (full webview overlay; open state = .side-panel--open) -->
+          <div class="side-panel" id="sessionsPanel" aria-hidden="true">
+            <div class="side-panel-header">
+              <div class="side-panel-header-top">
+                <div class="side-panel-heading">
+                  <span class="side-panel-title">Sessions</span>
+                  <span class="side-panel-sub">Workspaces for tabs and automation</span>
+                </div>
+                <div class="side-panel-actions">
+                  <button class="icon-btn" id="closeSessionsBtn" title="Close" aria-label="Close sessions">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <path
+                        d="M2 2L10 10M10 2L2 10"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="side-panel-list side-panel-list--sessions" id="sessionsPanelRoot"></div>
+          </div>
+
           <div class="side-panel" id="bookmarksPanel" aria-hidden="true">
             <div class="side-panel-header">
               <div class="side-panel-header-top">
@@ -827,6 +893,13 @@
             <div class="side-panel-list" id="passwordsList"></div>
           </div>
 
+          <div class="side-panel" id="browserSettingsPanel" aria-hidden="true">
+            <div
+              class="side-panel-list side-panel-list--settings"
+              id="browserSettingsPanelRoot"
+            ></div>
+          </div>
+
           <!-- Error Page -->
           <div class="error-page" id="errorPage" style="display: none">
             <div class="error-content">
@@ -864,7 +937,6 @@
             class="side-panel-webview-shield"
             aria-hidden="true"
           ></div>
-          <div id="webviewOverlayHost" class="webview-overlay-host" aria-hidden="true"></div>
         </div>
 
         <!-- Status Bar -->
@@ -926,6 +998,40 @@
 
       <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• CHAT SECTION â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
       <div class="chat-wrapper" id="chatWrapper">
+        <aside class="chat-history-panel" id="chatHistoryPanel" aria-label="Chat history">
+          <div class="chat-history-header">
+            <span class="chat-history-title">Chats</span>
+            <button type="button" class="chat-history-new-btn" id="newChatBtn" title="New chat">
+              New chat
+            </button>
+          </div>
+          <div class="chat-history-list hide-scrollbar" id="chatHistoryList"></div>
+          <div class="chat-history-intelligent-footer" id="intelligentWorkspaceSettingsFooter">
+            <button
+              type="button"
+              class="chat-history-settings-btn"
+              id="intelligentWorkspaceSettingsBtn"
+              title="Models, API keys, and MCP servers"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                />
+                <path
+                  d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"
+                  stroke="currentColor"
+                  stroke-width="1.2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <span>Workspace settings</span>
+            </button>
+          </div>
+        </aside>
         <div class="chat-section" id="chatSection">
           <!-- Resize Handle -->
           <div class="resize-handle" id="resizeHandle"></div>
@@ -938,10 +1044,33 @@
               </div>
               <div>
                 <h2 class="chat-title">AI Assistant</h2>
-                <span class="chat-subtitle">Browser Automation</span>
+                <span class="chat-subtitle" id="chatSubtitle">Browser Automation</span>
               </div>
             </div>
             <div class="chat-header-actions">
+              <button
+                type="button"
+                class="icon-btn"
+                id="settingsBtnChat"
+                title="Assistant settings"
+                aria-label="Assistant settings"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                  />
+                  <path
+                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"
+                    stroke="currentColor"
+                    stroke-width="1.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
               <button
                 class="icon-btn chat-close-btn"
                 id="closeChatBtn"
@@ -969,6 +1098,12 @@
               </button>
             </div>
           </div>
+
+          <div
+            id="aiChatReactHost"
+            class="ai-chat-react-host"
+            style="display: none; flex: 1; flex-direction: column; min-height: 0; overflow: hidden"
+          ></div>
 
           <!-- Chat Messages -->
           <div class="chat-messages" id="chatMessages">
@@ -1108,6 +1243,14 @@
       </div>
       <!-- /chat-wrapper -->
 
+      <!-- Modal host for React settings (must stay outside #browserSection — that column is hidden in intelligent workspace) -->
+      <div id="webviewOverlayHost" class="webview-overlay-host" aria-hidden="true"></div>
+
+      <!-- Legacy full-column settings root (unused; kept for optional workspace layout portal target) -->
+      <div class="settings-workspace" id="settingsWorkspace" aria-hidden="true">
+        <div id="settingsWorkspaceRoot" class="settings-workspace-root"></div>
+      </div>
+
       <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• IMPORT WIZARD â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
       <div class="import-wizard" id="importWizard" style="display: none">
         <div class="import-wizard-content">
@@ -1133,177 +1276,6 @@
 
 
     </div>
-    <div
-      class="settings-overlay"
-      id="settingsOverlay"
-      style="display: none"
-    ></div>
-    <div class="settings-panel" id="settingsPanel" style="display: none">
-      <div class="settings-header">
-        <h3>Settings</h3>
-        <button class="icon-btn" id="closeSettingsBtn">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path
-              d="M2 2L12 12M12 2L2 12"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linecap="round"
-            />
-          </svg>
-        </button>
-      </div>
-      <div class="settings-body">
-        <div class="settings-section">
-          <label class="settings-label">Theme</label>
-          <div class="theme-grid">
-            <button class="theme-card active" data-theme="dark">
-              <div class="theme-preview dark-preview"></div>
-              <span>Void</span>
-            </button>
-            <button class="theme-card" data-theme="aurora">
-              <div class="theme-preview aurora-preview"></div>
-              <span>Aurora</span>
-            </button>
-            <button class="theme-card" data-theme="ocean">
-              <div class="theme-preview ocean-preview"></div>
-              <span>Ocean</span>
-            </button>
-            <button class="theme-card" data-theme="ember">
-              <div class="theme-preview ember-preview"></div>
-              <span>Ember</span>
-            </button>
-          </div>
-        </div>
-        <div class="settings-section">
-          <label class="settings-label">Import Browser Data</label>
-          <div class="import-section">
-            <div class="browser-selector">
-              <select id="browserSelect" class="settings-select">
-                <option value="">Select Browser</option>
-                <option value="chrome">Google Chrome</option>
-                <option value="firefox">Mozilla Firefox</option>
-              </select>
-            </div>
-            <div class="import-options">
-              <label class="checkbox-label">
-                <input type="checkbox" id="importBookmarks" checked />
-                <span>Bookmarks</span>
-              </label>
-              <label class="checkbox-label">
-                <input type="checkbox" id="importHistory" checked />
-                <span>Browsing History</span>
-              </label>
-              <label class="checkbox-label">
-                <input type="checkbox" id="importCookies" />
-                <span>Cookies</span>
-              </label>
-            </div>
-            <div class="import-stats" id="importStats" style="display: none">
-              <div class="stats-grid">
-                <div class="stat-item">
-                  <span class="stat-label">Chrome:</span>
-                  <span class="stat-value" id="chromeStats">Checking...</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">Firefox:</span>
-                  <span class="stat-value" id="firefoxStats">Checking...</span>
-                </div>
-              </div>
-            </div>
-            <div class="import-actions">
-              <button class="btn-secondary" id="checkImportBtn">
-                Check Available Data
-              </button>
-              <button class="btn-primary" id="startImportBtn" disabled>
-                Import Data
-              </button>
-            </div>
-            <div
-              class="import-progress"
-              id="importProgress"
-              style="display: none"
-            >
-              <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
-              </div>
-              <div class="progress-text" id="progressText">
-                Preparing import...
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="settings-section">
-          <label class="settings-label">Home Page</label>
-          <input
-            type="text"
-            id="homePageInput"
-            class="settings-input"
-            placeholder="https://duckduckgo.com"
-          />
-        </div>
-        <div class="settings-section">
-          <label class="settings-label">System Info</label>
-          <div class="sysinfo-grid" id="sysinfoGrid">
-            <div class="sysinfo-item">
-              <span class="si-label">Electron</span
-              ><span class="si-val" id="siElectron">â€”</span>
-            </div>
-            <div class="sysinfo-item">
-              <span class="si-label">Chrome</span
-              ><span class="si-val" id="siChrome">â€”</span>
-            </div>
-            <div class="sysinfo-item">
-              <span class="si-label">Node</span
-              ><span class="si-val" id="siNode">â€”</span>
-            </div>
-            <div class="sysinfo-item">
-              <span class="si-label">Memory</span
-              ><span class="si-val" id="siMemory">â€”</span>
-            </div>
-            <div class="sysinfo-item">
-              <span class="si-label">Platform</span
-              ><span class="si-val" id="siPlatform">â€”</span>
-            </div>
-            <div class="sysinfo-item">
-              <span class="si-label">CPUs</span
-              ><span class="si-val" id="siCpus">â€”</span>
-            </div>
-          </div>
-        </div>
-        <div class="settings-section">
-          <label class="settings-label">Keyboard Shortcuts</label>
-          <div class="shortcuts-list">
-            <div class="shortcut-row">
-              <kbd>Ctrl+T</kbd><span>New Tab</span>
-            </div>
-            <div class="shortcut-row">
-              <kbd>Ctrl+W</kbd><span>Close Tab</span>
-            </div>
-            <div class="shortcut-row">
-              <kbd>Ctrl+L</kbd><span>Focus Address Bar</span>
-            </div>
-            <div class="shortcut-row">
-              <kbd>Ctrl+F</kbd><span>Find in Page</span>
-            </div>
-            <div class="shortcut-row">
-              <kbd>Ctrl+R / F5</kbd><span>Reload</span>
-            </div>
-            <div class="shortcut-row">
-              <kbd>Ctrl+Shift+S</kbd><span>Screenshot</span>
-            </div>
-            <div class="shortcut-row">
-              <kbd>Ctrl+= / Ctrl+-</kbd><span>Zoom In/Out</span>
-            </div>
-            <div class="shortcut-row">
-              <kbd>Ctrl+0</kbd><span>Reset Zoom</span>
-            </div>
-            <div class="shortcut-row"><kbd>F12</kbd><span>DevTools</span></div>
-            <div class="shortcut-row">
-              <kbd>Alt+Left / Alt+Right</kbd><span>Back / Forward</span>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- Toast Notification -->

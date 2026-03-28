@@ -1,4 +1,5 @@
 import type { AutomationCommand, AutomationResult } from "./automation-types";
+import type { McpServerConfigPayload } from "./mcp-external-types";
 
 export interface BrowserImportStats {
   available: boolean;
@@ -91,6 +92,38 @@ export interface CapturedRequestRecord {
   referrer: string;
 }
 
+export type ListedAiModel = { id: string; displayName?: string };
+
+export type AiTestChatHiPayload =
+  | { provider: "google"; googleApiKey: string; modelId: string }
+  | { provider: "custom"; customBaseUrl: string; customApiKey: string; modelId: string };
+
+export type AiChatProxyStreamHandlers = {
+  onChunk: (text: string) => void;
+  onComplete: () => void;
+  onError: (message: string) => void;
+};
+
+export interface McpBridgeState {
+  enabled: boolean;
+  port: number;
+  token: string;
+  listeningPort: number | null;
+  /** Absolute path to the bundled stdio MCP entry (pass to `node` in client config). */
+  stdioServerPath: string;
+}
+
+export type McpExternalListedTool = {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+};
+
+/** Result of listing tools from a remote MCP server (main process; does not throw over IPC). */
+export type McpExternalListToolsResult =
+  | { ok: true; tools: McpExternalListedTool[] }
+  | { ok: false; error: string; tools: [] };
+
 export interface IpcResponse<T = unknown> {
   success: boolean;
   error?: string;
@@ -158,4 +191,24 @@ export interface ElectronApi {
     message?: string;
     data?: unknown;
   }) => Promise<IpcResponse>;
+  mcpBridgeGetState: () => Promise<McpBridgeState>;
+  mcpBridgeSetEnabled: (enabled: boolean) => Promise<McpBridgeState>;
+  mcpBridgeSetPort: (port: number) => Promise<McpBridgeState>;
+  mcpBridgeRegenerateToken: () => Promise<McpBridgeState>;
+  /** Never rejects; use `ok` to detect failures (avoids Electron logging IPC handler errors). */
+  mcpExternalListTools: (cfg: McpServerConfigPayload) => Promise<McpExternalListToolsResult>;
+  mcpExternalCallTool: (
+    cfg: McpServerConfigPayload,
+    toolName: string,
+    args: unknown,
+  ) => Promise<{ content: unknown[]; isError?: boolean }>;
+  /** Main-process fetch (avoids renderer CORS for Google / some APIs). */
+  aiListGoogleModels: (apiKey: string) => Promise<ListedAiModel[]>;
+  aiListOpenAiModels: (baseUrl: string, apiKey: string) => Promise<ListedAiModel[]>;
+  aiTestChatHi: (payload: AiTestChatHiPayload) => Promise<{ reply: string }>;
+  /** Stream POST body to OpenAI-compatible chat/completions from main. Returns unsubscribe. */
+  aiChatProxyStream: (
+    payload: { url: string; headers: Record<string, string>; body: string },
+    handlers: AiChatProxyStreamHandlers,
+  ) => () => void;
 }

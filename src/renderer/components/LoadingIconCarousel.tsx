@@ -1,5 +1,5 @@
 import { useMemo, type ReactElement } from "react";
-import { SPOTLIGHT_ICON_SVGS } from "../shared/spotlightIconSvgs";
+import { SPOTLIGHT_ICON_SVGS } from "../shared/spotlight-icon-svgs";
 
 function shuffled<T>(arr: T[]): T[] {
   const out = [...arr];

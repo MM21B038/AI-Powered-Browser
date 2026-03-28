@@ -57,6 +57,44 @@ const electronApi: ElectronApi = {
   getDataStats: () => ipcRenderer.invoke("get-data-stats"),
   clearAllData: () => ipcRenderer.invoke("clear-all-data"),
   debugLog: (payload) => ipcRenderer.invoke("debug-log", payload),
+  mcpBridgeGetState: () => ipcRenderer.invoke("mcp-bridge-get-state"),
+  mcpBridgeSetEnabled: (enabled) => ipcRenderer.invoke("mcp-bridge-set-enabled", enabled),
+  mcpBridgeSetPort: (port) => ipcRenderer.invoke("mcp-bridge-set-port", port),
+  mcpBridgeRegenerateToken: () => ipcRenderer.invoke("mcp-bridge-regenerate-token"),
+  mcpExternalListTools: (cfg) => ipcRenderer.invoke("mcp-external-list-tools", cfg),
+  mcpExternalCallTool: (cfg, toolName, args) =>
+    ipcRenderer.invoke("mcp-external-call-tool", { cfg, toolName, args }),
+  aiListGoogleModels: (apiKey) => ipcRenderer.invoke("ai-list-google-models", apiKey),
+  aiListOpenAiModels: (baseUrl, apiKey) => ipcRenderer.invoke("ai-list-openai-models", { baseUrl, apiKey }),
+  aiTestChatHi: (payload) => ipcRenderer.invoke("ai-test-chat-hi", payload),
+  aiChatProxyStream: (payload, handlers) => {
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    const channel = `ai-chat-proxy:${id}`;
+    const listener = (
+      _: Electron.IpcRendererEvent,
+      msg: { chunk?: string; error?: string; done?: boolean },
+    ) => {
+      if (msg.error != null && msg.error !== "") {
+        ipcRenderer.removeListener(channel, listener);
+        handlers.onError(msg.error);
+        return;
+      }
+      if (msg.done) {
+        ipcRenderer.removeListener(channel, listener);
+        handlers.onComplete();
+        return;
+      }
+      if (typeof msg.chunk === "string" && msg.chunk.length > 0) {
+        handlers.onChunk(msg.chunk);
+      }
+    };
+    ipcRenderer.on(channel, listener);
+    ipcRenderer.invoke("ai-chat-proxy-start", { channel, ...payload }).catch((e) => {
+      ipcRenderer.removeListener(channel, listener);
+      handlers.onError(e instanceof Error ? e.message : String(e));
+    });
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
 };
 
 contextBridge.exposeInMainWorld("electronAPI", electronApi);

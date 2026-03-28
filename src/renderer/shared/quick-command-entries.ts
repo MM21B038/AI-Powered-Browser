@@ -6,7 +6,9 @@ export type QuickCommandEntry = { command: string; label: string };
 
 export const QUICK_COMMAND_ENTRIES: readonly QuickCommandEntry[] = [
   { command: "navigate", label: "Go to URL" },
-  { command: "nav", label: "Nav controls" },
+  { command: "back", label: "Nav back" },
+  { command: "forward", label: "Nav forward" },
+  { command: "reload", label: "Reload" },
   { command: "newTab", label: "New tab" },
   { command: "switchTab", label: "Switch tab" },
   { command: "closeTab", label: "Close tab" },
