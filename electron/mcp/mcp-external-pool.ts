@@ -5,6 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type {
   McpRemoteTransport,
   McpServerConfigPayload,
@@ -192,16 +193,54 @@ async function ensureClient(cfg: McpServerConfigPayload): Promise<Client> {
   return client;
 }
 
+const LIST_TOOLS_MAX_PAGES = 40;
+
+/**
+ * Some MCP servers reject `tools/list` when JSON-RPC omits `params` (SDK default). Always send at least `{}`.
+ * Follow `nextCursor` for servers that paginate tool lists.
+ */
+async function listAllMcpTools(client: Client): Promise<
+  Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>
+> {
+  const out: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }> = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < LIST_TOOLS_MAX_PAGES; page++) {
+    const res = await client.listTools(cursor ? { cursor } : {});
+    for (const t of res.tools ?? []) {
+      out.push({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema as Record<string, unknown> | undefined,
+      });
+    }
+    const next = res.nextCursor;
+    if (!next) break;
+    cursor = next;
+  }
+  return out;
+}
+
+function enhanceListToolsError(e: unknown, cfg: McpServerConfigPayload): Error {
+  const base = e instanceof Error ? e : new Error(String(e));
+  if (e instanceof McpError && e.code === ErrorCode.InvalidParams) {
+    const hint =
+      cfg.serverMode === "remote"
+        ? " Check the URL path (many servers use /sse or /mcp), and try setting Remote transport to SSE or Streamable HTTP instead of Auto."
+        : " If this is a packaged server, confirm it implements MCP tools/list for your SDK version.";
+    return new Error(`${base.message}${hint}`);
+  }
+  return base;
+}
+
 export async function externalMcpListTools(cfg: McpServerConfigPayload): Promise<
   Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>
 > {
-  const client = await ensureClient(cfg);
-  const res = await client.listTools();
-  return (res.tools ?? []).map((t) => ({
-    name: t.name,
-    description: t.description,
-    inputSchema: t.inputSchema as Record<string, unknown> | undefined,
-  }));
+  try {
+    const client = await ensureClient(cfg);
+    return await listAllMcpTools(client);
+  } catch (e) {
+    throw enhanceListToolsError(e, cfg);
+  }
 }
 
 export async function externalMcpCallTool(

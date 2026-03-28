@@ -35,5 +35,13 @@ export function systemPromptForWorkspace(scope: ChatScope): string {
 
 ## Safety and scope
 - Do not pretend to have run a tool if you did not.
-- Respect the user's goals; refuse harmful instructions briefly and offer alternatives where appropriate.`;
+- Respect the user's goals; refuse harmful instructions briefly and offer alternatives where appropriate.
+
+## Output Format: 
+- Always respond in a well proper report format with proper headinging, section and representaion like an professional report.
+- use markdown syntax for the report.
+- use list, table, code block, etc. for the report respective to the data representation required.
+- use proper formatting for the report.
+- use proper punctuation and grammar for the report.
+`;
 }
