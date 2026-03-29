@@ -4,7 +4,9 @@ import os from "node:os";
 import {
   app,
   BrowserWindow,
+  clipboard,
   ipcMain,
+  nativeImage,
   session,
   shell,
   Notification,
@@ -451,6 +453,31 @@ ipcMain.handle(
   },
 );
 
+function getDownloadsDirResolved(): string {
+  return path.resolve(app.getPath("downloads"));
+}
+
+/** Only allow reading/deleting PNGs saved by this app under the user Downloads folder. */
+function isAllowedLibraryScreenshotPath(filepath: string): boolean {
+  if (typeof filepath !== "string" || filepath.length === 0) return false;
+  let resolved: string;
+  try {
+    resolved = path.resolve(filepath);
+  } catch {
+    return false;
+  }
+  const root = getDownloadsDirResolved();
+  const norm = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
+  const r = norm(resolved);
+  const nroot = norm(root);
+  const under = r === nroot || r.startsWith(nroot + path.sep);
+  if (!under) return false;
+  const base = path.basename(resolved);
+  return /^screenshot-\d+\.png$/i.test(base);
+}
+
+const MAX_SCREENSHOT_READ_BYTES = 40 * 1024 * 1024;
+
 ipcMain.handle(
   "save-screenshot",
   async (_: IpcMainInvokeEvent, dataUrl: string) => {
@@ -465,6 +492,49 @@ ipcMain.handle(
     }
   },
 );
+
+ipcMain.handle("read-screenshot-file", (_: IpcMainInvokeEvent, filepath: string) => {
+  try {
+    if (!isAllowedLibraryScreenshotPath(filepath)) {
+      return { success: false, error: "path not allowed" };
+    }
+    const st = fs.statSync(filepath);
+    if (!st.isFile() || st.size > MAX_SCREENSHOT_READ_BYTES) {
+      return { success: false, error: "file too large or not a file" };
+    }
+    const buf = fs.readFileSync(filepath);
+    const dataUrl = `data:image/png;base64,${buf.toString("base64")}`;
+    return { success: true, data: { dataUrl } };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+ipcMain.handle("delete-screenshot-file", (_: IpcMainInvokeEvent, filepath: string) => {
+  try {
+    if (!isAllowedLibraryScreenshotPath(filepath)) {
+      return { success: false, error: "path not allowed" };
+    }
+    fs.unlinkSync(filepath);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
+
+ipcMain.handle("copy-screenshot-data-url-to-clipboard", (_: IpcMainInvokeEvent, dataUrl: string) => {
+  try {
+    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) {
+      return { success: false, error: "invalid data url" };
+    }
+    const img = nativeImage.createFromDataURL(dataUrl);
+    if (img.isEmpty()) return { success: false, error: "empty image" };
+    clipboard.writeImage(img);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: (error as Error).message };
+  }
+});
 
 ipcMain.handle("show-save-dialog", (_: IpcMainInvokeEvent, options) =>
   dialog.showSaveDialog(mainWindow!, options || {}),

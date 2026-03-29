@@ -16,8 +16,15 @@ import {
   executeButcherTool,
   executeExternalTool,
   filterButcherTools,
+  filterToolsByAllowlist,
+  listOpenAiToolNames,
   togglesForScope,
 } from "./ai-tools";
+import {
+  extractAtToolNames,
+  resolveToolAllowlist,
+  unknownAtToolNames,
+} from "../chat/ai-tool-mentions";
 import type { ElectronApi } from "../../shared/ipc-types";
 import { systemPromptForWorkspace } from "./ai-system-prompts";
 
@@ -333,7 +340,7 @@ function isToolEnabled(settings: IntelligentSettingsState, scope: ChatScope, mcp
   return per[toolName] !== false;
 }
 
-async function loadExternalToolGroups(
+export async function loadExternalToolGroups(
   api: ElectronApi,
   settings: IntelligentSettingsState,
   scope: ChatScope,
@@ -363,6 +370,29 @@ async function loadExternalToolGroups(
   return out;
 }
 
+export async function getIntelligentOpenAiToolNames(
+  api: ElectronApi,
+  settings: IntelligentSettingsState,
+): Promise<string[]> {
+  const butcherDefs = filterButcherTools(settings, "intelligent");
+  const externalGroups = await loadExternalToolGroups(api, settings, "intelligent");
+  return listOpenAiToolNames(butcherDefs, externalGroups);
+}
+
+export async function computeIntelligentToolAllowlistFromUserText(
+  text: string,
+  api: ElectronApi,
+  settings: IntelligentSettingsState,
+): Promise<{ allowlist: string[] | null; unknownNames: string[] }> {
+  const mentioned = extractAtToolNames(text);
+  const names = await getIntelligentOpenAiToolNames(api, settings);
+  const enabled = new Set(names);
+  return {
+    allowlist: resolveToolAllowlist(mentioned, enabled),
+    unknownNames: unknownAtToolNames(mentioned, enabled),
+  };
+}
+
 async function runAutomationSafe(cmd: AutomationCommand): Promise<AutomationResult> {
   const fn = window.legacyBrowser?.runAutomationCommand;
   if (!fn) throw new Error("Browser bridge not ready");
@@ -376,6 +406,8 @@ export async function runAiChatPipeline(opts: {
   messages: ChatMessageV2[];
   onEvent: (e: ChatStreamEvent) => void;
   maxToolRounds?: number;
+  /** When set (intelligent workspace), only these OpenAI function names are exposed to the model. */
+  toolAllowlist?: string[] | null;
 }): Promise<void> {
   const maxRounds = opts.maxToolRounds ?? 8;
   const modelId = opts.settings.selectedModelId.trim();
@@ -388,7 +420,13 @@ export async function runAiChatPipeline(opts: {
   const butcherDefs = filterButcherTools(opts.settings, opts.scope);
   const externalGroups =
     opts.scope === "browser" ? [] : await loadExternalToolGroups(opts.api, opts.settings, opts.scope);
-  const { openAiTools, dispatch } = buildToolDispatchMap(butcherDefs, externalGroups);
+  let { openAiTools, dispatch } = buildToolDispatchMap(butcherDefs, externalGroups);
+  const allow = opts.toolAllowlist;
+  if (opts.scope === "intelligent" && allow != null && allow.length > 0) {
+    const narrowed = filterToolsByAllowlist(openAiTools, dispatch, allow);
+    openAiTools = narrowed.openAiTools;
+    dispatch = narrowed.dispatch;
+  }
 
   const provider = opts.settings.aiProvider;
   const baseUrl =

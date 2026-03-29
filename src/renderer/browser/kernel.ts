@@ -21,6 +21,7 @@ import { loadShellWorkspacePreference, saveShellWorkspacePreference } from "../c
 import { escapeHtml, renderChatMarkdownToHtml } from "../chat/chat-markdown";
 import { initUiTooltips } from "../ui/ui-tooltips";
 import { applyIntelligentWorkspaceLayoutToDom } from "../state/intelligent-workspace-layout";
+import { appendScreenshotLibraryEntry } from "../services/screenshot-library-store";
 
 /**
  * Browser kernel: tab/webview/profile/chat/tools. Call initBrowserKernel() after the shell DOM
@@ -482,12 +483,14 @@ type TopSurface =
   | "history"
   | "passwords"
   | "sessions"
+  | "screenshots"
   | "toolsHub"
   | "settings"
   | "browserSettings"
   | "networkWorkbench";
 
 let lastToolsHubCrumbs: string[] = ["Tool Hub"];
+let lastScreenshotCrumbs: string[] = ["Screenshot Library"];
 
 function setAddressCrumbText(text: string): void {
   const t = (text || "").trim();
@@ -539,6 +542,9 @@ function syncTopChromeForSurface(): void {
   const bookmarksOpen = !!document.getElementById("bookmarksPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
   const historyOpen = !!document.getElementById("historyPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
   const passwordsOpen = !!document.getElementById("passwordsPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
+  const screenshotsOpen = !!document
+    .getElementById("screenshotsPanel")
+    ?.classList.contains(SIDE_PANEL_OPEN_CLASS);
   const sessionsOpen = !!document.getElementById("sessionsPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
   const browserChromeSettingsOpen = !!document
     .getElementById("browserSettingsPanel")
@@ -552,6 +558,7 @@ function syncTopChromeForSurface(): void {
   else if (historyOpen) surface = "history";
   else if (bookmarksOpen) surface = "bookmarks";
   else if (passwordsOpen) surface = "passwords";
+  else if (screenshotsOpen) surface = "screenshots";
   else if (sessionsOpen) surface = "sessions";
 
   bsec.setAttribute("data-surface", surface);
@@ -561,6 +568,8 @@ function syncTopChromeForSurface(): void {
   else if (surface === "bookmarks") setCrumbParts(["Bookmarks"]);
   else if (surface === "passwords") setCrumbParts(["Saved passwords"]);
   else if (surface === "sessions") setCrumbParts(["Sessions"]);
+  else if (surface === "screenshots")
+    setCrumbParts(lastScreenshotCrumbs.length ? lastScreenshotCrumbs : ["Screenshot Library"]);
   else if (surface === "settings") setCrumbParts(["Settings"]);
   else if (surface === "browserSettings") setCrumbParts(["Browser settings"]);
   else if (surface === "toolsHub") setCrumbParts(lastToolsHubCrumbs.length ? lastToolsHubCrumbs : ["Tool Hub"]);
@@ -1834,6 +1843,52 @@ function waitForWebviewDomReady(wv, timeoutMs = 8000) {
   });
 }
 
+function ensureScreenshotsPanelOpen() {
+  const p = document.getElementById("screenshotsPanel");
+  if (!p) return;
+  lastScreenshotCrumbs = ["Screenshot Library"];
+  if (p.classList.contains(SIDE_PANEL_OPEN_CLASS)) {
+    syncTopChromeForSurface();
+    return;
+  }
+  toggleSidePanel("screenshotsPanel");
+}
+
+async function copyScreenshotToClipboard(dataUrl) {
+  try {
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    const type = blob.type || "image/png";
+    await navigator.clipboard.write([new ClipboardItem({ [type]: blob })]);
+  } catch {
+    try {
+      await window.electronAPI?.copyScreenshotDataUrlToClipboard?.(dataUrl);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+async function onScreenshotSaved(dataUrl, saved, meta) {
+  if (!saved?.success || !saved.path) return;
+  void copyScreenshotToClipboard(dataUrl);
+  const tab = activeTabId != null ? getTab(activeTabId) : null;
+  const rawUrl = meta?.url != null ? meta.url : tab?.url || "";
+  const url = rawUrl === "about:blank" ? "" : rawUrl;
+  const title = meta?.title != null ? meta.title : tab?.title || "";
+  appendScreenshotLibraryEntry({
+    path: saved.path,
+    filename: saved.filename,
+    url,
+    title,
+    mode: meta?.mode ?? "viewport",
+    width: meta?.width,
+    height: meta?.height,
+  });
+  window.dispatchEvent(new CustomEvent("orion-screenshot-library-changed"));
+  ensureScreenshotsPanelOpen();
+}
+
 async function takeScreenshot(mode = "viewport") {
   try {
     if (!browserFrame) throw new Error("No webview attached");
@@ -1841,22 +1896,33 @@ async function takeScreenshot(mode = "viewport") {
     showToast("📸 Capturing...");
     const img = await captureFullImage();
     let dataUrl;
+    let w;
+    let h;
     if (mode === "fullpage") {
       const canvas = document.createElement("canvas");
       canvas.width = img.naturalWidth;
       canvas.height = img.naturalHeight;
       canvas.getContext("2d").drawImage(img, 0, 0);
       dataUrl = canvas.toDataURL("image/png");
+      w = canvas.width;
+      h = canvas.height;
     } else {
       // Viewport: crop to exactly the webview element bounds (0,0,w,h in CSS px)
       const rect = browserFrame.getBoundingClientRect();
       const scale = await getCaptureScale(img);
       dataUrl = cropImage(img, 0, 0, rect.width, rect.height, scale.x, scale.y);
+      w = Math.round(rect.width);
+      h = Math.round(rect.height);
     }
     const saved = await window.electronAPI.saveScreenshot(dataUrl);
     if (saved.success) {
       showToast(`✅ Saved: ${saved.filename}`);
       addScreenshotMessage(dataUrl, saved.filename);
+      await onScreenshotSaved(dataUrl, saved, {
+        mode: mode === "fullpage" ? "fullpage" : "viewport",
+        width: w,
+        height: h,
+      });
     } else {
       showToast("❌ Screenshot failed");
     }
@@ -1935,6 +2001,11 @@ function takeScreenshotSelect() {
       if (saved.success) {
         showToast(`✅ Saved: ${saved.filename}`);
         addScreenshotMessage(dataUrl, saved.filename);
+        await onScreenshotSaved(dataUrl, saved, {
+          mode: "region",
+          width: Math.round(w),
+          height: Math.round(h),
+        });
       } else showToast("❌ Save failed");
     } catch (err) {
       showToast("❌ Capture failed");
@@ -2793,6 +2864,21 @@ function getKernelAutomationContext() {
           if (saved.success) {
             showToast(`✅ Saved: ${saved.filename}`);
             addScreenshotMessage(dataUrl, saved.filename);
+            let pageUrl = "";
+            let pageTitle = "";
+            try {
+              const u = await window.electronAPI.bgGetUrl(sessionId);
+              const t = await window.electronAPI.bgGetTitle(sessionId);
+              pageUrl = u?.data?.url || "";
+              pageTitle = t?.data?.title || "";
+            } catch {
+              /* ignore */
+            }
+            await onScreenshotSaved(dataUrl, saved, {
+              mode: "background",
+              url: pageUrl,
+              title: pageTitle,
+            });
           } else {
             showToast("❌ Screenshot failed");
           }
@@ -3781,6 +3867,11 @@ function startElementScreenshot(rearm = false) {
             return;
           }
           addScreenshotMessage(dataUrl, saved.filename);
+          await onScreenshotSaved(dataUrl, saved, {
+            mode: "element",
+            width: Math.round(r.w),
+            height: Math.round(r.h),
+          });
         } else {
           showToast("❌ Save failed");
         }
@@ -4275,6 +4366,11 @@ function showPickerActionPopup(sel, info, canFill, isCheckable, recordStore = tr
       if (saved.success) {
         showToast(`✅ ${saved.filename}`);
         addScreenshotMessage(dataUrl, saved.filename);
+        await onScreenshotSaved(dataUrl, saved, {
+          mode: "element",
+          width: Math.round(r.w),
+          height: Math.round(r.h),
+        });
       } else showToast("❌ Save failed");
     } catch (err) {
       showToast("❌ Screenshot failed");
@@ -4704,6 +4800,7 @@ function syncRailPanelActive() {
     bookmarksPanel: "bookmarksBtn",
     historyPanel: "historyBtn",
     passwordsPanel: "passwordsBtn",
+    screenshotsPanel: "screenshotsBtn",
     sessionsPanel: "sessionsBtn",
   };
   document.querySelectorAll("#leftToolRail .rail-btn").forEach((b) => {
@@ -4727,6 +4824,7 @@ function syncRailPanelActive() {
     "bookmarksPanel",
     "historyPanel",
     "passwordsPanel",
+    "screenshotsPanel",
     "sessionsPanel",
   ]) {
     const p = document.getElementById(pid);
@@ -4741,7 +4839,14 @@ function syncRailPanelActive() {
 
 function closeSidePanels() {
   let browserSettingsWasOpen = false;
-  ["browserSettingsPanel", "bookmarksPanel", "historyPanel", "passwordsPanel", "sessionsPanel"].forEach(
+  [
+    "browserSettingsPanel",
+    "bookmarksPanel",
+    "historyPanel",
+    "passwordsPanel",
+    "screenshotsPanel",
+    "sessionsPanel",
+  ].forEach(
     (id) => {
       const el = document.getElementById(id);
       if (el) {
@@ -4994,6 +5099,8 @@ function setupDataPanelButtons() {
     toggleSidePanel("historyPanel");
   document.getElementById("passwordsBtn").onclick = () =>
     toggleSidePanel("passwordsPanel");
+  const shotsBtn = document.getElementById("screenshotsBtn");
+  if (shotsBtn) shotsBtn.onclick = () => toggleSidePanel("screenshotsPanel");
   document.getElementById("networkWorkbenchBtn").onclick = () => {
     // Close other surfaces first to avoid flashes
     closeSidePanels();
@@ -5019,6 +5126,8 @@ function setupDataPanelButtons() {
   document.getElementById("closeBookmarksBtn").onclick = closeSidePanels;
   document.getElementById("closeHistoryBtn").onclick = closeSidePanels;
   document.getElementById("closePasswordsBtn").onclick = closeSidePanels;
+  const closeShots = document.getElementById("closeScreenshotsBtn");
+  if (closeShots) closeShots.onclick = closeSidePanels;
   document.getElementById("closeSessionsBtn").onclick = closeSidePanels;
 
   // Import buttons
@@ -5121,7 +5230,12 @@ function setupDataPanelButtons() {
     (e) => {
       if (!document.querySelector(".side-panel.side-panel--open")) return;
       const t = e.target;
-      if (t.closest("#bookmarksPanel,#historyPanel,#passwordsPanel,#sessionsPanel")) return;
+      if (
+        t.closest(
+          "#bookmarksPanel,#historyPanel,#passwordsPanel,#screenshotsPanel,#sessionsPanel",
+        )
+      )
+        return;
       if (t.closest("#leftToolRail")) return;
       closeSidePanels();
     },
@@ -5460,6 +5574,17 @@ window.legacyBrowser = {
       .filter(Boolean)
       .slice(0, 6);
     lastToolsHubCrumbs = cleaned.length ? cleaned : ["Tool Hub"];
+    syncTopChromeForSurface();
+  });
+
+  window.addEventListener("orion-screenshot-crumbs", (e: Event) => {
+    const d = (e as CustomEvent<{ parts?: unknown }>).detail;
+    const parts = Array.isArray(d?.parts) ? (d?.parts as unknown[]) : [];
+    const cleaned = parts
+      .map((p) => (typeof p === "string" ? p : String(p ?? "")).trim())
+      .filter(Boolean)
+      .slice(0, 6);
+    lastScreenshotCrumbs = cleaned.length ? cleaned : ["Screenshot Library"];
     syncTopChromeForSurface();
   });
 

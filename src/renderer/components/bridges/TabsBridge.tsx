@@ -192,17 +192,19 @@ export function TabsBridge(): ReactElement | null {
         ? "History"
         : surface === "passwords"
           ? "Saved passwords"
-          : surface === "sessions"
-            ? "Sessions"
-            : surface === "settings"
-              ? "Assistant settings"
-              : surface === "browserSettings"
-                ? "Browser settings"
-                : surface === "toolsHub"
-                  ? "Tool Hub"
-                  : surface === "networkWorkbench"
-                    ? "Network"
-                    : "Workspace";
+          : surface === "screenshots"
+            ? "Screenshot Library"
+            : surface === "sessions"
+              ? "Sessions"
+              : surface === "settings"
+                ? "Assistant settings"
+                : surface === "browserSettings"
+                  ? "Browser settings"
+                  : surface === "toolsHub"
+                    ? "Tool Hub"
+                    : surface === "networkWorkbench"
+                      ? "Network"
+                      : "Workspace";
   const surfaceTab = surfaceTabNeeded ? (
     <div role="tab" aria-selected tabIndex={0} className="tab tab-surface active" data-tab-id="surface">
       <div className="tab-favicon">

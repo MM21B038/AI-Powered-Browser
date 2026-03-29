@@ -176,6 +176,11 @@ export interface ElectronApi {
   saveScreenshot: (
     dataUrl: string,
   ) => Promise<IpcResponse<{ path: string; filename: string }>>;
+  readScreenshotFile: (
+    filepath: string,
+  ) => Promise<IpcResponse<{ dataUrl: string }>>;
+  deleteScreenshotFile: (filepath: string) => Promise<IpcResponse>;
+  copyScreenshotDataUrlToClipboard: (dataUrl: string) => Promise<IpcResponse>;
   // Background (Playwright-like) session APIs (main-process offscreen pages)
   bgEnsureSession: (sessionId: string) => Promise<IpcResponse>;
   bgKillSession: (sessionId: string) => Promise<IpcResponse>;

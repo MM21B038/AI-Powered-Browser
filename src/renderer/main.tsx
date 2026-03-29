@@ -1,8 +1,17 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import "@fontsource/exo-2/latin-400.css";
+import "@fontsource/exo-2/latin-500.css";
+import "@fontsource/exo-2/latin-600.css";
+import "@fontsource/exo-2/latin-700.css";
+import "@fontsource/orbitron/latin-500.css";
+import "@fontsource/orbitron/latin-600.css";
+import "@fontsource/orbitron/latin-700.css";
 import "./index.css";
 import "../../styles.css";
 import "../../style-chat-code-syntax.css";
+import "../../styles/style-screenshot-library.css";
+import "../../styles/style-ai-chat-tool-mentions.css";
 import { ShellInjector } from "./ShellInjector";
 
 function traceRenderer(message: string, data?: unknown): void {

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -37,10 +38,17 @@ import { MCP_TOOL_DEFINITIONS } from "../../../shared/mcp-tool-registry";
 import { getElectronApi } from "../../services/electron-api";
 import {
   appendUserMessage,
+  computeIntelligentToolAllowlistFromUserText,
   ensureSystemMessage,
+  getIntelligentOpenAiToolNames,
   runAiChatPipeline,
   type ChatStreamEvent,
 } from "../../services/ai-chat";
+import {
+  filterToolNameSuggestions,
+  getActiveMentionQuery,
+  replaceMentionAtCaret,
+} from "../../chat/ai-tool-mentions";
 import type { McpBridgeState } from "../../../shared/ipc-types";
 import { ModelQuickPick } from "../ModelQuickPick";
 import { friendlyMcpConnectionError } from "../../shared/mcp-error-messages";
@@ -49,6 +57,14 @@ import { AiChatToolResultBlock } from "./ai-chat-tool-result";
 import { renderChatMarkdownToHtml } from "../../chat/chat-markdown";
 
 const debouncedSave = createDebouncedSaveV2(400);
+
+function lastUserMessageContent(messages: ChatMessageV2[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role === "user") return (m.content as string) || "";
+  }
+  return "";
+}
 
 function renderAiChatMd(md: string): string {
   return renderChatMarkdownToHtml(md, { wrapperClass: "ai-chat-md" });
@@ -311,6 +327,7 @@ async function runChatPipelineRound(
     toolLines: string[],
     thinkingBuf: string,
   ) => void,
+  toolAllowlist?: string[] | null,
 ): Promise<PipelineResult> {
   const toolMsgs: ChatMessageV2[] = [];
   let assistantBuf = "";
@@ -352,6 +369,10 @@ async function runChatPipelineRound(
     api,
     messages: ensureSystemMessage(storedMessages, scope),
     onEvent,
+    toolAllowlist:
+      scope === "intelligent" && toolAllowlist != null && toolAllowlist.length > 0
+        ? toolAllowlist
+        : null,
   });
 
   return { toolMsgs, assistantBuf, thinkingBuf };
@@ -404,6 +425,13 @@ function AiChatPanel(): ReactElement {
   const stickMessagesToBottomRef = useRef(true);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const userEditTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const [intelligentToolNames, setIntelligentToolNames] = useState<string[]>(
+    [],
+  );
+  const [composerCaret, setComposerCaret] = useState(0);
+  const [mentionSuppress, setMentionSuppress] = useState(false);
+  const toolMentionListId = useId();
+  const prevMcpModalOpenRef = useRef(false);
 
   const adjustComposerHeight = useCallback(() => {
     const el = composerTextareaRef.current;
@@ -438,7 +466,10 @@ function AiChatPanel(): ReactElement {
         prev.trim() ? `${prev.trim()}\n\n${t.trim()}` : t.trim(),
       );
       queueMicrotask(() => {
-        composerTextareaRef.current?.focus();
+        const el = composerTextareaRef.current;
+        el?.focus();
+        if (el)
+          setComposerCaret(el.selectionStart ?? el.value.length);
         adjustComposerHeight();
       });
     };
@@ -470,6 +501,30 @@ function AiChatPanel(): ReactElement {
     return () =>
       window.removeEventListener("butcher-intelligent-settings-saved", onSaved);
   }, []);
+
+  const refreshIntelligentToolNames = useCallback(async () => {
+    if (!api || scope !== "intelligent") {
+      setIntelligentToolNames([]);
+      return;
+    }
+    try {
+      const names = await getIntelligentOpenAiToolNames(api, settings);
+      setIntelligentToolNames(names);
+    } catch {
+      setIntelligentToolNames([]);
+    }
+  }, [api, scope, settings]);
+
+  useEffect(() => {
+    void refreshIntelligentToolNames();
+  }, [refreshIntelligentToolNames]);
+
+  useEffect(() => {
+    if (prevMcpModalOpenRef.current && !mcpModalOpen && scope === "intelligent") {
+      void refreshIntelligentToolNames();
+    }
+    prevMcpModalOpenRef.current = mcpModalOpen;
+  }, [mcpModalOpen, refreshIntelligentToolNames, scope]);
 
   useEffect(() => {
     if (scope !== "browser") return;
@@ -685,6 +740,20 @@ function AiChatPanel(): ReactElement {
       });
 
       const convId = conv.id;
+      let toolAllowlist: string[] | null = null;
+      if (scope === "intelligent") {
+        const r = await computeIntelligentToolAllowlistFromUserText(
+          text,
+          api,
+          settings,
+        );
+        toolAllowlist = r.allowlist;
+        if (r.unknownNames.length > 0) {
+          window.legacyBrowser?.showToast?.(
+            `Unknown @tools: ${r.unknownNames.join(", ")}`,
+          );
+        }
+      }
       try {
         const { toolMsgs, assistantBuf, thinkingBuf } =
           await runChatPipelineRound(
@@ -699,6 +768,7 @@ function AiChatPanel(): ReactElement {
               setStreamThinking(think);
               setToolLines(lines);
             },
+            toolAllowlist,
           );
 
         const finalMessages: ChatMessageV2[] = [...stored, ...toolMsgs];
@@ -740,7 +810,7 @@ function AiChatPanel(): ReactElement {
         setToolLines([]);
       }
     },
-    [api, active, busy, scope, scoped, updateScoped],
+    [api, active, busy, scope, scoped, settings, updateScoped],
   );
 
   const runPipelineAfterEdit = useCallback(
@@ -753,6 +823,21 @@ function AiChatPanel(): ReactElement {
       setStreamThinking("");
       setToolLines([]);
       thinkingStartRef.current = null;
+      let toolAllowlist: string[] | null = null;
+      if (scope === "intelligent") {
+        const u = lastUserMessageContent(stored);
+        const r = await computeIntelligentToolAllowlistFromUserText(
+          u,
+          api,
+          settings,
+        );
+        toolAllowlist = r.allowlist;
+        if (r.unknownNames.length > 0) {
+          window.legacyBrowser?.showToast?.(
+            `Unknown @tools: ${r.unknownNames.join(", ")}`,
+          );
+        }
+      }
       try {
         const { toolMsgs, assistantBuf, thinkingBuf } =
           await runChatPipelineRound(
@@ -766,6 +851,7 @@ function AiChatPanel(): ReactElement {
               setStreamThinking(think);
               setToolLines(lines);
             },
+            toolAllowlist,
           );
 
         const finalMessages: ChatMessageV2[] = [...stored, ...toolMsgs];
@@ -806,7 +892,7 @@ function AiChatPanel(): ReactElement {
         setToolLines([]);
       }
     },
-    [api, scope],
+    [api, scope, settings],
   );
 
   const onSend = useCallback(async () => {
@@ -1074,6 +1160,45 @@ function AiChatPanel(): ReactElement {
   }, [editModal?.messageId]);
 
   const isBrowserAgent = scope === "browser";
+
+  const mentionCtx = useMemo(() => {
+    if (isBrowserAgent) return null;
+    const active = getActiveMentionQuery(input, composerCaret);
+    if (!active) return null;
+    const suggestions = filterToolNameSuggestions(
+      intelligentToolNames,
+      active.query,
+      4,
+    );
+    return { active, suggestions };
+  }, [composerCaret, input, intelligentToolNames, isBrowserAgent]);
+
+  const applyMentionPick = useCallback(
+    (toolName: string) => {
+      if (isBrowserAgent) return;
+      const el = composerTextareaRef.current;
+      if (!el) return;
+      const caret = el.selectionStart ?? input.length;
+      const active = getActiveMentionQuery(input, caret);
+      if (!active) return;
+      const { next, caret: nextCaret } = replaceMentionAtCaret(
+        input,
+        caret,
+        active.start,
+        toolName,
+      );
+      setInput(next);
+      setMentionSuppress(false);
+      queueMicrotask(() => {
+        el.focus();
+        el.setSelectionRange(nextCaret, nextCaret);
+        setComposerCaret(nextCaret);
+        adjustComposerHeight();
+      });
+    },
+    [adjustComposerHeight, input, isBrowserAgent],
+  );
+
   /** Defer open so the same pointer sequence isn’t eaten by focus / shell handlers (fixes flaky first click in intelligent workspace). */
   const openMcpToolsModal = useCallback(() => {
     queueMicrotask(() => setMcpModalOpen(true));
@@ -1854,7 +1979,41 @@ function AiChatPanel(): ReactElement {
               ) : null}
             </div>
           </div>
-          <div className="ai-chat-composer-input-row">
+          <div className="ai-chat-composer-input-row ai-chat-composer-input-row--mention-wrap">
+            {mentionCtx && !mentionSuppress ? (
+              <div
+                id={toolMentionListId}
+                className="ai-chat-tool-mention-popover"
+                role="listbox"
+                aria-label="Matching tools"
+              >
+                {mentionCtx.suggestions.length === 0 ? (
+                  <div
+                    className="ai-chat-tool-mention-empty"
+                    role="presentation"
+                  >
+                    {intelligentToolNames.length === 0
+                      ? "No tools enabled — open MCP tools to connect servers."
+                      : "No matching tools"}
+                  </div>
+                ) : (
+                  mentionCtx.suggestions.map((name, i) => (
+                    <button
+                      key={name}
+                      type="button"
+                      role="option"
+                      id={`${toolMentionListId}-opt-${i}`}
+                      aria-selected={i === 0}
+                      className={`ai-chat-tool-mention-option${i === 0 ? " ai-chat-tool-mention-option--first" : ""}`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => applyMentionPick(name)}
+                    >
+                      {name}
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : null}
             <textarea
               ref={composerTextareaRef}
               className="ai-chat-textarea"
@@ -1865,8 +2024,39 @@ function AiChatPanel(): ReactElement {
                   : "Message the assistant…"
               }
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              aria-autocomplete={mentionCtx && !mentionSuppress ? "list" : "none"}
+              aria-expanded={!!(mentionCtx && !mentionSuppress)}
+              aria-controls={
+                mentionCtx && !mentionSuppress ? toolMentionListId : undefined
+              }
+              onChange={(e) => {
+                setInput(e.target.value);
+                setComposerCaret(
+                  e.target.selectionStart ?? e.target.value.length,
+                );
+                setMentionSuppress(false);
+              }}
+              onSelect={(e) => {
+                setComposerCaret(e.currentTarget.selectionStart ?? 0);
+              }}
               onKeyDown={(e) => {
+                if (
+                  !isBrowserAgent &&
+                  mentionCtx &&
+                  !mentionSuppress &&
+                  mentionCtx.suggestions.length > 0
+                ) {
+                  if (e.key === "Tab") {
+                    e.preventDefault();
+                    applyMentionPick(mentionCtx.suggestions[0]!);
+                    return;
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setMentionSuppress(true);
+                    return;
+                  }
+                }
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   void onSend();

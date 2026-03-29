@@ -5,6 +5,7 @@ import { ModalsBridge } from "./components/bridges/ModalsBridge";
 import { NavChromeBridge } from "./components/bridges/NavChromeBridge";
 import { SessionsPanelBridge } from "./components/bridges/SessionsPanelBridge";
 import { SidePanelsBridge } from "./components/bridges/SidePanelsBridge";
+import { ScreenshotLibraryBridge } from "./components/bridges/ScreenshotLibraryBridge";
 import { TabsBridge } from "./components/bridges/TabsBridge";
 import { ToastBridge } from "./components/bridges/ToastBridge";
 import { ToolsHubBridge } from "./components/bridges/ToolsHubBridge";
@@ -23,6 +24,7 @@ export default function App(): ReactElement {
       <ModalsBridge />
       <SessionsPanelBridge />
       <SidePanelsBridge />
+      <ScreenshotLibraryBridge />
       <ChatShellBridge />
       <ToastBridge />
       <RequestWorkbench />

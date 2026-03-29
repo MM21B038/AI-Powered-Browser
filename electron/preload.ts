@@ -36,6 +36,12 @@ const electronApi: ElectronApi = {
     script: string;
   }) => ipcRenderer.invoke("guest-exec-in-frame", payload),
   saveScreenshot: (dataUrl) => ipcRenderer.invoke("save-screenshot", dataUrl),
+  readScreenshotFile: (filepath) =>
+    ipcRenderer.invoke("read-screenshot-file", filepath),
+  deleteScreenshotFile: (filepath) =>
+    ipcRenderer.invoke("delete-screenshot-file", filepath),
+  copyScreenshotDataUrlToClipboard: (dataUrl) =>
+    ipcRenderer.invoke("copy-screenshot-data-url-to-clipboard", dataUrl),
   bgEnsureSession: (sessionId) =>
     ipcRenderer.invoke("bg-session-ensure", { sessionId }),
   bgKillSession: (sessionId) =>

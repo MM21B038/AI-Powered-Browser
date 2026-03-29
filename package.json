@@ -72,6 +72,8 @@
     "wait-on": "^8.0.5"
   },
   "dependencies": {
+    "@fontsource/exo-2": "^5.2.8",
+    "@fontsource/orbitron": "^5.2.8",
     "@modelcontextprotocol/sdk": "^1.28.0",
     "axios": "^1.6.0",
     "dompurify": "^3.3.3",

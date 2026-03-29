@@ -157,6 +157,36 @@ export function buildToolDispatchMap(
   };
 }
 
+/** Stable OpenAI function names for the same inputs as `buildToolDispatchMap`. */
+export function listOpenAiToolNames(
+  butcherDefs: typeof MCP_TOOL_DEFINITIONS,
+  external: Array<{ server: McpServerConfigPayload; tools: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }> }>,
+): string[] {
+  const { openAiTools } = buildToolDispatchMap(butcherDefs, external);
+  return openAiTools.map((t) => t.function.name);
+}
+
+/**
+ * Restrict tools to allowlist. If that would remove every tool, returns the original maps (fallback).
+ */
+export function filterToolsByAllowlist(
+  openAiTools: OpenAiToolDef[],
+  dispatch: (fn: string) => ToolDispatch | null,
+  allowlist: string[],
+): { openAiTools: OpenAiToolDef[]; dispatch: (fn: string) => ToolDispatch | null; applied: boolean } {
+  const allowed = new Set(allowlist);
+  const filtered = openAiTools.filter((t) => allowed.has(t.function.name));
+  if (filtered.length === 0) {
+    return { openAiTools, dispatch, applied: false };
+  }
+  const allowedNames = new Set(filtered.map((t) => t.function.name));
+  return {
+    openAiTools: filtered,
+    dispatch: (fn: string) => (allowedNames.has(fn) ? dispatch(fn) : null),
+    applied: true,
+  };
+}
+
 export async function executeButcherTool(
   name: string,
   args: unknown,
