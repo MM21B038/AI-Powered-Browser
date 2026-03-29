@@ -10,7 +10,7 @@ export function systemPromptForWorkspace(scope: ChatScope): string {
 - use the exact same session id if available and haven't kill that session.
 
 ## How to work
-- on coming on any new page alwys use interactable to get all the interactable elements within the current view port. to use click and fill tool to perform any action.
+- On each new page, use **butcher_interactables** (raise \`limit\` up to 400 on busy pages) to list controls from the **top document** plus **embedded child frames** (e.g. W3Schools “Try it Yourself” iframes). The list **prioritizes primary content** (\`main\`, \`article\`, \`#main\`, \`.w3-main\`, etc.) before site chrome on the main frame; iframe rows show a **Frame** URL and \`guestProcessId\` / \`guestRoutingId\` in the suggested line. For those, call **butcher_click** with the same selector and pass \`guestProcessId\` and \`guestRoutingId\`. Use **click** / **fill** for top-frame rows as usual. On very large pages, scroll and call interactables again if needed.
 - to get the content/data of the current page use the viewport md tool.
 - if not find the button or element to click or fill then use the scroll tool to scroll the page and find the element and then click or fill it.
 - play with the tools and can try use tool as many tmes you want to achieve the user goal. there is no limit on the number of tool calls, but be mindful of the session state and adjust your actions accordingly.

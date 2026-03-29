@@ -120,6 +120,17 @@ export function registerBackgroundSessionIpc(ipcMain: IpcMain, trace?: (message:
     return await fn(wc, s.win);
   }
 
+  function guestFrameBelongsToWebContents(frame: Electron.WebFrameMain, wc: Electron.WebContents): boolean {
+    try {
+      const top = frame.top;
+      if (!top || top.isDestroyed()) return false;
+      const m = wc.mainFrame;
+      return top.routingId === m.routingId && top.processId === m.processId;
+    } catch {
+      return false;
+    }
+  }
+
   ipcMain.handle("bg-session-ensure", async (_: IpcMainInvokeEvent, payload: { sessionId: string }) => {
     try {
       const sessionId = String(payload?.sessionId || "").trim();
@@ -172,6 +183,80 @@ export function registerBackgroundSessionIpc(ipcMain: IpcMain, trace?: (message:
       return { success: false, error: (error as Error).message };
     }
   });
+
+  ipcMain.handle(
+    "bg-eval-child-frames",
+    async (_: IpcMainInvokeEvent, payload: { sessionId: string; script: string; maxTotal: number }) => {
+      try {
+        const sessionId = String(payload?.sessionId || "").trim();
+        const script = String(payload?.script || "");
+        const maxTotal = Math.max(0, Math.floor(Number(payload?.maxTotal) || 0));
+        if (!sessionId) return { success: false, error: "sessionId required" };
+        if (!script) return { success: false, error: "script required" };
+
+        const items = await withBackgroundWebContents(sessionId, async (wc) => {
+          await waitForDomReady(wc, 12000);
+          const children = wc.mainFrame.framesInSubtree.filter(
+            (f) => f.parent != null && !f.isDestroyed() && !f.detached,
+          );
+          const out: Record<string, unknown>[] = [];
+          for (const frame of children) {
+            if (out.length >= maxTotal) break;
+            if (!guestFrameBelongsToWebContents(frame, wc)) continue;
+            try {
+              const data = (await frame.executeJavaScript(script, true)) as { items?: Record<string, unknown>[] };
+              const batch = data?.items ?? [];
+              const guestFrame = {
+                processId: frame.processId,
+                routingId: frame.routingId,
+                url: frame.url,
+                name: frame.name || "",
+              };
+              for (const it of batch) {
+                if (out.length >= maxTotal) break;
+                out.push({ ...it, guestFrame });
+              }
+            } catch {
+              /* ignore */
+            }
+          }
+          return out;
+        });
+        return { success: true, items };
+      } catch (error) {
+        return { success: false, error: (error as Error).message };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "bg-guest-exec-in-frame",
+    async (
+      _: IpcMainInvokeEvent,
+      payload: { sessionId: string; processId: number; routingId: number; script: string },
+    ) => {
+      try {
+        const sessionId = String(payload?.sessionId || "").trim();
+        if (!sessionId) return { success: false, error: "sessionId required" };
+        const data = await withBackgroundWebContents(sessionId, async (wc) => {
+          await waitForDomReady(wc, 12000);
+          const frame = wc.mainFrame.framesInSubtree.find(
+            (f) => f.processId === payload.processId && f.routingId === payload.routingId,
+          );
+          if (!frame || frame.isDestroyed() || frame.detached) {
+            throw new Error("frame not found");
+          }
+          if (!guestFrameBelongsToWebContents(frame, wc)) {
+            throw new Error("frame not in webContents");
+          }
+          return await frame.executeJavaScript(String(payload?.script || ""), true);
+        });
+        return { success: true, data };
+      } catch (error) {
+        return { success: false, error: (error as Error).message };
+      }
+    },
+  );
 
   ipcMain.handle("bg-url", async (_: IpcMainInvokeEvent, payload: { sessionId: string }) => {
     try {

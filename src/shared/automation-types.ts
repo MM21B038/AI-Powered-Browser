@@ -10,7 +10,13 @@ type SessionScoped = { sessionId?: string };
 /** Discriminated union of automation commands */
 export type AutomationCommand =
   | ({ kind: "action"; op: "goto"; url: string } & SessionScoped)
-  | ({ kind: "action"; op: "click"; target: string } & SessionScoped)
+  | ({
+      kind: "action";
+      op: "click";
+      target: string;
+      /** When set, click runs inside this guest iframe (cross-origin safe). */
+      guestFrame?: { processId: number; routingId: number };
+    } & SessionScoped)
   | ({ kind: "action"; op: "fill"; selector: string; value: string } & SessionScoped)
   | ({ kind: "action"; op: "set_date"; target: string; date: string } & SessionScoped)
   | {

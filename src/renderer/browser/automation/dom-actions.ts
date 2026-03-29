@@ -1,13 +1,156 @@
 /** Low-level guest-page actions via webview.executeJavaScript */
 
-export interface WebviewLike {
-  executeJavaScript: (code: string) => Promise<unknown>;
+import type { ElectronApi } from "../../../shared/ipc-types";
+
+function rendererElectronApi(): ElectronApi | undefined {
+  return (globalThis as unknown as { electronAPI?: ElectronApi }).electronAPI;
 }
 
-export async function domClick(wv: WebviewLike, selector: string): Promise<{ success: boolean; tag?: string; error?: string }> {
+export interface WebviewLike {
+  executeJavaScript: (code: string) => Promise<unknown>;
+  getWebContentsId?: () => number;
+  /** Headless / background guest: run script inside a child frame by stable ids from interactables. */
+  executeJavaScriptInGuestFrame?: (
+    processId: number,
+    routingId: number,
+    code: string,
+  ) => Promise<unknown>;
+}
+
+export type DomClickGuestOptions = {
+  guestFrame: { processId: number; routingId: number };
+};
+
+/** Injected once into the guest document — ring + pixel burst at click point (automation click tool only). */
+const CLICK_TOOL_SPARKLE_CSS = `
+@keyframes butcherClickRing {
+  0% { transform: scale(0.25); opacity: 0.95; }
+  100% { transform: scale(18); opacity: 0; }
+}
+@keyframes butcherClickSpark {
+  0% { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)) scale(0.12); opacity: 0; }
+}
+`.trim();
+
+export type DomClickResult = {
+  success: boolean;
+  tag?: string;
+  error?: string;
+  /** Guest viewport coords for host-shell click FX (optional). */
+  fxCx?: number;
+  fxCy?: number;
+  fxVw?: number;
+  fxVh?: number;
+};
+
+export async function domClick(
+  wv: WebviewLike,
+  selector: string,
+  guest?: DomClickGuestOptions,
+): Promise<DomClickResult> {
   const code = `
-    (function(){
-      function doClick(el) {
+    (async function(){
+      var SPARKLE_CSS = ${JSON.stringify(CLICK_TOOL_SPARKLE_CSS)};
+      function ensureClickSparkleStyles() {
+        if (document.getElementById('butcher-click-fx-style')) return;
+        var st = document.createElement('style');
+        st.id = 'butcher-click-fx-style';
+        st.textContent = SPARKLE_CSS;
+        document.documentElement.appendChild(st);
+      }
+      function clickSparkleAt(cx, cy) {
+        try {
+          ensureClickSparkleStyles();
+          var reduce = false;
+          try {
+            reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+          } catch (e) {}
+          var root = document.createElement('div');
+          root.setAttribute('data-butcher-click-fx', '1');
+          root.style.cssText =
+            'position:fixed;left:' +
+            cx +
+            'px;top:' +
+            cy +
+            'px;width:0;height:0;transform:translate(-50%,-50%);pointer-events:none;z-index:2147483646;contain:layout;';
+          var ring = document.createElement('span');
+          ring.style.cssText =
+            'position:absolute;left:0;top:0;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;box-sizing:border-box;' +
+            'border:2px solid rgba(140,215,255,0.92);box-shadow:0 0 14px rgba(170,235,255,0.88),inset 0 0 10px rgba(255,255,255,0.35);' +
+            'animation:butcherClickRing ' +
+            (reduce ? '0.5s' : '0.95s') +
+            ' cubic-bezier(0.2,0.82,0.18,1) forwards;';
+          root.appendChild(ring);
+          var count = reduce ? 12 : 96;
+          var waveSplit = reduce ? 6 : 48;
+          for (var i = 0; i < count; i++) {
+            var wave2 = i >= waveSplit;
+            var n = wave2 ? i - waveSplit : i;
+            var nWave = wave2 ? count - waveSplit : waveSplit;
+            var base = (6.283185307179586 * n) / nWave + (wave2 ? 0.08 : 0);
+            var ang = base + (Math.random() - 0.5) * (reduce ? 0.07 : 0.35);
+            var dist = (reduce ? 20 : 28) + Math.random() * (reduce ? 14 : 52);
+            if (wave2) dist *= 1.22 + Math.random() * 0.42;
+            var dx = Math.cos(ang) * dist;
+            var dy = Math.sin(ang) * dist;
+            var delay = 0;
+            if (!reduce) {
+              delay = wave2 ? 0.18 + Math.random() * 0.32 : Math.random() * 0.16;
+            } else if (wave2) {
+              delay = 0.1 + Math.random() * 0.12;
+            }
+            var dur = reduce ? (wave2 ? '0.62s' : '0.52s') : wave2 ? '1.38s' : '1.12s';
+            var ease = wave2 ? 'cubic-bezier(0.1,0.72,0.22,1)' : 'cubic-bezier(0.14,0.78,0.2,1)';
+            var sz = 2 + Math.floor(Math.random() * (reduce ? 2 : 3));
+            var hue = 160 + Math.floor(Math.random() * 60);
+            var p = document.createElement('i');
+            p.style.cssText =
+              'position:absolute;left:0;top:0;width:' +
+              sz +
+              'px;height:' +
+              sz +
+              'px;margin:' +
+              -sz / 2 +
+              'px 0 0 ' +
+              -sz / 2 +
+              'px;border-radius:1px;display:block;' +
+              'background:hsla(' +
+              hue +
+              ',92%,70%,0.96);box-shadow:0 0 ' +
+              (sz + 3) +
+              'px hsla(' +
+              hue +
+              ',100%,78%,0.82);' +
+              '--dx:' +
+              dx +
+              'px;--dy:' +
+              dy +
+              'px;animation:butcherClickSpark ' +
+              dur +
+              ' ' +
+              ease +
+              ' ' +
+              delay +
+              's forwards;';
+            root.appendChild(p);
+          }
+          (document.body || document.documentElement).appendChild(root);
+          setTimeout(function () {
+            try {
+              if (root.parentNode) root.parentNode.removeChild(root);
+            } catch (e) {}
+          }, reduce ? 620 : 1680);
+        } catch (e) {}
+      }
+      function sparklePaintDelay() {
+        return new Promise(function (resolve) {
+          requestAnimationFrame(function () {
+            requestAnimationFrame(resolve);
+          });
+        });
+      }
+      async function doClick(el) {
         try {
           var r = el.getBoundingClientRect();
           var inView = r.bottom > 0 && r.top < window.innerHeight;
@@ -15,18 +158,27 @@ export async function domClick(wv: WebviewLike, selector: string): Promise<{ suc
           el.focus();
           var r2 = el.getBoundingClientRect();
           var cx = r2.left + r2.width / 2, cy = r2.top + r2.height / 2;
+          clickSparkleAt(cx, cy);
+          await sparklePaintDelay();
           var opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
           el.dispatchEvent(new PointerEvent('pointerdown', opts));
           el.dispatchEvent(new MouseEvent('mousedown', opts));
           el.dispatchEvent(new PointerEvent('pointerup', opts));
           el.dispatchEvent(new MouseEvent('mouseup', opts));
           el.click();
-          return { success: true, tag: el.tagName.toLowerCase() };
+          return {
+            success: true,
+            tag: el.tagName.toLowerCase(),
+            fxCx: cx,
+            fxCy: cy,
+            fxVw: window.innerWidth,
+            fxVh: window.innerHeight,
+          };
         } catch(e) { return { success: false, error: String(e.message) }; }
       }
       try {
         var el = document.querySelector(${JSON.stringify(selector)});
-        if (el) return doClick(el);
+        if (el) return await doClick(el);
       } catch(e) {}
       var q = ${JSON.stringify(selector.toLowerCase())};
       var nodes = document.querySelectorAll(
@@ -37,12 +189,31 @@ export async function domClick(wv: WebviewLike, selector: string): Promise<{ suc
         var n = nodes[i];
         var tx = (n.innerText || n.textContent || '').replace(/\\s+/g,' ').trim().toLowerCase();
         var extras = [n.value||'', n.getAttribute('aria-label')||'', n.getAttribute('title')||'', n.getAttribute('placeholder')||''].join(' ').toLowerCase();
-        if (tx === q || tx.indexOf(q) !== -1 || extras.indexOf(q) !== -1) return doClick(n);
+        if (tx === q || tx.indexOf(q) !== -1 || extras.indexOf(q) !== -1) return await doClick(n);
       }
       return { success: false };
     })()
   `;
-  return (await wv.executeJavaScript(code)) as { success: boolean; tag?: string; error?: string };
+  if (guest?.guestFrame) {
+    const { processId, routingId } = guest.guestFrame;
+    if (typeof wv.executeJavaScriptInGuestFrame === "function") {
+      return (await wv.executeJavaScriptInGuestFrame(processId, routingId, code)) as DomClickResult;
+    }
+    const wid = typeof wv.getWebContentsId === "function" ? wv.getWebContentsId() : undefined;
+    const api = rendererElectronApi();
+    if (wid != null && api?.guestExecInFrame) {
+      const r = await api.guestExecInFrame({
+        webContentsId: wid,
+        processId,
+        routingId,
+        script: code,
+      });
+      if (!r.success) return { success: false, error: r.error || "guestExecInFrame failed" };
+      return r.data as DomClickResult;
+    }
+    return { success: false, error: "Guest iframe click requires Electron webview or background session support." };
+  }
+  return (await wv.executeJavaScript(code)) as DomClickResult;
 }
 
 export async function domFill(wv: WebviewLike, sel: string, value: string): Promise<{ success: boolean; tag?: string }> {

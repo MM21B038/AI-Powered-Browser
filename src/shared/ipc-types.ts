@@ -162,6 +162,17 @@ export interface ElectronApi {
     webContentsId: number,
     rect?: unknown,
   ) => Promise<IpcResponse<{ dataUrl: string }>>;
+  guestEvalChildFrames: (payload: {
+    webContentsId: number;
+    script: string;
+    maxTotal: number;
+  }) => Promise<{ success: boolean; error?: string; items?: unknown[] }>;
+  guestExecInFrame: (payload: {
+    webContentsId: number;
+    processId: number;
+    routingId: number;
+    script: string;
+  }) => Promise<{ success: boolean; error?: string; data?: unknown }>;
   saveScreenshot: (
     dataUrl: string,
   ) => Promise<IpcResponse<{ path: string; filename: string }>>;
@@ -176,6 +187,17 @@ export interface ElectronApi {
     sessionId: string,
     script: string,
   ) => Promise<IpcResponse<T>>;
+  bgEvalChildFrames: (
+    sessionId: string,
+    script: string,
+    maxTotal: number,
+  ) => Promise<{ success: boolean; error?: string; items?: unknown[] }>;
+  bgGuestExecInFrame: <T = unknown>(
+    sessionId: string,
+    processId: number,
+    routingId: number,
+    script: string,
+  ) => Promise<{ success: boolean; error?: string; data?: T }>;
   bgGetUrl: (sessionId: string) => Promise<IpcResponse<{ url: string }>>;
   bgGetTitle: (sessionId: string) => Promise<IpcResponse<{ title: string }>>;
   bgScreenshot: (

@@ -12,7 +12,13 @@ import {
   domWaitForSelector,
   type WebviewLike,
 } from "./dom-actions";
-import { FORM_SCHEMA_SCRIPT, INTERACTABLES_SCRIPT, VIEWPORT_MARKDOWN_SCRIPT } from "./markdown-extractor";
+import {
+  buildInteractablesScript,
+  FORM_SCHEMA_SCRIPT,
+  interactablesMaxIterations,
+  INTERACTABLES_MAX_LIMIT,
+  VIEWPORT_MARKDOWN_SCRIPT,
+} from "./markdown-extractor";
 
 export interface TabInfo {
   id: number;
@@ -21,13 +27,16 @@ export interface TabInfo {
   url: string;
 }
 
-type InteractableRow = {
+export type GuestFrameRef = { processId: number; routingId: number; url: string; name: string };
+
+export type InteractableRow = {
   kind?: string;
   label?: string;
   selector?: string;
   role?: string;
   type?: string;
   suggestedCommand?: string;
+  guestFrame?: GuestFrameRef;
 };
 
 export interface AutomationKernelContext {
@@ -49,6 +58,20 @@ export interface AutomationKernelContext {
   switchSession: (sessionId: string) => boolean;
   killSession: (sessionId: string) => boolean;
   hasSession: (sessionId: string) => boolean;
+  /** Host-shell click burst at mapped guest coordinates (survives guest navigation/CSP). */
+  showAutomationClickFx?: (
+    guestX: number,
+    guestY: number,
+    guestW: number,
+    guestH: number,
+    sessionId?: string,
+  ) => void;
+  /** Collect interactables from cross-origin iframes (main-process WebFrameMain); merges into get_interactables. */
+  runGuestChildFrameCollect?: (
+    sessionId: string | undefined,
+    script: string,
+    maxTotal: number,
+  ) => Promise<InteractableRow[]>;
 }
 
 function now() {
@@ -243,12 +266,37 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
           return wrap(cmd.op, finish(cmd.op, true, { kind: "info", message: "```json\n" + json.slice(0, 8000) + "\n```", data: r }));
         }
         case "get_interactables": {
-          const lim = cmd.limit ?? 40;
-          const r = (await wv!.executeJavaScript(INTERACTABLES_SCRIPT)) as { items: InteractableRow[] };
-          const items = (r.items || []).slice(0, lim);
-          const rows = items.slice(0, 25).map((it) => [
+          const lim = Math.min(INTERACTABLES_MAX_LIMIT, Math.max(1, cmd.limit ?? 200));
+          const iframeBudget = Math.min(120, Math.floor(lim * 0.35));
+          const mainCap = lim - iframeBudget;
+          const mainScript = buildInteractablesScript(mainCap, interactablesMaxIterations(mainCap));
+          const r = (await wv!.executeJavaScript(mainScript)) as { items: InteractableRow[] };
+          let items: InteractableRow[] = (r.items || []).map((it) => {
+            const row = { ...it };
+            delete row.guestFrame;
+            return row;
+          });
+
+          if (iframeBudget > 0 && typeof ctx.runGuestChildFrameCollect === "function") {
+            const subCap = Math.max(24, iframeBudget);
+            const subScript = buildInteractablesScript(subCap, interactablesMaxIterations(subCap));
+            const extra = await ctx.runGuestChildFrameCollect(cmdSessionId, subScript, iframeBudget);
+            items = items.concat(extra);
+          }
+
+          items = items.slice(0, lim);
+          for (const it of items) {
+            if (it.guestFrame && it.selector) {
+              const { processId, routingId } = it.guestFrame;
+              const base = it.suggestedCommand || `click ${it.selector}`;
+              it.suggestedCommand = `${base} (guestProcessId=${processId} guestRoutingId=${routingId})`;
+            }
+          }
+
+          const rows = items.slice(0, 40).map((it) => [
             it.kind ?? "",
             it.label ?? "",
+            it.guestFrame ? mdEscapePipes(it.guestFrame.url.slice(0, 56)) : "—",
             it.selector ?? "",
             [it.role ? `role=${it.role}` : "", it.type ? `type=${it.type}` : ""].filter(Boolean).join(" "),
             it.suggestedCommand ?? "",
@@ -259,7 +307,7 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
               kind: "info",
               message:
                 "**Interactables**\n\n" +
-                mdTable(["Kind", "Label", "Selector", "Role/Type", "Suggested"], rows) +
+                mdTable(["Kind", "Label", "Frame", "Selector", "Role/Type", "Suggested"], rows) +
                 "\n\nFull JSON in `data`.",
               data: { items },
             }),
@@ -344,7 +392,17 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
       }
       case "click": {
         if (!wv) return wrap(cmd.op, finish(cmd.op, false, { error: "No webview", message: "No page to automate." }));
-        const r = await domClick(wv, cmd.target);
+        const guest = cmd.guestFrame ? { guestFrame: cmd.guestFrame } : undefined;
+        const r = await domClick(wv, cmd.target, guest);
+        if (
+          !cmd.guestFrame &&
+          r.success &&
+          typeof r.fxCx === "number" &&
+          typeof r.fxCy === "number" &&
+          typeof ctx.showAutomationClickFx === "function"
+        ) {
+          ctx.showAutomationClickFx(r.fxCx, r.fxCy, r.fxVw ?? 0, r.fxVh ?? 0, cmdSessionId);
+        }
         return wrap(
           cmd.op,
           finish(cmd.op, r.success, {
@@ -690,7 +748,7 @@ export async function dispatchAutomationLine(text: string, ctx: AutomationKernel
     return runAutomationCommand({ kind: "info", op: "get_form_schema", sessionId }, ctx);
   }
   if (t === "interactables" || t === "get interactables") {
-    return runAutomationCommand({ kind: "info", op: "get_interactables", limit: 40, sessionId }, ctx);
+    return runAutomationCommand({ kind: "info", op: "get_interactables", limit: 200, sessionId }, ctx);
   }
   if (t === "list tabs" || t === "tabs") {
     return runAutomationCommand({ kind: "info", op: "list_tabs", sessionId }, ctx);

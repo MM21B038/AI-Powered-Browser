@@ -349,6 +349,89 @@ ipcMain.handle(
 
 registerBackgroundSessionIpc(ipcMain, traceMain);
 
+function guestFrameBelongsToWebContents(frame: Electron.WebFrameMain, wc: Electron.WebContents): boolean {
+  try {
+    const top = frame.top;
+    if (!top || top.isDestroyed()) return false;
+    const m = wc.mainFrame;
+    return top.routingId === m.routingId && top.processId === m.processId;
+  } catch {
+    return false;
+  }
+}
+
+ipcMain.handle(
+  "guest-eval-child-frames",
+  async (
+    _: IpcMainInvokeEvent,
+    payload: { webContentsId: number; script: string; maxTotal: number },
+  ) => {
+    try {
+      const wc = webContents.fromId(payload.webContentsId);
+      if (!wc || wc.isDestroyed()) return { success: false, error: "webContents not found" };
+      const script = String(payload.script ?? "");
+      const maxTotal = Math.max(0, Math.floor(Number(payload.maxTotal) || 0));
+      if (!script) return { success: false, error: "script required" };
+
+      const children = wc.mainFrame.framesInSubtree.filter(
+        (f) => f.parent != null && !f.isDestroyed() && !f.detached,
+      );
+
+      const items: Record<string, unknown>[] = [];
+
+      for (const frame of children) {
+        if (items.length >= maxTotal) break;
+        if (!guestFrameBelongsToWebContents(frame, wc)) continue;
+        try {
+          const data = (await frame.executeJavaScript(script, true)) as { items?: Record<string, unknown>[] };
+          const batch = data?.items ?? [];
+          const guestFrame = {
+            processId: frame.processId,
+            routingId: frame.routingId,
+            url: frame.url,
+            name: frame.name || "",
+          };
+          for (const it of batch) {
+            if (items.length >= maxTotal) break;
+            items.push({ ...it, guestFrame });
+          }
+        } catch {
+          /* cross-origin or transient frame errors */
+        }
+      }
+      return { success: true, items };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  },
+);
+
+ipcMain.handle(
+  "guest-exec-in-frame",
+  async (
+    _: IpcMainInvokeEvent,
+    payload: { webContentsId: number; processId: number; routingId: number; script: string },
+  ) => {
+    try {
+      const wc = webContents.fromId(payload.webContentsId);
+      if (!wc || wc.isDestroyed()) return { success: false, error: "webContents not found" };
+      const frame = wc.mainFrame.framesInSubtree.find(
+        (f) => f.processId === payload.processId && f.routingId === payload.routingId,
+      );
+      if (!frame || frame.isDestroyed() || frame.detached) {
+        return { success: false, error: "frame not found" };
+      }
+      if (!guestFrameBelongsToWebContents(frame, wc)) {
+        return { success: false, error: "frame not in webContents" };
+      }
+      const data = await frame.executeJavaScript(String(payload.script ?? ""), true);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  },
+);
+
 ipcMain.handle(
   "capture-webview",
   async (

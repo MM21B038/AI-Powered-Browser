@@ -24,6 +24,17 @@ const electronApi: ElectronApi = {
     ipcRenderer.invoke("show-notification", { title, body }),
   captureWebview: (webContentsId, rect) =>
     ipcRenderer.invoke("capture-webview", { webContentsId, rect }),
+  guestEvalChildFrames: (payload: {
+    webContentsId: number;
+    script: string;
+    maxTotal: number;
+  }) => ipcRenderer.invoke("guest-eval-child-frames", payload),
+  guestExecInFrame: (payload: {
+    webContentsId: number;
+    processId: number;
+    routingId: number;
+    script: string;
+  }) => ipcRenderer.invoke("guest-exec-in-frame", payload),
   saveScreenshot: (dataUrl) => ipcRenderer.invoke("save-screenshot", dataUrl),
   bgEnsureSession: (sessionId) =>
     ipcRenderer.invoke("bg-session-ensure", { sessionId }),
@@ -32,6 +43,15 @@ const electronApi: ElectronApi = {
   bgGoto: (sessionId, url) => ipcRenderer.invoke("bg-goto", { sessionId, url }),
   bgEval: (sessionId, script) =>
     ipcRenderer.invoke("bg-eval", { sessionId, script }),
+  bgEvalChildFrames: (sessionId, script, maxTotal) =>
+    ipcRenderer.invoke("bg-eval-child-frames", { sessionId, script, maxTotal }),
+  bgGuestExecInFrame: (sessionId, processId, routingId, script) =>
+    ipcRenderer.invoke("bg-guest-exec-in-frame", {
+      sessionId,
+      processId,
+      routingId,
+      script,
+    }),
   bgGetUrl: (sessionId) => ipcRenderer.invoke("bg-url", { sessionId }),
   bgGetTitle: (sessionId) => ipcRenderer.invoke("bg-title", { sessionId }),
   bgScreenshot: (sessionId) =>

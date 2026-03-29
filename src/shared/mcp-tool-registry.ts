@@ -103,10 +103,19 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "butcher_click",
-    description: "Click an element matched by CSS selector.",
+    description:
+      "Click an element matched by CSS selector. For items from cross-origin iframes (see interactables `guestFrame`), pass guestProcessId and guestRoutingId from the suggested line.",
     inputSchema: schemaWithSession(
       {
         selector: { type: "string", description: "CSS selector for the element" },
+        guestProcessId: {
+          type: "integer",
+          description: "Optional: Chromium frame process id from interactables (iframe clicks)",
+        },
+        guestRoutingId: {
+          type: "integer",
+          description: "Optional: Chromium frame routing id from interactables (iframe clicks)",
+        },
       },
       ["selector"],
     ),
@@ -186,7 +195,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
     name: "butcher_interactables",
     description: "List clickable / input elements (limit optional).",
     inputSchema: schemaWithSession({
-      limit: { type: "integer", minimum: 1, maximum: 200, description: "Max rows" },
+      limit: { type: "integer", minimum: 1, maximum: 400, description: "Max rows" },
     }),
   },
   {
@@ -290,7 +299,19 @@ export function automationCommandFromMcpTool(name: string, args: unknown): Autom
       case "butcher_click": {
         const target = String(a.selector ?? "").trim();
         if (!target) return new Error("selector required");
-        return { kind: "action", op: "click", target, ...(sid ? { sessionId: sid } : {}) };
+        const gp = a.guestProcessId != null ? Number(a.guestProcessId) : undefined;
+        const gr = a.guestRoutingId != null ? Number(a.guestRoutingId) : undefined;
+        const guestFrame =
+          gp != null && gr != null && Number.isFinite(gp) && Number.isFinite(gr)
+            ? { processId: gp, routingId: gr }
+            : undefined;
+        return {
+          kind: "action",
+          op: "click",
+          target,
+          ...(guestFrame ? { guestFrame } : {}),
+          ...(sid ? { sessionId: sid } : {}),
+        };
       }
       case "butcher_fill": {
         const selector = String(a.selector ?? "").trim();

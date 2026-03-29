@@ -9,8 +9,6 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
 import {
   loadConversationStateV2,
   createDebouncedSaveV2,
@@ -48,14 +46,13 @@ import { ModelQuickPick } from "../ModelQuickPick";
 import { friendlyMcpConnectionError } from "../../shared/mcp-error-messages";
 import { McpIcon } from "../icons/McpIcon";
 import { AiChatToolResultBlock } from "./ai-chat-tool-result";
+import { renderChatMarkdownToHtml } from "../../chat/chat-markdown";
 
 const debouncedSave = createDebouncedSaveV2(400);
 
-/** GFM tables/lists; single newlines → `<br>` so paragraphs and soft breaks match chat UX. */
-marked.use({
-  gfm: true,
-  breaks: true,
-});
+function renderAiChatMd(md: string): string {
+  return renderChatMarkdownToHtml(md, { wrapperClass: "ai-chat-md" });
+}
 
 const COMPOSER_MIN_LINES = 2;
 const COMPOSER_MAX_LINES = 10;
@@ -539,6 +536,89 @@ function AiChatPanel(): ReactElement {
   }, [scoped.activeConversationId]);
 
   useEffect(() => {
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    type Btn = HTMLButtonElement & { __copyTimer?: ReturnType<typeof setTimeout> };
+    const onClick = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      const copyBtn = t?.closest?.("button.md-codecopy");
+      if (!copyBtn || !el.contains(copyBtn)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const block = copyBtn.closest(".md-codeblock");
+      const codeEl = block?.querySelector("pre code");
+      const codeText = codeEl?.textContent ?? "";
+      if (!codeText) return;
+      const btn = copyBtn as Btn;
+      const setLabel = (label: string) => {
+        btn.setAttribute("aria-label", label);
+        btn.title = label;
+        btn.classList.toggle("md-codecopy--copied", label === "Copied");
+        if (btn.__copyTimer) window.clearTimeout(btn.__copyTimer);
+        btn.__copyTimer = window.setTimeout(() => {
+          btn.setAttribute("aria-label", "Copy code");
+          btn.title = "Copy";
+          btn.classList.remove("md-codecopy--copied");
+        }, 1200);
+      };
+      void navigator.clipboard.writeText(codeText).then(
+        () => setLabel("Copied"),
+        () => {
+          try {
+            const ta = document.createElement("textarea");
+            ta.value = codeText;
+            ta.setAttribute("readonly", "true");
+            ta.style.position = "fixed";
+            ta.style.top = "-1000px";
+            ta.style.left = "-1000px";
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            ta.remove();
+            setLabel("Copied");
+          } catch {
+            setLabel("Failed");
+          }
+        },
+      );
+    };
+    el.addEventListener("click", onClick);
+    return () => el.removeEventListener("click", onClick);
+  }, []);
+
+  /** Theme overlay on webview while browser-agent LLM pipeline runs (browser workspace only). */
+  useEffect(() => {
+    const el = document.getElementById("browserAgentLlmOverlay");
+    if (!el) return;
+
+    const apply = () => {
+      const ws =
+        document
+          .getElementById("appContainer")
+          ?.getAttribute("data-shell-workspace") ?? "";
+      const show = busy && scope === "browser" && ws === "browser";
+      if (show) {
+        el.style.removeProperty("display");
+        el.classList.add("browser-agent-llm-overlay--visible");
+        el.setAttribute("aria-hidden", "false");
+      } else {
+        el.classList.remove("browser-agent-llm-overlay--visible");
+        el.style.display = "none";
+        el.setAttribute("aria-hidden", "true");
+      }
+    };
+
+    apply();
+    window.addEventListener("shell-workspace-changed", apply);
+    return () => {
+      window.removeEventListener("shell-workspace-changed", apply);
+      el.classList.remove("browser-agent-llm-overlay--visible");
+      el.style.display = "none";
+      el.setAttribute("aria-hidden", "true");
+    };
+  }, [busy, scope]);
+
+  useEffect(() => {
     if (scoped.conversations.length === 0) return;
     const ok =
       scoped.activeConversationId &&
@@ -992,11 +1072,6 @@ function AiChatPanel(): ReactElement {
     const len = ta.value.length;
     ta.setSelectionRange(len, len);
   }, [editModal?.messageId]);
-
-  const renderMd = (md: string) => {
-    const raw = marked.parse(md, { async: false }) as string;
-    return DOMPurify.sanitize(`<div class="ai-chat-md">${raw}</div>`);
-  };
 
   const isBrowserAgent = scope === "browser";
   /** Defer open so the same pointer sequence isn’t eaten by focus / shell handlers (fixes flaky first click in intelligent workspace). */
@@ -1526,7 +1601,7 @@ function AiChatPanel(): ReactElement {
                         <div
                           className="ai-chat-bubble"
                           dangerouslySetInnerHTML={{
-                            __html: renderMd(m.content),
+                            __html: renderAiChatMd(m.content),
                           }}
                         />
                         <AiChatMsgFooter
@@ -1595,7 +1670,7 @@ function AiChatPanel(): ReactElement {
                       <div
                         className="ai-chat-bubble ai-chat-bubble--welcome"
                         dangerouslySetInnerHTML={{
-                          __html: renderMd(m.content),
+                          __html: renderAiChatMd(m.content),
                         }}
                       />
                       <AiChatMsgFooter align="start" plainText={m.content} />
@@ -1660,7 +1735,7 @@ function AiChatPanel(): ReactElement {
                         <div
                           className="ai-chat-bubble"
                           dangerouslySetInnerHTML={{
-                            __html: renderMd(m.content),
+                            __html: renderAiChatMd(m.content),
                           }}
                         />
                         <AiChatMsgFooter align="start" plainText={m.content} />
@@ -1687,7 +1762,7 @@ function AiChatPanel(): ReactElement {
                 {streamText ? (
                   <div
                     className="ai-chat-bubble"
-                    dangerouslySetInnerHTML={{ __html: renderMd(streamText) }}
+                    dangerouslySetInnerHTML={{ __html: renderAiChatMd(streamText) }}
                   />
                 ) : null}
                 {streamText ? (

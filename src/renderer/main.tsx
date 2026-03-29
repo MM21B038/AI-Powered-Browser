@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import "../../styles.css";
+import "../../style-chat-code-syntax.css";
 import { ShellInjector } from "./ShellInjector";
 
 function traceRenderer(message: string, data?: unknown): void {

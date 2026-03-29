@@ -84,8 +84,26 @@ export const FORM_SCHEMA_SCRIPT = `
 })()
 `;
 
-export const INTERACTABLES_SCRIPT = `
+/** Safety cap for DOM walk when collecting interactables (performance fuse). */
+export function interactablesMaxIterations(maxResults: number): number {
+  return Math.min(25000, Math.max(2000, Math.floor(maxResults) * 60));
+}
+
+/** Router / MCP clamp for interactables row cap (content-first ordering uses this as output limit). */
+export const INTERACTABLES_MAX_LIMIT = 400;
+
+/**
+ * Guest-page script: collect up to `maxResults` unique action elements, scanning at most
+ * `maxIterations` matching nodes. Primary content (`main`, article, etc.) is listed before chrome
+ * so article buttons are not buried under huge nav bars (e.g. W3Schools).
+ */
+export function buildInteractablesScript(maxResults: number, maxIterations: number): string {
+  const mr = Math.max(1, Math.min(INTERACTABLES_MAX_LIMIT, Math.floor(maxResults)));
+  const mi = Math.max(500, Math.min(25000, Math.floor(maxIterations)));
+  return `
 (function() {
+  const maxResults = ${mr};
+  const maxIterations = ${mi};
   const sel = 'a,button,input,select,textarea,label,[role=button],[role=link],[role=checkbox],[role=radio],[role=combobox],[tabindex]';
 
   function isInteractive(el) {
@@ -142,7 +160,7 @@ export const INTERACTABLES_SCRIPT = `
     }
     let cur = el;
     const parts = [];
-    for (let depth = 0; cur && cur !== document.body && depth < 4; depth++) {
+    for (let depth = 0; cur && cur !== document.body && depth < 10; depth++) {
       const t = cur.tagName.toLowerCase();
       let part = t;
       const pid = cur.id && !/^\\d/.test(cur.id) ? '#' + CSS.escape(cur.id) : '';
@@ -188,14 +206,56 @@ export const INTERACTABLES_SCRIPT = `
     return tag;
   }
 
-  const out = [];
-  document.querySelectorAll(sel).forEach((el, i) => {
-    if (i > 80) return;
+  const rootSelectors = ['main', 'article', '[role=\"main\"]', '#main', '.w3-main', '#midcontent', '#content', '[itemprop=\"articleBody\"]'];
+  const contentRoots = [];
+  for (let ri = 0; ri < rootSelectors.length; ri++) {
+    let nl;
+    try { nl = document.querySelectorAll(rootSelectors[ri]); } catch (e) { continue; }
+    for (let j = 0; j < nl.length; j++) {
+      const n = nl[j];
+      if (!n || n.nodeType !== 1) continue;
+      const br = n.getBoundingClientRect();
+      if (br.height < 24 && br.width < 24) continue;
+      contentRoots.push(n);
+    }
+  }
+  function inContent(actionEl) {
+    for (let k = 0; k < contentRoots.length; k++) {
+      if (contentRoots[k].contains(actionEl)) return true;
+    }
+    return false;
+  }
+
+  const entries = [];
+  const seen = new WeakSet();
+  const nodes = document.querySelectorAll(sel);
+  let iter = 0;
+  for (let i = 0; i < nodes.length; i++) {
+    if (iter >= maxIterations) break;
+    iter++;
+    const el = nodes[i];
     const r = el.getBoundingClientRect();
-    if (r.width === 0 && r.height === 0) return;
+    if (r.width === 0 && r.height === 0) continue;
     const t = labelFor(el);
-    if (!t && el.tagName !== "INPUT") return;
+    if (!t && el.tagName !== "INPUT") continue;
     const actionEl = closestInteractive(el);
+    if (seen.has(actionEl)) continue;
+    seen.add(actionEl);
+    entries.push({ el, actionEl, t });
+  }
+
+  const primary = [];
+  const secondary = [];
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (inContent(e.actionEl)) primary.push(e);
+    else secondary.push(e);
+  }
+  const merged = primary.concat(secondary);
+
+  const out = [];
+  for (let i = 0; i < merged.length && out.length < maxResults; i++) {
+    const { actionEl, t } = merged[i];
     const kind = kindFor(actionEl);
     const selector = buildSelector(actionEl);
     const role = actionEl.getAttribute('role') || '';
@@ -218,7 +278,11 @@ export const INTERACTABLES_SCRIPT = `
       name: actionEl.name || "",
       suggestedCommand,
     });
-  });
+  }
   return { items: out };
 })()
 `;
+}
+
+/** Default guest script; prefer `buildInteractablesScript` from router with command limit. */
+export const INTERACTABLES_SCRIPT = buildInteractablesScript(200, interactablesMaxIterations(200));

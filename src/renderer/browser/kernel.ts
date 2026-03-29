@@ -1,8 +1,10 @@
 // @ts-nocheck
 /* eslint-disable -- legacy kernel port from renderer.js; refactor into modules incrementally */
-import { dispatchAutomationLine, runAutomationCommand } from "./automation/router";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
+import {
+  dispatchAutomationLine,
+  runAutomationCommand,
+  type InteractableRow,
+} from "./automation/router";
 import { SPOTLIGHT_ICON_SVGS } from "../shared/spotlight-icon-svgs";
 import { QUICK_COMMAND_ENTRIES } from "../shared/quick-command-entries";
 import { getToolTemplateLine } from "../shared/tools-hub-templates";
@@ -16,6 +18,7 @@ import {
   titleFromFirstLine,
 } from "../chat/conversation-store-legacy";
 import { loadShellWorkspacePreference, saveShellWorkspacePreference } from "../chat/conversation-store";
+import { escapeHtml, renderChatMarkdownToHtml } from "../chat/chat-markdown";
 import { initUiTooltips } from "../ui/ui-tooltips";
 import { applyIntelligentWorkspaceLayoutToDom } from "../state/intelligent-workspace-layout";
 
@@ -2614,7 +2617,79 @@ function getKernelAutomationContext() {
       if (!r?.success) throw new Error(r?.error || "bg eval failed");
       return r.data;
     },
+    executeJavaScriptInGuestFrame: async (processId: number, routingId: number, code: string) => {
+      await window.electronAPI.bgEnsureSession(sessionId);
+      const r = await window.electronAPI.bgGuestExecInFrame(sessionId, processId, routingId, code);
+      if (!r?.success) throw new Error(r?.error || "bg guest exec failed");
+      return r.data;
+    },
   });
+
+  /** Shell-document sparkle so MCP/automation clicks show FX even when guest navigates away (guest DOM/CSP). */
+  function showHostClickFxBurst(guestX, guestY, guestW, guestH) {
+    const wv = browserFrame;
+    if (!wv || !wv.isConnected) return;
+    const rect = wv.getBoundingClientRect();
+    const vw = guestW > 0 ? guestW : 1;
+    const vh = guestH > 0 ? guestH : 1;
+    const x = rect.left + (guestX * rect.width) / vw;
+    const y = rect.top + (guestY * rect.height) / vh;
+    const host = document.getElementById("browserClickFxHost");
+    if (!host) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const root = document.createElement("div");
+    root.className = "browser-click-fx-root";
+    root.setAttribute("aria-hidden", "true");
+    root.style.left = `${x}px`;
+    root.style.top = `${y}px`;
+    const ring = document.createElement("span");
+    ring.className = reduce ? "browser-click-fx-ring browser-click-fx-ring--reduce" : "browser-click-fx-ring";
+    root.appendChild(ring);
+    const count = reduce ? 12 : 96;
+    const waveSplit = reduce ? 6 : 48;
+    for (let i = 0; i < count; i++) {
+      const wave2 = i >= waveSplit;
+      const n = wave2 ? i - waveSplit : i;
+      const nWave = wave2 ? count - waveSplit : waveSplit;
+      const base = (Math.PI * 2 * n) / nWave + (wave2 ? 0.08 : 0);
+      const ang = base + (Math.random() - 0.5) * (reduce ? 0.07 : 0.35);
+      let dist = (reduce ? 20 : 28) + Math.random() * (reduce ? 14 : 52);
+      if (wave2) dist *= 1.22 + Math.random() * 0.42;
+      const dx = Math.cos(ang) * dist;
+      const dy = Math.sin(ang) * dist;
+      let delay = 0;
+      if (!reduce) {
+        delay = wave2 ? 0.18 + Math.random() * 0.32 : Math.random() * 0.16;
+      } else if (wave2) {
+        delay = 0.1 + Math.random() * 0.12;
+      }
+      const sz = 2 + Math.floor(Math.random() * (reduce ? 2 : 3));
+      const hue = 160 + Math.floor(Math.random() * 60);
+      const p = document.createElement("i");
+      const basePx = reduce ? "browser-click-fx-pixel browser-click-fx-pixel--reduce" : "browser-click-fx-pixel";
+      p.className = wave2 ? `${basePx} browser-click-fx-pixel--wave2` : basePx;
+      p.style.setProperty("--dx", `${dx}px`);
+      p.style.setProperty("--dy", `${dy}px`);
+      p.style.width = `${sz}px`;
+      p.style.height = `${sz}px`;
+      p.style.margin = `${-sz / 2}px 0 0 ${-sz / 2}px`;
+      if (delay > 0) p.style.animationDelay = `${delay}s`;
+      p.style.background = `hsla(${hue},92%,70%,0.96)`;
+      p.style.boxShadow = `0 0 ${sz + 3}px hsla(${hue},100%,78%,0.82)`;
+      root.appendChild(p);
+    }
+    host.appendChild(root);
+    setTimeout(
+      () => {
+        try {
+          root.remove();
+        } catch {
+          /* ignore */
+        }
+      },
+      reduce ? 620 : 1680,
+    );
+  }
 
   return {
     getBrowserFrame: (sessionId) => {
@@ -2733,6 +2808,31 @@ function getKernelAutomationContext() {
     switchSession: (sessionId) => switchSession(sessionId),
     killSession: (sessionId) => killSessionById(sessionId),
     hasSession: (sessionId) => sessions.has(sessionId),
+    showAutomationClickFx: (guestX, guestY, guestW, guestH, sessionId) => {
+      if (sessionId && shouldUseBackground(sessionId)) return;
+      withSessionState(sessionId, () => {
+        showHostClickFxBurst(guestX, guestY, guestW, guestH);
+      });
+    },
+    runGuestChildFrameCollect: (sessionId, script, maxTotal) =>
+      withSessionState(sessionId, async () => {
+        if (sessionId && shouldUseBackground(sessionId)) {
+          await window.electronAPI.bgEnsureSession(sessionId);
+          const r = await window.electronAPI.bgEvalChildFrames(sessionId, script, maxTotal);
+          if (!r?.success || !Array.isArray(r.items)) return [];
+          return r.items as InteractableRow[];
+        }
+        const wv = browserFrame;
+        const wid = wv?.getWebContentsId?.();
+        if (wid == null) return [];
+        const r = await window.electronAPI.guestEvalChildFrames({
+          webContentsId: wid,
+          script,
+          maxTotal,
+        });
+        if (!r?.success || !Array.isArray(r.items)) return [];
+        return r.items as InteractableRow[];
+      }),
   };
 }
 
@@ -3084,76 +3184,8 @@ function addBotMessage(text) {
   pushAssistantMessageToStore(text);
 }
 
-function escapeHtml(str) {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function normalizeCodeLang(rawLang) {
-  const l = (rawLang || "").trim().toLowerCase();
-  if (!l) return "";
-  // Conservative: keep simple token; drop anything that could break attributes.
-  return l.replace(/[^a-z0-9_+-]/g, "");
-}
-
-function buildMarkedRenderer() {
-  const r = new marked.Renderer();
-
-  // Ensure links keep the md-link class (we intercept clicks elsewhere).
-  r.link = function (tok) {
-    const safeHref = tok && typeof tok.href === "string" ? tok.href : "";
-    const safeTitle = tok && typeof tok.title === "string" ? tok.title : "";
-    const titleAttr = safeTitle ? ` title="${escapeHtml(safeTitle)}"` : "";
-    // Render link text via marked inline parser (handles emphasis/code inside links).
-    const inner =
-      tok && tok.tokens && this && this.parser && this.parser.parseInline
-        ? this.parser.parseInline(tok.tokens)
-        : escapeHtml(tok && typeof tok.text === "string" ? tok.text : "");
-    // Keep href; DOMPurify will sanitize protocols/attrs.
-    return `<a class="md-link" href="${escapeHtml(safeHref)}"${titleAttr}>${inner}</a>`;
-  };
-
-  // Wrap fenced code blocks so we can add a copy button.
-  // marked@17 passes a token object: { text, lang, escaped }.
-  r.code = (tok) => {
-    const text = typeof tok === "string" ? tok : tok && typeof tok.text === "string" ? tok.text : String(tok ?? "");
-    const langRaw = tok && typeof tok.lang === "string" ? tok.lang : "";
-    const lang = normalizeCodeLang(langRaw);
-    const label = lang ? lang : "code";
-    const codeEsc = escapeHtml(String(text ?? "")).replace(/\n$/, "");
-    const langClass = lang ? ` language-${lang}` : "";
-    const langAttr = lang ? ` data-lang="${lang}"` : "";
-    return `
-      <div class="md-codeblock"${langAttr}>
-        <div class="md-codeblock-head">
-          <span class="md-codeblock-lang">${escapeHtml(label)}</span>
-          <button type="button" class="md-codecopy" aria-label="Copy code">Copy</button>
-        </div>
-        <pre><code class="${langClass}">${codeEsc}</code></pre>
-      </div>
-    `.trim();
-  };
-
-  return r;
-}
-
 function mdToHtml(text) {
-  const raw = String(text ?? "");
-
-  const html = marked.parse(raw, {
-    gfm: true,
-    breaks: true,
-    headerIds: false,
-    mangle: false,
-    renderer: buildMarkedRenderer(),
-  });
-
-  // Sanitize: disallow raw HTML and any dangerous attributes.
-  return DOMPurify.sanitize(String(html ?? ""), {
-    USE_PROFILES: { html: true },
-    FORBID_TAGS: ["style", "script", "iframe", "object", "embed"],
-    FORBID_ATTR: ["style", "onerror", "onload", "onclick"],
-    ALLOW_UNKNOWN_PROTOCOLS: false,
-  });
+  return renderChatMarkdownToHtml(String(text ?? ""));
 }
 
 function formatMessage(text) {
@@ -3189,10 +3221,14 @@ function setupChatPanelLinks() {
 
         const setLabel = (txt) => {
           try {
-            copyBtn.textContent = txt;
+            copyBtn.setAttribute("aria-label", txt);
+            copyBtn.title = txt;
+            copyBtn.classList.toggle("md-codecopy--copied", txt === "Copied");
             window.clearTimeout(copyBtn.__copyTimer);
             copyBtn.__copyTimer = window.setTimeout(() => {
-              copyBtn.textContent = "Copy";
+              copyBtn.setAttribute("aria-label", "Copy code");
+              copyBtn.title = "Copy";
+              copyBtn.classList.remove("md-codecopy--copied");
             }, 1200);
           } catch {
             /* ignore */

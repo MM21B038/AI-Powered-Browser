@@ -24,6 +24,7 @@ function ctx(): AutomationKernelContext {
     switchSession: () => true,
     killSession: () => true,
     hasSession: (sessionId) => sessionId === "s_test",
+    showAutomationClickFx: () => {},
   };
 }
 
