@@ -1,12 +1,66 @@
 import {
   Fragment,
+  useLayoutEffect,
   useMemo,
+  useRef,
+  useState,
   type ReactElement,
   type ReactNode,
 } from "react";
 import { McpIcon } from "../icons/McpIcon";
 
 const MAX_JSON_DEPTH = 10;
+
+/** Must match `styles.css` `.ai-chat-tool-card { --ai-chat-tool-45 }` and clip-path chamfer. */
+const AI_CHAT_TOOL_CHAMFER_PX = 44;
+
+/** Crease path uses real card width so it matches `clip-path` (25% + fixed px), not a stretched 400px viewBox. */
+function AiChatToolCreaseSvg(): ReactElement {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [w, setW] = useState(400);
+
+  useLayoutEffect(() => {
+    const svg = svgRef.current;
+    const card = svg?.closest(".ai-chat-tool-card");
+    if (!card || !(card instanceof HTMLElement)) return;
+
+    const update = () => {
+      setW(Math.max(1, card.clientWidth));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(card);
+    return () => ro.disconnect();
+  }, []);
+
+  const h = AI_CHAT_TOOL_CHAMFER_PX;
+  const xQ = w * 0.25;
+  const xJ = xQ + h;
+  const d =
+    xJ <= w
+      ? `M 0 0 L ${xQ} 0 L ${xJ} ${h} L ${w} ${h}`
+      : `M 0 0 L ${xQ} 0 L ${w} ${h}`;
+
+  return (
+    <svg
+      ref={svgRef}
+      className="ai-chat-tool-card__crease"
+      viewBox={`0 0 ${w} ${h}`}
+      preserveAspectRatio="none"
+      aria-hidden
+    >
+      <path
+        d={d}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        vectorEffect="nonScalingStroke"
+      />
+    </svg>
+  );
+}
 
 type ParsedToolDisplay =
   | {
@@ -403,6 +457,7 @@ export function AiChatToolResultBlock({
 
   return (
     <details className="ai-chat-tool-card">
+      <AiChatToolCreaseSvg />
       <summary className="ai-chat-tool-card__summary">
         <div className="ai-chat-tool-card__summary-row">
           <McpIcon size={16} className="ai-chat-tool-card__icon" />

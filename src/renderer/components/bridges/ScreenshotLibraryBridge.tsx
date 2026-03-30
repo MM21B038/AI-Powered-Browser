@@ -2,8 +2,10 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactElement,
+  type UIEvent,
 } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -11,6 +13,13 @@ import {
   removeScreenshotLibraryEntriesByIds,
   type ScreenshotLibraryEntry,
 } from "../../services/screenshot-library-store";
+import {
+  formatScreenshotTileTime,
+  groupScreenshotLibraryByDay,
+} from "../../services/screenshot-library-date-groups";
+
+const PAGE_SIZE = 40;
+const SCROLL_LOAD_THRESHOLD_PX = 200;
 
 function modeLabel(mode: ScreenshotLibraryEntry["mode"]): string {
   switch (mode) {
@@ -62,6 +71,8 @@ export function ScreenshotLibraryBridge(): ReactElement | null {
   const [detailDataUrl, setDetailDataUrl] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [query, setQuery] = useState("");
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const galleryScrollRef = useRef<HTMLDivElement>(null);
 
   const refreshItems = useCallback(() => {
     setItems(loadScreenshotLibrary());
@@ -79,10 +90,35 @@ export function ScreenshotLibraryBridge(): ReactElement | null {
     return () => window.removeEventListener("orion-screenshot-library-changed", onLib);
   }, [bridge, refreshItems]);
 
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(
+      (it) =>
+        it.filename.toLowerCase().includes(q) ||
+        it.url.toLowerCase().includes(q) ||
+        it.title.toLowerCase().includes(q),
+    );
+  }, [items, query]);
+
+  const visibleItems = useMemo(
+    () => filtered.slice(0, visibleCount),
+    [filtered, visibleCount],
+  );
+
+  const daySections = useMemo(
+    () => groupScreenshotLibraryByDay(visibleItems),
+    [visibleItems],
+  );
+
+  useEffect(() => {
+    setVisibleCount(Math.min(PAGE_SIZE, Math.max(0, filtered.length)));
+  }, [query, items, filtered.length]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      for (const it of items) {
+      for (const it of visibleItems) {
         if (cancelled) return;
         const r = await window.electronAPI.readScreenshotFile(it.path);
         if (cancelled || !r?.success || !r.data?.dataUrl) continue;
@@ -95,7 +131,20 @@ export function ScreenshotLibraryBridge(): ReactElement | null {
     return () => {
       cancelled = true;
     };
-  }, [items]);
+  }, [visibleItems]);
+
+  const onGalleryScroll = useCallback(
+    (e: UIEvent<HTMLDivElement>) => {
+      const el = e.currentTarget;
+      if (
+        el.scrollTop + el.clientHeight >=
+        el.scrollHeight - SCROLL_LOAD_THRESHOLD_PX
+      ) {
+        setVisibleCount((n) => Math.min(n + PAGE_SIZE, filtered.length));
+      }
+    },
+    [filtered.length],
+  );
 
   const detailEntry = useMemo(
     () => (detailId ? items.find((i) => i.id === detailId) ?? null : null),
@@ -141,17 +190,6 @@ export function ScreenshotLibraryBridge(): ReactElement | null {
       }),
     );
   }, [detailId, items]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(
-      (it) =>
-        it.filename.toLowerCase().includes(q) ||
-        it.url.toLowerCase().includes(q) ||
-        it.title.toLowerCase().includes(q),
-    );
-  }, [items, query]);
 
   const deleteByIds = useCallback(
     async (ids: string[]) => {
@@ -235,6 +273,59 @@ export function ScreenshotLibraryBridge(): ReactElement | null {
     </div>
   ) : null;
 
+  const renderTile = (it: ScreenshotLibraryEntry) => {
+    const checked = selected.has(it.id);
+    const thumb = thumbs[it.id];
+    return (
+      <div
+        key={it.id}
+        className={`screenshot-lib-tile${checked ? " screenshot-lib-tile--selected" : ""}`}
+        role="button"
+        tabIndex={0}
+        onClick={() => setDetailId(it.id)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setDetailId(it.id);
+          }
+        }}
+      >
+        <label
+          className="screenshot-lib-tile-check"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={(e) => {
+              setSelected((s) => {
+                const n = new Set(s);
+                if (e.target.checked) n.add(it.id);
+                else n.delete(it.id);
+                return n;
+              });
+            }}
+            aria-label={`Select ${it.filename}`}
+          />
+        </label>
+        <div className="screenshot-lib-tile-thumb-wrap">
+          {thumb ? (
+            <img className="screenshot-lib-tile-thumb" src={thumb} alt="" />
+          ) : (
+            <div className="screenshot-lib-tile-placeholder" aria-hidden />
+          )}
+        </div>
+        <div className="screenshot-lib-tile-meta">
+          <span className="screenshot-lib-tile-name">{it.filename}</span>
+          <span className="screenshot-lib-tile-time">
+            {formatScreenshotTileTime(it.takenAt)}
+          </span>
+        </div>
+      </div>
+    );
+  };
+
   const listBody =
     filtered.length === 0 ? (
       <div className="side-empty">
@@ -244,59 +335,33 @@ export function ScreenshotLibraryBridge(): ReactElement | null {
         </div>
       </div>
     ) : (
-      <div className="screenshot-lib-grid">
-        {filtered.map((it) => {
-          const checked = selected.has(it.id);
-          const thumb = thumbs[it.id];
-          return (
-            <div
-              key={it.id}
-              className={`screenshot-lib-tile${checked ? " screenshot-lib-tile--selected" : ""}`}
-              role="button"
-              tabIndex={0}
-              onClick={() => setDetailId(it.id)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  setDetailId(it.id);
-                }
-              }}
-            >
-              <label
-                className="screenshot-lib-tile-check"
-                onClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => e.stopPropagation()}
+      <div
+        ref={galleryScrollRef}
+        className="screenshot-lib-scroll"
+        onScroll={onGalleryScroll}
+      >
+        {daySections.map((section) => (
+          <section
+            key={section.dayKey}
+            className="screenshot-lib-section"
+            aria-labelledby={`screenshot-section-${section.dayKey}`}
+          >
+            <div className="screenshot-lib-section-head">
+              <h3
+                className="screenshot-lib-section-title"
+                id={`screenshot-section-${section.dayKey}`}
               >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={(e) => {
-                    setSelected((s) => {
-                      const n = new Set(s);
-                      if (e.target.checked) n.add(it.id);
-                      else n.delete(it.id);
-                      return n;
-                    });
-                  }}
-                  aria-label={`Select ${it.filename}`}
-                />
-              </label>
-              <div className="screenshot-lib-tile-thumb-wrap">
-                {thumb ? (
-                  <img className="screenshot-lib-tile-thumb" src={thumb} alt="" />
-                ) : (
-                  <div className="screenshot-lib-tile-placeholder" aria-hidden />
-                )}
-              </div>
-              <div className="screenshot-lib-tile-meta">
-                <span className="screenshot-lib-tile-name">{it.filename}</span>
-                <span className="screenshot-lib-tile-time">
-                  {new Date(it.takenAt).toLocaleString()}
-                </span>
-              </div>
+                {section.label}
+              </h3>
             </div>
-          );
-        })}
+            <div className="screenshot-lib-grid">{section.items.map(renderTile)}</div>
+          </section>
+        ))}
+        {visibleCount < filtered.length ? (
+          <div className="screenshot-lib-load-hint" aria-hidden>
+            Scroll for more…
+          </div>
+        ) : null}
       </div>
     );
 

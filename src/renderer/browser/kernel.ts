@@ -21,7 +21,10 @@ import { loadShellWorkspacePreference, saveShellWorkspacePreference } from "../c
 import { escapeHtml, renderChatMarkdownToHtml } from "../chat/chat-markdown";
 import { initUiTooltips } from "../ui/ui-tooltips";
 import { applyIntelligentWorkspaceLayoutToDom } from "../state/intelligent-workspace-layout";
-import { appendScreenshotLibraryEntry } from "../services/screenshot-library-store";
+import {
+  appendScreenshotLibraryEntry,
+  type ScreenshotCaptureMode,
+} from "../services/screenshot-library-store";
 
 /**
  * Browser kernel: tab/webview/profile/chat/tools. Call initBrowserKernel() after the shell DOM
@@ -583,14 +586,22 @@ function ensureReactPortalHostsAfterShellChange() {
   setupReactPortalHosts();
   refreshDomRefsFromDocument();
   if (USE_REACT_MODALS) wireReactSettingsButtons();
-  if (!browserFrame) return;
-  if (prevFrame !== browserFrame || (prevFrame && !prevFrame.isConnected)) {
-    webviewReady = false;
-    if (browserFrame) setupWebviewEvents(browserFrame);
-    const t = getTab(activeTabId);
-    if (t) {
-      t.initialized = false;
-      switchTab(activeTabId);
+  try {
+    if (!browserFrame) return;
+    if (prevFrame !== browserFrame || (prevFrame && !prevFrame.isConnected)) {
+      webviewReady = false;
+      if (browserFrame) setupWebviewEvents(browserFrame);
+      const t = getTab(activeTabId);
+      if (t) {
+        t.initialized = false;
+        switchTab(activeTabId);
+      }
+    }
+  } finally {
+    try {
+      restoreUnseenScreenshotRailBadgeFromStorage();
+    } catch {
+      /* ignore */
     }
   }
 }
@@ -682,16 +693,24 @@ function leaveWorkbenchSurfaceSync() {
 
 /** Intelligent assistant: large modal (intelligent workspace). Browser: side panel. */
 function openIntelligentAssistantSettings() {
-  closeBrowserSettingsSidePanel();
-  closeBrowserChromeSettingsOverlay();
+  /* Do not call closeBrowserChromeSettingsOverlay() here: it clears data-settings-open and
+   * webviewOverlayHost aria-hidden. openIntelligentAssistantSettings runs on every workspace
+   * settings click; when the React modal is already open, setState(true) is a no-op so
+   * SettingsPanel's layout effect does not re-run — the overlay stays torn down and the modal
+   * looks closed / will not reopen. closeSidePanels() already closes the browser settings column. */
   closeSidePanels();
   const hub = document.getElementById("toolsHubRoot");
   if (hub && hub.classList.contains("tools-hub--open")) {
     closeToolsHub();
   }
   leaveWorkbenchSurfaceSync();
-  document.getElementById("appContainer")?.removeAttribute("data-settings-open");
+  /* React SettingsPanel sets data-settings-open when the modal is open. Clearing it here on
+   * every call broke sync: reopening while already on intelligent removed the attribute but
+   * React did not re-run the layout effect (open stayed true), leaving overlay/CSS out of sync
+   * until the modal broke (e.g. settings would not open again). Only clear when switching
+   * into intelligent workspace from elsewhere. */
   if (shellWorkspace !== "intelligent") {
+    document.getElementById("appContainer")?.removeAttribute("data-settings-open");
     enterIntelligentWorkspace();
   }
   window.dispatchEvent(new CustomEvent("intelligent-assistant-settings-open"));
@@ -1843,17 +1862,6 @@ function waitForWebviewDomReady(wv, timeoutMs = 8000) {
   });
 }
 
-function ensureScreenshotsPanelOpen() {
-  const p = document.getElementById("screenshotsPanel");
-  if (!p) return;
-  lastScreenshotCrumbs = ["Screenshot Library"];
-  if (p.classList.contains(SIDE_PANEL_OPEN_CLASS)) {
-    syncTopChromeForSurface();
-    return;
-  }
-  toggleSidePanel("screenshotsPanel");
-}
-
 async function copyScreenshotToClipboard(dataUrl) {
   try {
     const res = await fetch(dataUrl);
@@ -1866,6 +1874,128 @@ async function copyScreenshotToClipboard(dataUrl) {
     } catch {
       /* ignore */
     }
+  }
+}
+
+/** New captures while the library panel is closed — shown on #screenshotsBtnBadge (persisted). */
+const UNSEEN_SCREENSHOT_LIBRARY_COUNT_KEY = "orion_screenshots_library_unseen_count";
+const UNSEEN_SCREENSHOT_LIBRARY_COUNT_MAX = 999;
+
+let unseenScreenshotLibraryCount = 0;
+
+function readPersistedUnseenScreenshotLibraryCount() {
+  try {
+    const raw = localStorage.getItem(UNSEEN_SCREENSHOT_LIBRARY_COUNT_KEY);
+    if (raw == null || raw === "") return 0;
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 0) return 0;
+    return Math.min(Math.floor(n), UNSEEN_SCREENSHOT_LIBRARY_COUNT_MAX);
+  } catch {
+    return 0;
+  }
+}
+
+function writePersistedUnseenScreenshotLibraryCount(n) {
+  try {
+    if (n <= 0) localStorage.removeItem(UNSEEN_SCREENSHOT_LIBRARY_COUNT_KEY);
+    else
+      localStorage.setItem(
+        UNSEEN_SCREENSHOT_LIBRARY_COUNT_KEY,
+        String(Math.min(Math.floor(n), UNSEEN_SCREENSHOT_LIBRARY_COUNT_MAX)),
+      );
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function restoreUnseenScreenshotRailBadgeFromStorage() {
+  unseenScreenshotLibraryCount = readPersistedUnseenScreenshotLibraryCount();
+  syncScreenshotsRailBadge();
+}
+
+function isScreenshotsLibraryPanelOpen() {
+  return !!document
+    .getElementById("screenshotsPanel")
+    ?.classList.contains(SIDE_PANEL_OPEN_CLASS);
+}
+
+function pulseScreenshotsRailBadge() {
+  const badge = document.getElementById("screenshotsBtnBadge");
+  if (!badge || badge.hidden) return;
+  try {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
+  } catch {
+    /* ignore */
+  }
+  badge.classList.remove("rail-btn__badge--pop");
+  void badge.offsetWidth;
+  badge.classList.add("rail-btn__badge--pop");
+  window.setTimeout(() => badge.classList.remove("rail-btn__badge--pop"), 480);
+}
+
+function bumpUnseenScreenshotLibraryCount() {
+  if (isScreenshotsLibraryPanelOpen()) return;
+  unseenScreenshotLibraryCount = Math.min(
+    unseenScreenshotLibraryCount + 1,
+    UNSEEN_SCREENSHOT_LIBRARY_COUNT_MAX,
+  );
+  writePersistedUnseenScreenshotLibraryCount(unseenScreenshotLibraryCount);
+  syncScreenshotsRailBadge();
+  pulseScreenshotsRailBadge();
+}
+
+function clearUnseenScreenshotLibraryCount() {
+  unseenScreenshotLibraryCount = 0;
+  writePersistedUnseenScreenshotLibraryCount(0);
+  syncScreenshotsRailBadge();
+}
+
+function syncScreenshotsRailBadge() {
+  const badge = document.getElementById("screenshotsBtnBadge");
+  const btn = document.getElementById("screenshotsBtn");
+  if (!badge) return;
+  const n = unseenScreenshotLibraryCount;
+  if (n <= 0) {
+    badge.hidden = true;
+    badge.textContent = "";
+    badge.classList.remove("rail-btn__badge--double", "rail-btn__badge--triple");
+    if (btn) {
+      btn.setAttribute("aria-label", "Screenshot library");
+      btn.setAttribute("title", "Screenshot library");
+    }
+    return;
+  }
+  const label = n > 99 ? "99+" : String(n);
+  badge.hidden = false;
+  badge.textContent = label;
+  badge.classList.toggle("rail-btn__badge--double", label.length >= 2);
+  badge.classList.toggle("rail-btn__badge--triple", label.length >= 3);
+  if (btn) {
+    btn.setAttribute(
+      "aria-label",
+      `Screenshot library, ${label} new since last opened`,
+    );
+    btn.setAttribute("title", `Screenshot library (${label} new)`);
+  }
+}
+
+function screenshotSavedToastMessage(
+  mode: ScreenshotCaptureMode | undefined,
+  filename: string,
+): string {
+  const base = filename || "image.png";
+  switch (mode) {
+    case "fullpage":
+      return `📸 Full page saved · ${base}`;
+    case "region":
+      return `📸 Region saved · ${base}`;
+    case "element":
+      return `📸 Element saved · ${base}`;
+    case "background":
+      return `📸 Background capture saved · ${base}`;
+    case "viewport":
+    default:
+      return `📸 Screenshot saved · ${base}`;
   }
 }
 
@@ -1886,7 +2016,8 @@ async function onScreenshotSaved(dataUrl, saved, meta) {
     height: meta?.height,
   });
   window.dispatchEvent(new CustomEvent("orion-screenshot-library-changed"));
-  ensureScreenshotsPanelOpen();
+  showToast(screenshotSavedToastMessage(meta?.mode, saved.filename), 3000);
+  bumpUnseenScreenshotLibraryCount();
 }
 
 async function takeScreenshot(mode = "viewport") {
@@ -1916,7 +2047,6 @@ async function takeScreenshot(mode = "viewport") {
     }
     const saved = await window.electronAPI.saveScreenshot(dataUrl);
     if (saved.success) {
-      showToast(`✅ Saved: ${saved.filename}`);
       addScreenshotMessage(dataUrl, saved.filename);
       await onScreenshotSaved(dataUrl, saved, {
         mode: mode === "fullpage" ? "fullpage" : "viewport",
@@ -1999,7 +2129,6 @@ function takeScreenshotSelect() {
       const dataUrl = cropImage(img, x, y, w, h, scale.x, scale.y);
       const saved = await window.electronAPI.saveScreenshot(dataUrl);
       if (saved.success) {
-        showToast(`✅ Saved: ${saved.filename}`);
         addScreenshotMessage(dataUrl, saved.filename);
         await onScreenshotSaved(dataUrl, saved, {
           mode: "region",
@@ -2862,7 +2991,6 @@ function getKernelAutomationContext() {
           const dataUrl = r?.data?.dataUrl || "";
           const saved = await window.electronAPI.saveScreenshot(dataUrl);
           if (saved.success) {
-            showToast(`✅ Saved: ${saved.filename}`);
             addScreenshotMessage(dataUrl, saved.filename);
             let pageUrl = "";
             let pageTitle = "";
@@ -3857,8 +3985,8 @@ function startElementScreenshot(rearm = false) {
         const dataUrl = cropImage(img, r.x, r.y, r.w, r.h, scaleX, scaleY);
         const saved = await window.electronAPI.saveScreenshot(dataUrl);
         if (saved.success) {
-          showToast(`✅ Element captured: ${saved.filename}`);
           if (isReactAiChatShellActive()) {
+            showToast(`📸 Element captured · ${saved.filename}`, 3000);
             insertIntoAiComposerText(
               `📷 **Element snapshot** saved as \`${saved.filename}\`. Describe what to do with this region.`,
             );
@@ -4364,7 +4492,6 @@ function showPickerActionPopup(sel, info, canFill, isCheckable, recordStore = tr
       const dataUrl = cropImage(img, r.x, r.y, r.w, r.h, scaleX, scaleY);
       const saved = await window.electronAPI.saveScreenshot(dataUrl);
       if (saved.success) {
-        showToast(`✅ ${saved.filename}`);
         addScreenshotMessage(dataUrl, saved.filename);
         await onScreenshotSaved(dataUrl, saved, {
           mode: "element",
@@ -4923,6 +5050,7 @@ function toggleSidePanel(id) {
     prev.classList.add(SIDE_PANEL_INSTANT_CLASS);
     panel.classList.add(SIDE_PANEL_OPEN_CLASS);
     panel.setAttribute("aria-hidden", "false");
+    if (panel.id === "screenshotsPanel") clearUnseenScreenshotLibraryCount();
     prev.classList.remove(SIDE_PANEL_OPEN_CLASS);
     prev.setAttribute("aria-hidden", "true");
     window.requestAnimationFrame(() => {
@@ -4945,6 +5073,7 @@ function toggleSidePanel(id) {
 
   panel.classList.add(SIDE_PANEL_OPEN_CLASS);
   panel.setAttribute("aria-hidden", "false");
+  if (id === "screenshotsPanel") clearUnseenScreenshotLibraryCount();
   // If we're coming from the tools hub, the panel's first "open" frame can still be near-transparent
   // (transition start). Force it to be instantly visible for a frame to avoid a webview flash.
   if (hubWasOpen || settingsWasOpen || workbenchWasOpen) {
@@ -5563,6 +5692,11 @@ window.legacyBrowser = {
   try { setupToolsPanel(); } catch (e) { console.warn("[kernel] setupToolsPanel:", e); }
   try { if (!USE_REACT_CHAT_RESIZE) setupResizeHandle(); } catch (e) { console.warn("[kernel] setupResizeHandle:", e); }
   try { setupDataPanelButtons(); } catch (e) { console.warn("[kernel] setupDataPanelButtons:", e); }
+  try {
+    restoreUnseenScreenshotRailBadgeFromStorage();
+  } catch (e) {
+    console.warn("[kernel] screenshot rail badge restore:", e);
+  }
   try { if (!USE_REACT_MODALS) setupImportWizard(); } catch (e) { console.warn("[kernel] setupImportWizard:", e); }
   try { if (!USE_REACT_MODALS) { loadSystemInfo(); setupProfileModal(); checkFirstRun(); } } catch (e) { console.warn("[kernel] legacyProfileSetup:", e); }
 

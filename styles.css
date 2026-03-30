@@ -515,6 +515,86 @@ samp {
   opacity: 0.92;
 }
 
+.rail-btn--badge-host {
+  position: relative;
+}
+
+.rail-btn__badge {
+  position: absolute;
+  top: -4px;
+  right: -5px;
+  box-sizing: border-box;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 800;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.06em;
+  line-height: 1;
+  text-align: center;
+  color: #fff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+  background: radial-gradient(
+      120% 80% at 30% 15%,
+      color-mix(in srgb, #fff 28%, transparent),
+      transparent 55%
+    ),
+    linear-gradient(
+      155deg,
+      color-mix(in srgb, var(--accent, #7c6af7) 95%, #fff) 0%,
+      color-mix(in srgb, var(--accent, #7c6af7) 55%, #1a1030) 100%
+    );
+  border: 2px solid color-mix(in srgb, var(--bg1, #141418) 94%, rgba(255, 255, 255, 0.06));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, rgba(255, 255, 255, 0.35) 55%, transparent) inset,
+    0 2px 0 color-mix(in srgb, rgba(255, 255, 255, 0.12) 70%, transparent) inset,
+    0 4px 14px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform-origin: 85% 15%;
+}
+
+.rail-btn__badge--double {
+  min-width: 22px;
+  padding: 0 6px;
+}
+
+.rail-btn__badge--triple {
+  min-width: 28px;
+  padding: 0 5px;
+  letter-spacing: -0.04em;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .rail-btn__badge--pop {
+    animation: rail-badge-pop 0.45s cubic-bezier(0.34, 1.45, 0.64, 1);
+  }
+}
+
+@keyframes rail-badge-pop {
+  0% {
+    transform: scale(0.82);
+    filter: brightness(1.15);
+  }
+  55% {
+    transform: scale(1.12);
+    filter: brightness(1.05);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
+.rail-btn__badge[hidden] {
+  display: none !important;
+}
+
 .rail-btn:hover {
   background: var(--bg3);
   color: var(--text);
@@ -5457,6 +5537,8 @@ webview {
 .app-container[data-shell-workspace="intelligent"] {
   --iw-history-width: 280px;
   --iw-history-collapsed-width: 52px;
+  /* Keep in sync with IW_HISTORY_WIDTH_MAX (intelligent-workspace-layout.ts) */
+  --iw-history-width-max: 280px;
 }
 
 .app-container[data-shell-workspace="intelligent"] .chat-wrapper {
@@ -5466,6 +5548,8 @@ webview {
   align-items: stretch;
   /* Space between history, splitter, and AI assistant */
   gap: 12px;
+  /* Query-rail hover preview extends left over the assistant; must not clip */
+  overflow: visible;
 }
 
 .chat-history-panel {
@@ -5485,7 +5569,7 @@ webview {
   flex-direction: column;
   flex: 0 0 auto;
   width: var(--iw-history-width, 280px);
-  max-width: min(50vw, 720px);
+  max-width: min(50vw, var(--iw-history-width-max, 720px));
   min-width: 0;
   position: relative;
 }
@@ -5602,35 +5686,40 @@ webview {
   border-color: var(--border2);
 }
 
+/* Invisible drag strip only — no visible rail, border, or grip (still resizable). */
 .app-container[data-shell-workspace="intelligent"] .resize-handle--history {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
-  flex: 0 0 14px;
-  width: 14px;
-  min-width: 14px;
-  margin: 2px 0;
+  flex: 0 0 6px;
+  width: 6px;
+  min-width: 6px;
+  margin: 0 -12px;
+  padding: 0;
   cursor: col-resize;
   align-self: stretch;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--bg2) 70%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border2) 80%, transparent);
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   position: relative;
-  z-index: 2;
-  color: var(--text3);
-  transition:
-    background 0.12s ease,
-    color 0.12s ease,
-    border-color 0.12s ease;
+  z-index: 5;
+  color: transparent;
+  touch-action: none;
+}
+
+.app-container[data-shell-workspace="intelligent"] .resize-handle--history::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -10px;
+  right: -10px;
+  cursor: col-resize;
 }
 
 .app-container[data-shell-workspace="intelligent"] .resize-handle--history .resize-handle__grip {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.45;
-  pointer-events: none;
-  transition: opacity 0.12s ease;
+  display: none !important;
 }
 
 .app-container[data-shell-workspace="intelligent"]
@@ -5638,26 +5727,6 @@ webview {
   ~ .resize-handle--history {
   display: none !important;
   pointer-events: none;
-}
-
-.app-container[data-shell-workspace="intelligent"] .resize-handle--history:hover {
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg2));
-  border-color: color-mix(in srgb, var(--accent) 32%, var(--border2));
-  color: var(--text2);
-}
-
-.app-container[data-shell-workspace="intelligent"] .resize-handle--history:hover .resize-handle__grip {
-  opacity: 0.95;
-}
-
-.app-container[data-shell-workspace="intelligent"] .resize-handle--history:active {
-  background: color-mix(in srgb, var(--accent) 22%, var(--bg2));
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border2));
-  color: var(--text);
-}
-
-.app-container[data-shell-workspace="intelligent"] .resize-handle--history:active .resize-handle__grip {
-  opacity: 1;
 }
 
 
@@ -5900,6 +5969,7 @@ webview {
   max-width: none;
   min-width: 0;
   flex: 1 1 auto;
+  overflow: visible;
 }
 
 .chat-wrapper.chat-closed .chat-section {
@@ -5927,7 +5997,8 @@ webview {
   display: none !important;
 }
 
-.app-container[data-shell-workspace="intelligent"] .resize-handle {
+/* Only the in-column splitter (#resizeHandle); NOT .resize-handle--history (same base class). */
+.app-container[data-shell-workspace="intelligent"] .chat-section > .resize-handle {
   display: none !important;
 }
 
@@ -7079,50 +7150,137 @@ webview {
 .settings-dashboard--intelligent-suite-with-nav {
   flex-direction: row;
   align-items: flex-start;
-  gap: 18px;
+  gap: 10px;
+  padding: 10px 6px 14px 2px;
 }
 
 .settings-intelligent-nav {
   position: sticky;
   top: 0;
-  flex: 0 0 148px;
+  flex: 0 0 156px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 2px 14px 12px 0;
+  gap: 0;
+  padding: 2px 4px 10px 0;
   align-self: flex-start;
   max-height: min(62vh, 560px);
   overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
-  border-right: 1px solid var(--border2);
+  border-right: none;
+}
+
+.settings-intelligent-nav__track {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg2) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border2) 70%, transparent);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+}
+
+.settings-intelligent-nav__indicator {
+  position: absolute;
+  left: 6px;
+  top: 0;
+  width: 3px;
+  border-radius: 3px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent, #7c6af7) 92%, #fff) 0%,
+    color-mix(in srgb, var(--accent, #7c6af7) 65%, #000) 100%
+  );
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent),
+    0 2px 8px color-mix(in srgb, var(--accent) 25%, transparent);
+  pointer-events: none;
+  z-index: 0;
+  transition:
+    transform 0.26s cubic-bezier(0.33, 1, 0.68, 1),
+    height 0.22s cubic-bezier(0.33, 1, 0.68, 1),
+    opacity 0.18s ease;
+  will-change: transform, height;
 }
 
 .settings-intelligent-nav__btn {
+  position: relative;
+  z-index: 1;
   display: block;
   width: 100%;
   text-align: left;
-  padding: 8px 10px;
+  padding: 9px 10px 9px 12px;
   border-radius: 8px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text2);
   font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.01em;
   cursor: pointer;
   transition:
-    background 0.12s,
-    color 0.12s,
-    border-color 0.12s;
+    background 0.16s ease,
+    color 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease;
 }
 
 .settings-intelligent-nav__btn:hover {
-  background: var(--bg3);
+  background: color-mix(in srgb, var(--bg3) 85%, transparent);
   color: var(--text);
+}
+
+.settings-intelligent-nav__btn--active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg3));
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent) inset;
 }
 
 .settings-intelligent-nav__btn:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
   outline-offset: 2px;
+}
+
+/* Icon-only rail: minimal width; labels via aria-label / title */
+.settings-intelligent-nav--icons {
+  flex: 0 0 46px;
+  padding: 2px 2px 8px 0;
+}
+
+.settings-intelligent-nav--icons .settings-intelligent-nav__track {
+  padding: 4px;
+  gap: 2px;
+}
+
+.settings-intelligent-nav--icons .settings-intelligent-nav__indicator {
+  left: 4px;
+}
+
+.settings-intelligent-nav--icons .settings-intelligent-nav__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1;
+  min-height: 0;
+  padding: 8px;
+  text-align: center;
+}
+
+.settings-intelligent-nav--icons .settings-intelligent-nav__btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-intelligent-nav__indicator {
+    transition: none;
+  }
 }
 
 .settings-intelligent-nav-content {
@@ -7134,7 +7292,7 @@ webview {
 }
 
 .settings-intelligent-section-anchor {
-  scroll-margin-top: 20px;
+  scroll-margin-top: 28px;
 }
 
 @media (max-width: 640px) {
@@ -7147,17 +7305,61 @@ webview {
     flex: 0 0 auto;
     max-height: none;
     flex-direction: row;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    align-items: stretch;
     border-right: none;
-    border-bottom: 1px solid var(--border2);
+    border-bottom: 1px solid color-mix(in srgb, var(--border2) 88%, transparent);
     padding: 0 0 12px;
     width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    gap: 0;
+  }
+
+  .settings-intelligent-nav__track {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: 8px 4px;
+    min-width: min-content;
+    border-radius: 12px;
+  }
+
+  .settings-intelligent-nav__indicator {
+    display: none;
   }
 
   .settings-intelligent-nav__btn {
+    flex: 0 0 auto;
     width: auto;
-    flex: 1 1 auto;
     min-width: 96px;
+    text-align: center;
+    padding: 8px 12px;
+    scroll-snap-align: start;
+    white-space: nowrap;
+  }
+
+  .settings-intelligent-nav--icons .settings-intelligent-nav__btn {
+    min-width: 40px;
+    width: 40px;
+    aspect-ratio: 1;
+    padding: 8px;
+    white-space: normal;
+  }
+
+  .settings-intelligent-nav__btn--active {
+    box-shadow:
+      0 2px 0 0 color-mix(in srgb, var(--accent) 75%, transparent),
+      0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent) inset;
+  }
+
+  .webview-overlay-host
+    .settings-dashboard--intelligent-suite-with-nav
+    .settings-intelligent-nav {
+    padding: 0 0 10px;
   }
 }
 
@@ -7639,6 +7841,120 @@ webview {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accentGlow);
   color: var(--accent);
+}
+
+/* Intelligent Appearance: first 3 themes + expandable rest */
+.theme-grid--intelligent-settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-items: start;
+}
+
+.theme-grid--intelligent-settings .theme-card--more {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg3));
+  min-height: 72px;
+  justify-content: center;
+  gap: 6px;
+}
+
+.theme-grid--intelligent-settings .theme-card--more:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg3));
+}
+
+.theme-grid--intelligent-settings .theme-card__more-glyph {
+  font-size: 1.6rem;
+  font-weight: 300;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.theme-grid--intelligent-settings .theme-card__more-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text2);
+}
+
+.theme-grid--intelligent-settings--expanded .theme-card {
+  animation: themeGridCardReveal 0.32s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+.theme-grid--intelligent-settings--expanded .theme-card:nth-child(1) {
+  animation-delay: 0.01s;
+}
+.theme-grid--intelligent-settings--expanded .theme-card:nth-child(2) {
+  animation-delay: 0.03s;
+}
+.theme-grid--intelligent-settings--expanded .theme-card:nth-child(3) {
+  animation-delay: 0.05s;
+}
+.theme-grid--intelligent-settings--expanded .theme-card:nth-child(4) {
+  animation-delay: 0.07s;
+}
+.theme-grid--intelligent-settings--expanded .theme-card:nth-child(5) {
+  animation-delay: 0.09s;
+}
+.theme-grid--intelligent-settings--expanded .theme-card:nth-child(6) {
+  animation-delay: 0.11s;
+}
+.theme-grid--intelligent-settings--expanded .theme-card:nth-child(7) {
+  animation-delay: 0.13s;
+}
+.theme-grid--intelligent-settings--expanded .theme-card:nth-child(8) {
+  animation-delay: 0.15s;
+}
+.theme-grid--intelligent-settings--expanded .theme-card:nth-child(9) {
+  animation-delay: 0.17s;
+}
+.theme-grid--intelligent-settings--expanded .theme-card:nth-child(10) {
+  animation-delay: 0.19s;
+}
+.theme-grid--intelligent-settings--expanded .theme-card:nth-child(11) {
+  animation-delay: 0.21s;
+}
+
+@keyframes themeGridCardReveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.theme-grid__collapse {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--border2) 80%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg3) 88%, transparent);
+  color: var(--text2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.theme-grid__collapse:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg3));
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-grid--intelligent-settings--expanded .theme-card {
+    animation: none;
+  }
 }
 
 .theme-preview {
@@ -8393,11 +8709,19 @@ kbd {
 }
 
 /* ── Toast ───────────────────────────────────────────────── */
+/* Portal mount for ToastBridge; no .toast here — nested .toast + .show must not sit inside opacity:0 */
+.toast-host {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 99999;
+}
+
 .toast {
   position: fixed;
   bottom: 32px;
   left: 50%;
-  transform: translateX(-50%) translateY(20px);
+  transform: translateX(-50%) translateY(16px) scale(0.98);
   background: var(--bg4);
   border: 1px solid var(--border2);
   color: var(--text);
@@ -8409,8 +8733,8 @@ kbd {
   opacity: 0;
   pointer-events: none;
   transition:
-    opacity 0.25s,
-    transform 0.25s;
+    opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   white-space: nowrap;
   max-width: 400px;
@@ -8418,7 +8742,7 @@ kbd {
 
 .toast.show {
   opacity: 1;
-  transform: translateX(-50%) translateY(0);
+  transform: translateX(-50%) translateY(0) scale(1);
 }
 
 /* ── Global Scrollbar ────────────────────────────────────── */
@@ -9271,6 +9595,22 @@ kbd {
     visibility 0s linear 0s;
 }
 
+/* Intelligent workspace: the overlay host is full-screen; without this it steals
+   all hits even where the backdrop is inset, so the history splitter cannot be dragged. */
+#appContainer[data-shell-workspace="intelligent"][data-settings-open]
+  .webview-overlay-host {
+  pointer-events: none !important;
+}
+
+#appContainer[data-shell-workspace="intelligent"][data-settings-open]
+  .webview-overlay-host
+  .settings-overlay,
+#appContainer[data-shell-workspace="intelligent"][data-settings-open]
+  .webview-overlay-host
+  .settings-panel {
+  pointer-events: auto !important;
+}
+
 .webview-overlay-host .settings-overlay {
   position: absolute !important;
   inset: 0 !important;
@@ -9280,6 +9620,33 @@ kbd {
   backdrop-filter: blur(14px) saturate(1.2) !important;
   -webkit-backdrop-filter: blur(14px) saturate(1.2) !important;
   animation: webviewSettingsBackdropIn 0.28s ease both !important;
+}
+
+/* Intelligent workspace: do not cover chat history + splitter — same row as
+   .chat-wrapper gap 12px: [panel][gap][14px handle][gap][assistant]. Without this,
+   the modal host blocks pointer events and the column width cannot be dragged. */
+.app-container[data-shell-workspace="intelligent"][data-settings-open]:not(
+    :has(.chat-history-panel--collapsed)
+  )
+  .webview-overlay-host
+  .settings-overlay {
+  inset: auto !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: calc(var(--iw-history-width, 280px) + 12px + 14px + 12px) !important;
+}
+
+.app-container[data-shell-workspace="intelligent"][data-settings-open]:has(
+    .chat-history-panel--collapsed
+  )
+  .webview-overlay-host
+  .settings-overlay {
+  inset: auto !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: calc(var(--iw-history-collapsed-width, 52px) + 12px) !important;
 }
 
 /* Modal / browser-chrome sheet over webview only (not full-window fixed). */
@@ -9347,6 +9714,87 @@ kbd {
   max-width: min(920px, calc(100vw - 40px)) !important;
 }
 
+/* Intelligent settings modal: single scroll surface (dashboard), clearer header, content rhythm */
+.webview-overlay-host
+  .settings-panel:not(.settings-panel--workspace):has(
+    .settings-dashboard--intelligent-suite-with-nav
+  )
+  .settings-body {
+  overflow: hidden !important;
+  padding: 8px 8px 14px !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.webview-overlay-host
+  .settings-panel.settings-panel--modal-xl:not(.settings-panel--workspace):has(
+    .settings-dashboard--intelligent-suite-with-nav
+  )
+  .settings-header {
+  padding: 18px 20px 16px !important;
+  border-bottom: 1px solid color-mix(in srgb, var(--border2) 88%, transparent) !important;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg2) 100%, transparent) 0%,
+    color-mix(in srgb, var(--bg1) 65%, transparent) 100%
+  ) !important;
+}
+
+.webview-overlay-host
+  .settings-panel.settings-panel--modal-xl:not(.settings-panel--workspace):has(
+    .settings-dashboard--intelligent-suite-with-nav
+  )
+  .settings-header h3 {
+  font-size: 1.1rem !important;
+  letter-spacing: -0.02em !important;
+}
+
+.webview-overlay-host
+  .settings-panel.settings-panel--modal-xl:not(.settings-panel--workspace):has(
+    .settings-dashboard--intelligent-suite-with-nav
+  )
+  .settings-header-sub {
+  margin-top: 4px !important;
+  line-height: 1.45 !important;
+  max-width: 36em !important;
+}
+
+.webview-overlay-host
+  .settings-dashboard--intelligent-suite-with-nav
+  .settings-intelligent-nav-content {
+  gap: 16px;
+  max-width: none;
+  flex: 1;
+  min-width: 0;
+}
+
+.webview-overlay-host
+  .settings-dashboard--intelligent-suite-with-nav
+  .settings-intelligent-section-anchor {
+  scroll-margin-top: 20px;
+}
+
+.webview-overlay-host
+  .settings-intelligent-nav--icons
+  .settings-intelligent-nav__track {
+  background: color-mix(in srgb, var(--bg3) 50%, var(--bg2));
+  border-color: color-mix(in srgb, var(--border2) 75%, transparent);
+}
+
+.webview-overlay-host
+  .settings-intelligent-nav--icons
+  .settings-intelligent-nav__btn:hover {
+  background: color-mix(in srgb, var(--bg3) 92%, transparent);
+  color: var(--text);
+}
+
+.webview-overlay-host
+  .settings-intelligent-nav--icons
+  .settings-intelligent-nav__btn--active {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg3));
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
 .webview-overlay-host .settings-header {
   display: flex !important;
   align-items: flex-start !important;
@@ -9361,6 +9809,8 @@ kbd {
   border-bottom: 1px solid var(--border) !important;
   border-radius: 16px 16px 0 0 !important;
   flex-shrink: 0 !important;
+  position: relative !important;
+  z-index: 2 !important;
 }
 
 .webview-overlay-host .settings-header h3 {
@@ -10954,6 +11404,35 @@ kbd {
   max-width: 95%;
 }
 
+/* Retry: fade / lift / soft blur out, then message is truncated + pipeline re-runs */
+.ai-chat-msg--retry-exit {
+  pointer-events: none;
+  opacity: 0;
+  transform: translate3d(0, -12px, 0) scale(0.97);
+  filter: blur(5px);
+  transition:
+    opacity 0.48s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.48s cubic-bezier(0.22, 1, 0.36, 1),
+    filter 0.42s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-chat-msg--retry-exit {
+    transition-duration: 0.01ms;
+    transform: none;
+    filter: none;
+  }
+}
+
+.ai-chat-retry-icon {
+  display: block;
+  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.ai-chat-msg-icon-btn--retry:not(:disabled):hover .ai-chat-retry-icon {
+  transform: rotate(-30deg);
+}
+
 .ai-chat-msg--tool {
   align-self: stretch;
   font-size: 11px;
@@ -11211,6 +11690,10 @@ kbd {
 
 /* ── Tool result (MCP): collapsible card + structured result ─ */
 .ai-chat-tool-card {
+  --ai-chat-tool-45: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   align-self: stretch;
   max-width: 100%;
   border-radius: 12px;
@@ -11222,7 +11705,86 @@ kbd {
   overflow: hidden;
   transition:
     border-color 0.2s ease,
-    box-shadow 0.2s ease;
+    box-shadow 0.2s ease,
+    width 0.24s ease,
+    max-width 0.24s ease;
+}
+
+/* Collapsed: compact strip (~¼ chat width); open: full width with narrow header + slanted body top */
+.ai-chat-tool-card:not([open]) {
+  align-self: flex-start;
+  width: 25%;
+  max-width: 25%;
+  min-width: 0;
+}
+
+/* Open: stepped outline — top bar | 45° chamfer | horizontal shelf | right edge down */
+.ai-chat-tool-card[open] {
+  position: relative;
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+  border-radius: 0;
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  clip-path: polygon(
+    0 0,
+    25% 0,
+    calc(25% + var(--ai-chat-tool-45)) var(--ai-chat-tool-45),
+    100% var(--ai-chat-tool-45),
+    100% 100%,
+    0 100%
+  );
+  /* Base uses overflow:hidden; creases extend slightly — keep visible so slope/shelf read */
+  overflow: visible;
+  box-shadow: none;
+  filter: drop-shadow(0 6px 22px color-mix(in srgb, #000 30%, transparent));
+}
+
+/* SVG crease: one path + round join — matches viewBox 400×44 → 25% / 45° / shelf */
+.ai-chat-tool-card__crease {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: var(--ai-chat-tool-45);
+  z-index: 1;
+  pointer-events: none;
+  color: transparent;
+}
+
+.ai-chat-tool-card[open] .ai-chat-tool-card__crease {
+  display: block;
+  overflow: visible;
+  color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  /* Nudge inside clip-path so stroke isn’t half-clipped at the polygon edge */
+  transform: translate(0.5px, 0.5px);
+}
+
+.ai-chat-tool-card[open] .ai-chat-tool-card__summary,
+.ai-chat-tool-card[open] .ai-chat-tool-card__body {
+  position: relative;
+  z-index: 2;
+}
+
+.ai-chat-tool-card[open] .ai-chat-tool-card__summary {
+  align-self: flex-start;
+  width: 25%;
+  max-width: 25%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.ai-chat-tool-card:not([open]) .ai-chat-tool-card__summary-row,
+.ai-chat-tool-card[open] .ai-chat-tool-card__summary-row {
+  min-width: 0;
+}
+
+.ai-chat-tool-card:not([open]) .ai-chat-tool-card__name,
+.ai-chat-tool-card[open] .ai-chat-tool-card__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ai-chat-tool-card:hover {
@@ -11666,6 +12228,11 @@ kbd {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .ai-chat-tool-card {
+    transition:
+      border-color 0.2s ease,
+      box-shadow 0.2s ease !important;
+  }
   .ai-chat-tool-card__body {
     animation: none !important;
   }
@@ -11687,10 +12254,10 @@ kbd {
   align-self: flex-start;
   max-width: 100%;
   margin-bottom: 6px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg2) 92%, var(--bg3));
-  padding: 6px 10px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
   font-size: 11px;
 }
 
@@ -11704,14 +12271,6 @@ kbd {
 
 .ai-chat-thinking summary::-webkit-details-marker {
   display: none;
-}
-
-.ai-chat-thinking--streaming {
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
-}
-
-.ai-chat-thinking--live {
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
 }
 
 .ai-chat-thinking-live-summary {
@@ -12123,6 +12682,7 @@ kbd {
 .model-quick-pick {
   position: relative;
   flex-shrink: 0;
+  z-index: 2;
 }
 
 .model-quick-pick .ai-chat-icon-btn--model {
@@ -12149,7 +12709,7 @@ kbd {
   position: absolute;
   left: 0;
   bottom: calc(100% + 6px);
-  z-index: 50;
+  z-index: 10050;
   min-width: min(280px, 72vw);
   max-width: min(320px, 86vw);
   overflow-y: auto;
@@ -12298,6 +12858,373 @@ kbd {
 
 .ai-chat-send:disabled {
   opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Intelligent workspace: Claude-style — hide shell header, flat column, unified composer */
+.app-container[data-shell-workspace="intelligent"] .chat-section {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-container[data-shell-workspace="intelligent"] .chat-header {
+  display: none !important;
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-panel--intelligent-shell {
+  /* Right padding was 56px; halved to reclaim space for the assistant column */
+  padding: 22px 28px 22px 32px;
+  gap: 10px;
+}
+
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-panel--intelligent-shell
+  .ai-chat-main {
+  gap: 8px;
+  overflow: visible;
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-main--query-rail {
+  flex-direction: row;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-iw-assistant {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ai-chat-messages-column {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-messages-column--iw {
+  flex-direction: column;
+  align-items: stretch;
+  position: relative;
+}
+
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-messages-column--iw
+  .ai-chat-messages-scroll {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+/* Query rail: flex sibling to the right of messages + composer (outside the assistant block) */
+.app-container[data-shell-workspace="intelligent"] .ai-chat-query-rail {
+  --iw-query-rail-strip: 52px;
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--iw-query-rail-strip);
+  width: var(--iw-query-rail-strip);
+  min-width: var(--iw-query-rail-strip);
+  max-width: var(--iw-query-rail-strip);
+  align-self: stretch;
+  padding: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+  min-height: 0;
+  overflow: visible;
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-query-rail__hover-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 8px 0;
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+
+/* Popover opens to the LEFT over the assistant (absolute — does not widen the rail or push off-screen) */
+.app-container[data-shell-workspace="intelligent"] .ai-chat-query-rail__preview {
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-right: 10px;
+  width: min(220px, calc(100vw - 40px));
+  max-width: min(220px, calc(100vw - 40px));
+  max-height: min(70vh, 420px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 30;
+  opacity: 0;
+  visibility: hidden;
+  padding: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  margin-left: 0;
+  border: none;
+  pointer-events: none;
+  overflow: hidden;
+  box-sizing: border-box;
+  transition:
+    opacity 0.18s ease,
+    visibility 0.18s ease;
+}
+
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-query-rail__preview.ai-chat-query-rail__preview--open {
+  opacity: 1;
+  visibility: visible;
+  padding: 8px 10px;
+  overflow-y: auto;
+  pointer-events: auto;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg2) 96%, var(--text) 4%);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--border2) 75%, transparent),
+    0 8px 24px color-mix(in srgb, var(--bg) 40%, transparent);
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-query-rail__preview-block {
+  display: block;
+  width: 100%;
+  margin: 0;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--text2);
+  background: color-mix(in srgb, var(--bg) 88%, var(--text3) 12%);
+  border: 1px solid color-mix(in srgb, var(--border2) 65%, transparent);
+  word-break: break-word;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-query-rail__preview-block:hover,
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-query-rail__preview-block:focus-visible {
+  outline: none;
+  color: var(--text);
+  background: color-mix(in srgb, var(--bg) 82%, var(--text3) 18%);
+}
+
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-query-rail__preview-block--active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg2));
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border2));
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-query-rail__stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 4px 0;
+  min-height: 0;
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-query-rail__segment {
+  flex-shrink: 0;
+  width: 18px;
+  height: 2px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--text3) 60%, transparent);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-query-rail__segment:hover,
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-query-rail__segment:focus-visible {
+  background: color-mix(in srgb, var(--text2) 70%, transparent);
+  outline: none;
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-query-rail__segment:active {
+  transform: scale(0.95);
+}
+
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-query-rail__segment--active {
+  background: color-mix(in srgb, var(--text) 92%, var(--bg2));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-query-rail__segment--active:hover,
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-query-rail__segment--active:focus-visible {
+  background: color-mix(in srgb, var(--text) 95%, var(--bg2));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-panel--intelligent-shell
+  .ai-chat-messages-scroll {
+  /* Match composer input row horizontal inset (14px); user bubbles line up with textarea */
+  padding: 22px 14px 18px 10px;
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-msg--user {
+  max-width: 100%;
+}
+
+/* Assistant reply: plain text — no card chrome */
+.app-container[data-shell-workspace="intelligent"] .ai-chat-msg--assistant .ai-chat-bubble {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-composer--unified {
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  border: none;
+  border-radius: 16px;
+  /* visible so model dropdown (opens above the trigger) isn’t clipped */
+  overflow: visible;
+  background: var(--bg2);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border2) 88%, transparent);
+}
+
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-composer--unified
+  .ai-chat-composer-input-row--iw-query {
+  flex-direction: row;
+  align-items: flex-end;
+  padding: 12px 14px 0;
+  gap: 0;
+}
+
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-composer--unified
+  .ai-chat-composer-input-row--iw-query
+  .ai-chat-textarea {
+  flex: 1;
+  min-width: 0;
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-composer-iw-footer {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+  background: transparent;
+}
+
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-composer-iw-footer
+  .ai-chat-composer-toolbar__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-composer--unified
+  .ai-chat-textarea {
+  border: none;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg3) 55%, var(--bg2));
+  padding: 12px 14px;
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-send--iw {
+  flex-shrink: 0;
+  align-self: center;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  padding: 6px;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  /* Icon points right by default; +45deg tilts “down” — use -45deg for upward send */
+  transform: rotate(-45deg);
+  color: var(--accent);
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-send--iw svg {
+  display: block;
+}
+
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-send--iw:hover:not(:disabled) {
+  filter: brightness(1.12);
+  transform: rotate(-45deg) scale(1.06);
+}
+
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-send--iw:active:not(:disabled) {
+  transform: rotate(-45deg) scale(0.96);
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-send--iw:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-icon-btn--clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 8px;
+  min-width: 34px;
+  min-height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+}
+
+.app-container[data-shell-workspace="intelligent"]
+  .ai-chat-icon-btn--clear:hover:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--bg3) 70%, transparent);
+}
+
+.app-container[data-shell-workspace="intelligent"] .ai-chat-icon-btn--clear:disabled {
+  opacity: 0.4;
   cursor: not-allowed;
 }
 

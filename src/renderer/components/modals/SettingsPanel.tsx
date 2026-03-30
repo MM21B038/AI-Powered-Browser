@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent,
   type MouseEvent,
   type ReactElement,
 } from "react";
@@ -81,6 +82,168 @@ function truncateText(s: string, max: number): string {
   const t = s.trim();
   if (t.length <= max) return t;
   return `${t.slice(0, max - 1)}…`;
+}
+
+/** Intelligent settings modal: left nav targets (IDs match section card `id`). */
+const INTELLIGENT_SETTINGS_SECTIONS: readonly {
+  id: string;
+  label: string;
+  hint: string;
+  icon: "appearance" | "ai" | "mcp-bridge" | "mcp-tools";
+}[] = [
+  {
+    id: "iw-settings-appearance",
+    label: "Appearance",
+    hint: "Theme and appearance",
+    icon: "appearance",
+  },
+  { id: "iw-settings-ai", label: "AI", hint: "AI provider and keys", icon: "ai" },
+  {
+    id: "iw-settings-mcp-bridge",
+    label: "MCP bridge",
+    hint: "Butcher MCP bridge",
+    icon: "mcp-bridge",
+  },
+  {
+    id: "iw-settings-mcp-tools",
+    label: "MCP tools",
+    hint: "MCP servers and tools",
+    icon: "mcp-tools",
+  },
+];
+
+/** Theme IDs shown first in intelligent Appearance; order matches presets. */
+const INTELLIGENT_THEME_IDS = [
+  "dark",
+  "ink",
+  "aurora",
+  "ocean",
+  "ember",
+  "neon",
+  "forest",
+  "sunset",
+  "lavender",
+  "prism",
+  "minimal",
+] as const;
+
+const INTELLIGENT_THEME_PREVIEW_COUNT = 3;
+
+const INTELLIGENT_THEME_PREVIEW_LIST = INTELLIGENT_THEME_IDS.slice(
+  0,
+  INTELLIGENT_THEME_PREVIEW_COUNT,
+);
+const INTELLIGENT_THEME_REST_LIST = INTELLIGENT_THEME_IDS.slice(
+  INTELLIGENT_THEME_PREVIEW_COUNT,
+);
+
+function intelligentThemeDisplayName(
+  t: (typeof INTELLIGENT_THEME_IDS)[number],
+): string {
+  if (t === "dark") return "Void";
+  if (t === "ink") return "Ink";
+  if (t === "prism") return "Prism";
+  return t[0].toUpperCase() + t.slice(1);
+}
+
+function IntelligentSettingsNavIcon({
+  kind,
+}: {
+  kind: (typeof INTELLIGENT_SETTINGS_SECTIONS)[number]["icon"];
+}): ReactElement {
+  const s = {
+    width: 18,
+    height: 18,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.65,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true as const,
+  };
+  switch (kind) {
+    case "appearance":
+      return (
+        <svg {...s}>
+          <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+          <circle cx="12" cy="12" r="4" />
+        </svg>
+      );
+    case "ai":
+      return (
+        <svg {...s}>
+          <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z" />
+          <path d="M5 19h14" opacity="0.85" />
+        </svg>
+      );
+    case "mcp-bridge":
+      return (
+        <svg {...s}>
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+        </svg>
+      );
+    case "mcp-tools":
+      return (
+        <svg {...s}>
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+        </svg>
+      );
+    default:
+      return <svg {...s}><circle cx="12" cy="12" r="3" /></svg>;
+  }
+}
+
+/** Scroll target within the settings body only — avoids scrolling ancestor nodes (which hides the modal header). */
+function scrollElementIntoSettingsScrollRoot(
+  scrollRoot: HTMLElement,
+  target: HTMLElement,
+  behavior: ScrollBehavior,
+) {
+  const rootRect = scrollRoot.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const pad = 8;
+  const nextTop =
+    scrollRoot.scrollTop + (targetRect.top - rootRect.top) - pad;
+  scrollRoot.scrollTo({ top: Math.max(0, nextTop), behavior });
+}
+
+/**
+ * Scroll-spy: which intelligent section should be active in the side nav.
+ * Uses visible height inside the scroll root for all sections (not IntersectionObserver’s
+ * partial entry batches). Near max scroll, pins the last section so the final block wins.
+ */
+function computeActiveIntelligentSectionId(
+  root: HTMLElement,
+  sectionsInOrder: readonly { id: string }[],
+): string | null {
+  if (sectionsInOrder.length === 0) return null;
+  const epsilon = 4;
+  const canScroll = root.scrollHeight > root.clientHeight + 1;
+  const atBottom =
+    canScroll &&
+    root.scrollHeight - root.scrollTop - root.clientHeight <= epsilon;
+  if (atBottom) {
+    return sectionsInOrder[sectionsInOrder.length - 1]?.id ?? null;
+  }
+
+  const rootRect = root.getBoundingClientRect();
+  let bestId: string | null = null;
+  let bestH = -1;
+  for (const s of sectionsInOrder) {
+    const el = document.getElementById(s.id);
+    if (!el) continue;
+    const r = el.getBoundingClientRect();
+    const top = Math.max(r.top, rootRect.top);
+    const bottom = Math.min(r.bottom, rootRect.bottom);
+    const h = Math.max(0, bottom - top);
+    if (h > bestH) {
+      bestH = h;
+      bestId = s.id;
+    }
+  }
+  return bestId;
 }
 
 /** One-line summary for a collapsed MCP server row. */
@@ -216,6 +379,23 @@ export function SettingsPanel({
     Set<string>
   >(() => new Set());
 
+  /** Scroll container for intelligent suite (`.settings-dashboard`, the element that scrolls). */
+  const intelligentScrollRootRef = useRef<HTMLDivElement>(null);
+  const intelligentNavTrackRef = useRef<HTMLDivElement>(null);
+  const intelligentNavButtonRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  /** Skip scroll-spy updates right after programmatic nav scroll (avoids highlight fighting smooth scroll). */
+  const intelligentNavIoSkipUntilRef = useRef(0);
+  const intelligentSettingsOpenWasFalseRef = useRef(true);
+  const [activeIntelligentSectionId, setActiveIntelligentSectionId] = useState<
+    string | null
+  >(null);
+  const [intelligentNavIndicator, setIntelligentNavIndicator] = useState({
+    top: 0,
+    height: 0,
+  });
+  const [intelligentThemeGridExpanded, setIntelligentThemeGridExpanded] =
+    useState(false);
+
   const notifyAiModelAction = (msg: string) => {
     setAiModelActionFeedback(msg);
     window.dispatchEvent(
@@ -342,6 +522,9 @@ export function SettingsPanel({
     if (open && panel === "intelligent") {
       setModelListFilter("");
       setModelPickerOpen(false);
+      /* Always start collapsed (3 + “more”). Do not auto-expand when the active
+         theme is outside the preview list — that forced all themes to show. */
+      setIntelligentThemeGridExpanded(false);
     }
   }, [open, panel]);
 
@@ -377,13 +560,138 @@ export function SettingsPanel({
   }, [modelIdsForPicker, modelListFilter]);
 
   const scrollIntelligentSection = useCallback((id: string) => {
-    const el = document.getElementById(id);
-    if (!el) return;
+    setActiveIntelligentSectionId(id);
     const reduce =
       typeof window !== "undefined" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+    intelligentNavIoSkipUntilRef.current = Date.now() + (reduce ? 80 : 550);
+    const target = document.getElementById(id);
+    if (!target) return;
+    const behavior: ScrollBehavior = reduce ? "auto" : "smooth";
+    const tryScroll = () => {
+      const root = intelligentScrollRootRef.current;
+      if (root && root.contains(target)) {
+        scrollElementIntoSettingsScrollRoot(root, target, behavior);
+        return true;
+      }
+      return false;
+    };
+    if (!tryScroll()) {
+      window.requestAnimationFrame(() => {
+        void tryScroll();
+      });
+    }
   }, []);
+
+  useEffect(() => {
+    if (panel !== "intelligent") return;
+    if (open) {
+      if (intelligentSettingsOpenWasFalseRef.current) {
+        setActiveIntelligentSectionId(INTELLIGENT_SETTINGS_SECTIONS[0]?.id ?? null);
+      }
+      intelligentSettingsOpenWasFalseRef.current = false;
+    } else {
+      intelligentSettingsOpenWasFalseRef.current = true;
+    }
+  }, [open, panel]);
+
+  useEffect(() => {
+    if (!open || panel !== "intelligent") return;
+
+    let cancelled = false;
+    let raf = 0;
+    let attachRaf = 0;
+    let scheduled = false;
+    let attachedRoot: HTMLElement | null = null;
+
+    const run = () => {
+      if (cancelled) return;
+      if (Date.now() < intelligentNavIoSkipUntilRef.current) return;
+      const root = intelligentScrollRootRef.current;
+      if (!root) return;
+      const id = computeActiveIntelligentSectionId(
+        root,
+        INTELLIGENT_SETTINGS_SECTIONS,
+      );
+      if (id) setActiveIntelligentSectionId(id);
+    };
+
+    const schedule = () => {
+      if (scheduled) return;
+      scheduled = true;
+      raf = requestAnimationFrame(() => {
+        scheduled = false;
+        run();
+      });
+    };
+
+    const tryAttach = () => {
+      if (cancelled) return;
+      const root = intelligentScrollRootRef.current;
+      if (!root) {
+        attachRaf = requestAnimationFrame(tryAttach);
+        return;
+      }
+      attachedRoot = root;
+      root.addEventListener("scroll", schedule, { passive: true });
+      window.addEventListener("resize", schedule);
+      schedule();
+    };
+
+    tryAttach();
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      cancelAnimationFrame(attachRaf);
+      if (attachedRoot) {
+        attachedRoot.removeEventListener("scroll", schedule);
+        attachedRoot = null;
+      }
+      window.removeEventListener("resize", schedule);
+    };
+  }, [open, panel]);
+
+  useLayoutEffect(() => {
+    if (!open || panel !== "intelligent" || !activeIntelligentSectionId) return;
+    const track = intelligentNavTrackRef.current;
+    const idx = INTELLIGENT_SETTINGS_SECTIONS.findIndex(
+      (s) => s.id === activeIntelligentSectionId,
+    );
+    const btn = intelligentNavButtonRefs.current[idx];
+    if (!track || !btn) return;
+    setIntelligentNavIndicator({
+      top: btn.offsetTop,
+      height: btn.offsetHeight,
+    });
+  }, [open, panel, activeIntelligentSectionId]);
+
+  const onIntelligentNavKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLButtonElement>, index: number) => {
+      const sections = INTELLIGENT_SETTINGS_SECTIONS;
+      const last = sections.length - 1;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        const next = Math.min(index + 1, last);
+        scrollIntelligentSection(sections[next].id);
+        intelligentNavButtonRefs.current[next]?.focus();
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        const prev = Math.max(index - 1, 0);
+        scrollIntelligentSection(sections[prev].id);
+        intelligentNavButtonRefs.current[prev]?.focus();
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        scrollIntelligentSection(sections[0].id);
+        intelligentNavButtonRefs.current[0]?.focus();
+      } else if (e.key === "End") {
+        e.preventDefault();
+        scrollIntelligentSection(sections[last].id);
+        intelligentNavButtonRefs.current[last]?.focus();
+      }
+    },
+    [scrollIntelligentSection],
+  );
 
   if (!open) return null;
 
@@ -1001,42 +1309,66 @@ export function SettingsPanel({
             </div>
           ) : (
             <div
+              ref={intelligentScrollRootRef}
               className="settings-dashboard settings-dashboard--intelligent-suite settings-dashboard--intelligent-suite-with-nav"
               role="region"
               aria-label="Intelligent workspace settings"
             >
               <nav
-                className="settings-intelligent-nav"
+                className="settings-intelligent-nav settings-intelligent-nav--icons"
                 aria-label="Workspace settings sections"
               >
-                <button
-                  type="button"
-                  className="settings-intelligent-nav__btn"
-                  onClick={() => scrollIntelligentSection("iw-settings-appearance")}
+                <div
+                  className="settings-intelligent-nav__track"
+                  ref={intelligentNavTrackRef}
                 >
-                  Appearance
-                </button>
-                <button
-                  type="button"
-                  className="settings-intelligent-nav__btn"
-                  onClick={() => scrollIntelligentSection("iw-settings-ai")}
-                >
-                  AI
-                </button>
-                <button
-                  type="button"
-                  className="settings-intelligent-nav__btn"
-                  onClick={() => scrollIntelligentSection("iw-settings-mcp-bridge")}
-                >
-                  MCP bridge
-                </button>
-                <button
-                  type="button"
-                  className="settings-intelligent-nav__btn"
-                  onClick={() => scrollIntelligentSection("iw-settings-mcp-tools")}
-                >
-                  MCP tools
-                </button>
+                  <div
+                    className="settings-intelligent-nav__indicator"
+                    aria-hidden
+                    style={{
+                      transform: `translateY(${intelligentNavIndicator.top}px)`,
+                      height:
+                        intelligentNavIndicator.height > 0
+                          ? intelligentNavIndicator.height
+                          : undefined,
+                    }}
+                  />
+                  {INTELLIGENT_SETTINGS_SECTIONS.map((s, i) => (
+                    <button
+                      key={s.id}
+                      ref={(el) => {
+                        intelligentNavButtonRefs.current[i] = el;
+                      }}
+                      type="button"
+                      className={`settings-intelligent-nav__btn${
+                        activeIntelligentSectionId === s.id ||
+                        (activeIntelligentSectionId === null && i === 0)
+                          ? " settings-intelligent-nav__btn--active"
+                          : ""
+                      }`}
+                      aria-current={
+                        activeIntelligentSectionId === s.id ||
+                        (activeIntelligentSectionId === null && i === 0)
+                          ? "true"
+                          : undefined
+                      }
+                      aria-label={s.label}
+                      title={s.hint}
+                      tabIndex={
+                        activeIntelligentSectionId === s.id ||
+                        (activeIntelligentSectionId === null && i === 0)
+                          ? 0
+                          : -1
+                      }
+                      onClick={() => scrollIntelligentSection(s.id)}
+                      onKeyDown={(e) => onIntelligentNavKeyDown(e, i)}
+                    >
+                      <span className="settings-intelligent-nav__btn-icon">
+                        <IntelligentSettingsNavIcon kind={s.icon} />
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </nav>
               <div className="settings-intelligent-nav-content">
               <div
@@ -1049,42 +1381,74 @@ export function SettingsPanel({
                 </div>
                 <div className="settings-section">
                   <label className="settings-label">Theme</label>
-                  <div className="theme-grid">
-                    {(
-                      [
-                        "dark",
-                        "ink",
-                        "aurora",
-                        "ocean",
-                        "ember",
-                        "neon",
-                        "forest",
-                        "sunset",
-                        "lavender",
-                        "prism",
-                        "minimal",
-                      ] as const
-                    ).map((t) => (
-                      <button
-                        key={t}
-                        type="button"
-                        className={`theme-card${activeTheme === t ? " active" : ""}`}
-                        data-theme={t}
-                        onClick={() => applyTheme(t)}
-                      >
-                        <div className={`theme-preview ${t}-preview`} />
-                        <span>
-                          {t === "dark"
-                            ? "Void"
-                            : t === "ink"
-                              ? "Ink"
-                              : t === "prism"
-                                ? "Prism"
-                                : t[0].toUpperCase() + t.slice(1)}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
+                  {!intelligentThemeGridExpanded ? (
+                    <div className="theme-grid theme-grid--intelligent-settings theme-grid--intelligent-settings--collapsed">
+                      {INTELLIGENT_THEME_PREVIEW_LIST.map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          className={`theme-card${
+                            activeTheme === t ? " active" : ""
+                          }`}
+                          data-theme={t}
+                          onClick={() => applyTheme(t)}
+                        >
+                          <div className={`theme-preview ${t}-preview`} />
+                          <span>{intelligentThemeDisplayName(t)}</span>
+                        </button>
+                      ))}
+                      {INTELLIGENT_THEME_REST_LIST.length > 0 ? (
+                        <button
+                          type="button"
+                          className="theme-card theme-card--more"
+                          onClick={() => setIntelligentThemeGridExpanded(true)}
+                          aria-expanded="false"
+                          aria-controls="intelligent-theme-grid-expanded"
+                          id="intelligent-theme-grid-expand"
+                        >
+                          <span className="theme-card__more-glyph" aria-hidden>
+                            +
+                          </span>
+                          <span className="theme-card__more-label">
+                            {INTELLIGENT_THEME_REST_LIST.length} more
+                          </span>
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div
+                      id="intelligent-theme-grid-expanded"
+                      className="theme-grid theme-grid--intelligent-settings theme-grid--intelligent-settings--expanded"
+                      role="region"
+                      aria-label="All theme presets"
+                    >
+                      {INTELLIGENT_THEME_IDS.map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          className={`theme-card${
+                            activeTheme === t ? " active" : ""
+                          }`}
+                          data-theme={t}
+                          onClick={() => applyTheme(t)}
+                        >
+                          <div className={`theme-preview ${t}-preview`} />
+                          <span>{intelligentThemeDisplayName(t)}</span>
+                        </button>
+                      ))}
+                      {INTELLIGENT_THEME_PREVIEW_LIST.includes(
+                        activeTheme as (typeof INTELLIGENT_THEME_IDS)[number],
+                      ) ? (
+                        <button
+                          type="button"
+                          className="theme-grid__collapse"
+                          onClick={() => setIntelligentThemeGridExpanded(false)}
+                        >
+                          Show fewer themes
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               </div>
 

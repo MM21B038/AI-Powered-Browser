@@ -30,21 +30,21 @@
         <span class="app-name">Butcher</span>
         <button
           type="button"
-          class="titlebar-browser-pill"
-          id="titlebarBrowserBtn"
-          title="Browser workspace"
-          aria-pressed="true"
-        >
-          Browser
-        </button>
-        <button
-          type="button"
           class="titlebar-intelligent-pill"
           id="titlebarIntelligentBtn"
           title="Intelligent workspace"
           aria-pressed="false"
         >
           Intelligent
+        </button>
+        <button
+          type="button"
+          class="titlebar-browser-pill"
+          id="titlebarBrowserBtn"
+          title="Browser workspace"
+          aria-pressed="true"
+        >
+          Browser
         </button>
       </div>
       <div class="titlebar-right flex items-center gap-0.5">
@@ -155,7 +155,7 @@
             </button>
             <button
               type="button"
-              class="rail-btn"
+              class="rail-btn rail-btn--badge-host"
               id="screenshotsBtn"
               title="Screenshot library"
               aria-label="Screenshot library"
@@ -173,6 +173,12 @@
                   />
                 </svg>
               </span>
+              <span
+                class="rail-btn__badge"
+                id="screenshotsBtnBadge"
+                hidden
+                aria-hidden="true"
+              ></span>
             </button>
             <button
               type="button"
@@ -1226,19 +1232,8 @@
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize chat history and assistant width"
-          title="Drag to resize column width"
         >
-          <span class="resize-handle__grip" aria-hidden="true">
-            <!-- IDE-style 6-dot vertical drag grip (Cursor / VS Code pattern) -->
-            <svg width="10" height="18" viewBox="0 0 10 18" fill="currentColor">
-              <circle cx="2.5" cy="3.5" r="1.35" />
-              <circle cx="2.5" cy="9" r="1.35" />
-              <circle cx="2.5" cy="14.5" r="1.35" />
-              <circle cx="7.5" cy="3.5" r="1.35" />
-              <circle cx="7.5" cy="9" r="1.35" />
-              <circle cx="7.5" cy="14.5" r="1.35" />
-            </svg>
-          </span>
+          <span class="resize-handle__grip" aria-hidden="true"></span>
         </div>
         <div class="chat-section" id="chatSection">
           <!-- Resize Handle -->
@@ -1486,8 +1481,8 @@
     </div>
     </div>
 
-    <!-- Toast Notification -->
-    <div class="toast" id="toast"></div>
+    <!-- Toast portal host: must not use .toast (opacity:hidden would hide portaled content). -->
+    <div id="toast" class="toast-host" aria-live="polite" aria-atomic="true"></div>
 
     <!-- First Run Import Wizard -->
     <div class="modal-overlay" id="firstRunOverlay" style="display: none">

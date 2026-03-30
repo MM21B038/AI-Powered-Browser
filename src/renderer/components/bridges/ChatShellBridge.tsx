@@ -3,6 +3,7 @@ import { useChatStore } from "../../state/chat-store";
 import {
   applyIntelligentWorkspaceLayoutToDom,
   IW_HISTORY_WIDTH_DEFAULT,
+  IW_HISTORY_WIDTH_MAX,
   IW_HISTORY_WIDTH_MIN,
   loadIntelligentWorkspaceLayout,
   saveIntelligentWorkspaceLayout,
@@ -119,7 +120,10 @@ export function ChatShellBridge(): ReactElement | null {
 
     const maxHistoryWidth = () => {
       const w = chatWrapper.getBoundingClientRect().width;
-      return Math.min(Math.max(120, Math.floor(w * 0.5)), 720);
+      return Math.min(
+        IW_HISTORY_WIDTH_MAX,
+        Math.max(120, Math.floor(w * 0.5)),
+      );
     };
 
     const onDown = (e: PointerEvent) => {

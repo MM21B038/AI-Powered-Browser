@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactElement,
 } from "react";
 import { createPortal } from "react-dom";
@@ -54,6 +55,7 @@ import { ModelQuickPick } from "../ModelQuickPick";
 import { friendlyMcpConnectionError } from "../../shared/mcp-error-messages";
 import { McpIcon } from "../icons/McpIcon";
 import { AiChatToolResultBlock } from "./ai-chat-tool-result";
+import { AiChatQueryRail } from "./AiChatQueryRail";
 import { renderChatMarkdownToHtml } from "../../chat/chat-markdown";
 
 const debouncedSave = createDebouncedSaveV2(400);
@@ -64,6 +66,17 @@ function lastUserMessageContent(messages: ChatMessageV2[]): string {
     if (m?.role === "user") return (m.content as string) || "";
   }
   return "";
+}
+
+/** Index of the user message that prompted this assistant reply (skips tool rows). */
+function findUserIndexBeforeAssistant(
+  messages: ChatMessageV2[],
+  assistantIdx: number,
+): number {
+  for (let j = assistantIdx - 1; j >= 0; j--) {
+    if (messages[j]?.role === "user") return j;
+  }
+  return -1;
 }
 
 function renderAiChatMd(md: string): string {
@@ -217,6 +230,26 @@ function IconEdit(): ReactElement {
   );
 }
 
+function IconRetry(): ReactElement {
+  return (
+    <svg
+      className="ai-chat-retry-icon"
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M21 12a9 9 0 1 1-3-8" />
+      <path d="M21 3v7h-7" />
+    </svg>
+  );
+}
+
 function IconSendPlane(): ReactElement {
   return (
     <svg
@@ -229,6 +262,53 @@ function IconSendPlane(): ReactElement {
       <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
     </svg>
   );
+}
+
+function IconClearChat(): ReactElement {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 15 15"
+      fill="none"
+      aria-hidden
+    >
+      <path
+        d="M2 4H13M5 4V2.5C5 2 5.5 1.5 6 1.5H9C9.5 1.5 10 2 10 2.5V4M12 4L11.5 12.5C11.5 13 11 13.5 10.5 13.5H4.5C4 13.5 3.5 13 3.5 12.5L3 4"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function useIntelligentWorkspaceShell(): boolean {
+  const [v, setV] = useState(
+    () =>
+      document
+        .getElementById("appContainer")
+        ?.getAttribute("data-shell-workspace") === "intelligent",
+  );
+  useEffect(() => {
+    const el = document.getElementById("appContainer");
+    if (!el) return;
+    const sync = () =>
+      setV(el.getAttribute("data-shell-workspace") === "intelligent");
+    sync();
+    const mo = new MutationObserver(sync);
+    mo.observe(el, {
+      attributes: true,
+      attributeFilter: ["data-shell-workspace"],
+    });
+    window.addEventListener("shell-workspace-changed", sync);
+    return () => {
+      mo.disconnect();
+      window.removeEventListener("shell-workspace-changed", sync);
+    };
+  }, []);
+  return v;
 }
 
 async function copyPlainTextToClipboard(text: string): Promise<void> {
@@ -246,12 +326,16 @@ function AiChatMsgFooter({
   onEdit,
   showEdit,
   editDisabled,
+  onRetry,
+  retryDisabled,
 }: {
   align: "start" | "end";
   plainText: string;
   onEdit?: () => void;
   showEdit?: boolean;
   editDisabled?: boolean;
+  onRetry?: () => void;
+  retryDisabled?: boolean;
 }): ReactElement {
   return (
     <div className={`ai-chat-msg-footer ai-chat-msg-footer--${align}`}>
@@ -264,6 +348,17 @@ function AiChatMsgFooter({
       >
         <IconCopy />
       </button>
+      {onRetry ? (
+        <button
+          type="button"
+          className="ai-chat-msg-icon-btn ai-chat-msg-icon-btn--retry"
+          aria-label="Retry — resend the prompt and replace this reply"
+          disabled={retryDisabled}
+          onClick={() => onRetry()}
+        >
+          <IconRetry />
+        </button>
+      ) : null}
       {showEdit && onEdit ? (
         <button
           type="button"
@@ -379,6 +474,7 @@ async function runChatPipelineRound(
 }
 
 function AiChatPanel(): ReactElement {
+  const intelligentWorkspaceShell = useIntelligentWorkspaceShell();
   const api = getElectronApi();
   const [scope, setScope] = useState<ChatScope>(() => scopeFromDom());
   const [store, setStore] = useState<ConversationStoreStateV2>(() =>
@@ -418,6 +514,11 @@ function AiChatPanel(): ReactElement {
     id: string;
     title: string;
   } | null>(null);
+  /** Assistant message id currently playing the “retry” exit animation. */
+  const [retryExitAssistantId, setRetryExitAssistantId] = useState<string | null>(
+    null,
+  );
+  const retryRunningRef = useRef(false);
   const streamRef = useRef("");
   const thinkingStartRef = useRef<number | null>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
@@ -560,6 +661,15 @@ function AiChatPanel(): ReactElement {
     const only = nonSystemMessages[0];
     return only && only.role === "assistant" ? only.id : null;
   }, [busy, nonSystemMessages, streamText, streamThinking, toolLines.length]);
+
+  const queryRailUsers = useMemo(() => {
+    if (!active?.messages) return [];
+    const out: { id: string; content: string }[] = [];
+    for (const m of active.messages) {
+      if (m.role === "user") out.push({ id: m.id, content: m.content });
+    }
+    return out;
+  }, [active?.messages]);
 
   const updateStickToBottomFromScroll = useCallback(() => {
     const el = messagesScrollRef.current;
@@ -894,6 +1004,64 @@ function AiChatPanel(): ReactElement {
     },
     [api, scope, settings],
   );
+
+  const executeAssistantRetry = useCallback(
+    async (assistantId: string) => {
+      if (retryRunningRef.current) return;
+      if (!active || busy) {
+        setRetryExitAssistantId(null);
+        return;
+      }
+      const msgs = active.messages;
+      const aiIdx = msgs.findIndex((x) => x.id === assistantId);
+      if (aiIdx < 0 || msgs[aiIdx]?.role !== "assistant") {
+        setRetryExitAssistantId(null);
+        return;
+      }
+      const ui = findUserIndexBeforeAssistant(msgs, aiIdx);
+      if (ui < 0) {
+        setRetryExitAssistantId(null);
+        return;
+      }
+
+      retryRunningRef.current = true;
+      try {
+        const stored = msgs.slice(0, ui + 1);
+        const convId = active.id;
+        const convUpdated: Conversation = {
+          ...active,
+          messages: stored,
+          updatedAt: Date.now(),
+        };
+
+        setStore((s) => {
+          const sc = getScopedStore(s, scope);
+          return setScopedStore(s, scope, {
+            ...sc,
+            conversations: sc.conversations.map((c) =>
+              c.id === convId ? convUpdated : c,
+            ),
+          });
+        });
+
+        setRetryExitAssistantId(null);
+
+        await runPipelineAfterEdit(convId, stored);
+      } finally {
+        retryRunningRef.current = false;
+      }
+    },
+    [active, busy, runPipelineAfterEdit, scope],
+  );
+
+  useEffect(() => {
+    if (!retryExitAssistantId) return;
+    const id = retryExitAssistantId;
+    const t = window.setTimeout(() => {
+      void executeAssistantRetry(id);
+    }, 900);
+    return () => window.clearTimeout(t);
+  }, [retryExitAssistantId, executeAssistantRetry]);
 
   const onSend = useCallback(async () => {
     const text = input.trim();
@@ -1624,14 +1792,240 @@ function AiChatPanel(): ReactElement {
       document.body,
     );
 
+  const composerToolbarMain = (
+    <>
+      <button
+        type="button"
+        className="ai-chat-icon-btn ai-chat-icon-btn--mcp"
+        title={
+          isBrowserAgent
+            ? "Browser automation & MCP tools"
+            : "MCP & tools"
+        }
+        aria-label={
+          isBrowserAgent
+            ? "Browser automation and MCP tools"
+            : "MCP and tools"
+        }
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={() => openMcpToolsModal()}
+      >
+        <McpIcon size={17} />
+      </button>
+      <span className="ai-chat-composer-toolbar__sep" aria-hidden />
+      <ModelQuickPick
+        selectedModelId={settings.selectedModelId}
+        modelIds={settings.cachedModelIds}
+        disabled={busy}
+        onSelect={(id) =>
+          persistSettings({ ...settings, selectedModelId: id })
+        }
+        onOpenAssistantSettings={() =>
+          window.legacyBrowser?.openIntelligentAssistantSettings?.()
+        }
+      />
+      {intelligentWorkspaceShell ? (
+        <>
+          <span className="ai-chat-composer-toolbar__sep" aria-hidden />
+          <button
+            type="button"
+            className="ai-chat-icon-btn ai-chat-icon-btn--clear"
+            title="Clear chat"
+            aria-label="Clear chat"
+            disabled={busy || !active}
+            onClick={() => clearChat()}
+          >
+            <IconClearChat />
+          </button>
+        </>
+      ) : null}
+      {isBrowserAgent ? (
+        <>
+          <span className="ai-chat-composer-toolbar__sep" aria-hidden />
+          <span className="ai-chat-composer-toolbar__group-label">Page</span>
+          <button
+            type="button"
+            className="ai-chat-icon-btn ai-chat-icon-btn--compact"
+            title="Pick any element — append CSS selector and details to the message"
+            onClick={() =>
+              window.legacyBrowser?.startBrowserPagePickerAny?.()
+            }
+          >
+            CSS
+          </button>
+          <button
+            type="button"
+            className="ai-chat-icon-btn ai-chat-icon-btn--compact"
+            title="Pick a clickable control — append target details to the message"
+            onClick={() =>
+              window.legacyBrowser?.startBrowserPagePickerInteractive?.()
+            }
+          >
+            Target
+          </button>
+          <button
+            type="button"
+            className="ai-chat-icon-btn ai-chat-icon-btn--compact"
+            title="Click a region to save a snapshot — filename is added to the message"
+            onClick={() =>
+              window.legacyBrowser?.startBrowserPageElementScreenshot?.()
+            }
+          >
+            Snap
+          </button>
+        </>
+      ) : null}
+    </>
+  );
+
+  const composerMentionBlock =
+    mentionCtx && !mentionSuppress ? (
+      <div
+        id={toolMentionListId}
+        className="ai-chat-tool-mention-popover"
+        role="listbox"
+        aria-label="Matching tools"
+      >
+        {mentionCtx.suggestions.length === 0 ? (
+          <div
+            className="ai-chat-tool-mention-empty"
+            role="presentation"
+          >
+            {intelligentToolNames.length === 0
+              ? "No tools enabled — open MCP tools to connect servers."
+              : "No matching tools"}
+          </div>
+        ) : (
+          mentionCtx.suggestions.map((name, i) => (
+            <button
+              key={name}
+              type="button"
+              role="option"
+              id={`${toolMentionListId}-opt-${i}`}
+              aria-selected={i === 0}
+              className={`ai-chat-tool-mention-option${i === 0 ? " ai-chat-tool-mention-option--first" : ""}`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => applyMentionPick(name)}
+            >
+              {name}
+            </button>
+          ))
+        )}
+      </div>
+    ) : null;
+
+  const composerTextarea = (
+    <textarea
+      ref={composerTextareaRef}
+      className="ai-chat-textarea"
+      rows={COMPOSER_MIN_LINES}
+      placeholder={
+        isBrowserAgent
+          ? "Tell the browser agent what to do…"
+          : "Message the assistant…"
+      }
+      value={input}
+      aria-autocomplete={mentionCtx && !mentionSuppress ? "list" : "none"}
+      aria-expanded={!!(mentionCtx && !mentionSuppress)}
+      aria-controls={
+        mentionCtx && !mentionSuppress ? toolMentionListId : undefined
+      }
+      onChange={(e) => {
+        setInput(e.target.value);
+        setComposerCaret(
+          e.target.selectionStart ?? e.target.value.length,
+        );
+        setMentionSuppress(false);
+      }}
+      onSelect={(e) => {
+        setComposerCaret(e.currentTarget.selectionStart ?? 0);
+      }}
+      onKeyDown={(e) => {
+        if (
+          !isBrowserAgent &&
+          mentionCtx &&
+          !mentionSuppress &&
+          mentionCtx.suggestions.length > 0
+        ) {
+          if (e.key === "Tab") {
+            e.preventDefault();
+            applyMentionPick(mentionCtx.suggestions[0]!);
+            return;
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            setMentionSuppress(true);
+            return;
+          }
+        }
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          void onSend();
+        }
+      }}
+    />
+  );
+
+  const composerSendBtn = (
+    <button
+      type="button"
+      className="ai-chat-send"
+      disabled={busy || !input.trim()}
+      aria-label="Send"
+      title="Send"
+      onClick={() => void onSend()}
+    >
+      <IconSendPlane />
+    </button>
+  );
+
+  const composerSendBtnIw = (
+    <button
+      type="button"
+      className="ai-chat-send ai-chat-send--iw"
+      disabled={busy || !input.trim()}
+      aria-label="Send"
+      title="Send"
+      onClick={() => void onSend()}
+    >
+      <IconSendPlane />
+    </button>
+  );
+
+  const showQueryRail =
+    intelligentWorkspaceShell && queryRailUsers.length > 1;
+
   return (
-    <div className="ai-chat-panel">
-      <div className="ai-chat-main">
+    <div
+      className={`ai-chat-panel${intelligentWorkspaceShell ? " ai-chat-panel--intelligent-shell" : ""}`}
+    >
+      <div
+        className={`ai-chat-main${
+          showQueryRail ? " ai-chat-main--query-rail" : ""
+        }`}
+      >
         <div
-          className="ai-chat-messages-scroll"
-          ref={messagesScrollRef}
-          onScroll={updateStickToBottomFromScroll}
+          className={
+            intelligentWorkspaceShell ? "ai-chat-iw-assistant" : undefined
+          }
+          style={
+            intelligentWorkspaceShell
+              ? undefined
+              : ({ display: "contents" } as CSSProperties)
+          }
         >
+          <div
+            className={
+              intelligentWorkspaceShell
+                ? "ai-chat-messages-column ai-chat-messages-column--iw"
+                : "ai-chat-messages-column"
+            }
+          >
+            <div
+              className="ai-chat-messages-scroll"
+              ref={messagesScrollRef}
+              onScroll={updateStickToBottomFromScroll}
+            >
           {!active || nonSystemMessages.length === 0 ? (
             <div className="ai-chat-idle ai-chat-idle--empty">
               <div className="ai-chat-idle__aurora" aria-hidden />
@@ -1645,7 +2039,7 @@ function AiChatPanel(): ReactElement {
               </div>
             </div>
           ) : null}
-          {active?.messages.map((m) => {
+          {active?.messages?.map((m, msgIdx) => {
             if (m.role === "system") return null;
             if (m.role === "tool")
               return (
@@ -1747,11 +2141,21 @@ function AiChatPanel(): ReactElement {
               );
             }
             const isWelcomeSpotlight = m.id === welcomeSpotlightMessageId;
+            const canRetryAssistant =
+              !isWelcomeSpotlight &&
+              (m.content || "").trim().length > 0 &&
+              findUserIndexBeforeAssistant(active?.messages ?? [], msgIdx) >= 0;
             return (
               <div
                 key={m.id}
-                className={`ai-chat-msg ai-chat-msg--assistant${isWelcomeSpotlight ? " ai-chat-msg--welcome-spotlight" : ""}`}
+                className={`ai-chat-msg ai-chat-msg--assistant${isWelcomeSpotlight ? " ai-chat-msg--welcome-spotlight" : ""}${retryExitAssistantId === m.id ? " ai-chat-msg--retry-exit" : ""}`}
                 tabIndex={-1}
+                onTransitionEnd={(e) => {
+                  if (retryExitAssistantId !== m.id) return;
+                  if (e.target !== e.currentTarget) return;
+                  if (e.propertyName !== "opacity") return;
+                  void executeAssistantRetry(m.id);
+                }}
               >
                 {isWelcomeSpotlight ? (
                   <div className="ai-chat-welcome-shell">
@@ -1863,7 +2267,16 @@ function AiChatPanel(): ReactElement {
                             __html: renderAiChatMd(m.content),
                           }}
                         />
-                        <AiChatMsgFooter align="start" plainText={m.content} />
+                        <AiChatMsgFooter
+                          align="start"
+                          plainText={m.content}
+                          onRetry={
+                            canRetryAssistant
+                              ? () => setRetryExitAssistantId(m.id)
+                              : undefined
+                          }
+                          retryDisabled={busy || retryExitAssistantId != null}
+                        />
                       </>
                     ) : null}
                   </div>
@@ -1905,176 +2318,47 @@ function AiChatPanel(): ReactElement {
               ))}
             </div>
           ) : null}
-        </div>
-        <div className="ai-chat-composer">
-          <div className="ai-chat-composer-toolbar">
-            <div className="ai-chat-composer-toolbar__main">
-              <button
-                type="button"
-                className="ai-chat-icon-btn ai-chat-icon-btn--mcp"
-                title={
-                  isBrowserAgent
-                    ? "Browser automation & MCP tools"
-                    : "MCP & tools"
-                }
-                aria-label={
-                  isBrowserAgent
-                    ? "Browser automation and MCP tools"
-                    : "MCP and tools"
-                }
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={() => openMcpToolsModal()}
-              >
-                <McpIcon size={17} />
-              </button>
-              <span className="ai-chat-composer-toolbar__sep" aria-hidden />
-              <ModelQuickPick
-                selectedModelId={settings.selectedModelId}
-                modelIds={settings.cachedModelIds}
-                disabled={busy}
-                onSelect={(id) =>
-                  persistSettings({ ...settings, selectedModelId: id })
-                }
-                onOpenAssistantSettings={() =>
-                  window.legacyBrowser?.openIntelligentAssistantSettings?.()
-                }
-              />
-              {isBrowserAgent ? (
-                <>
-                  <span className="ai-chat-composer-toolbar__sep" aria-hidden />
-                  <span className="ai-chat-composer-toolbar__group-label">
-                    Page
-                  </span>
-                  <button
-                    type="button"
-                    className="ai-chat-icon-btn ai-chat-icon-btn--compact"
-                    title="Pick any element — append CSS selector and details to the message"
-                    onClick={() =>
-                      window.legacyBrowser?.startBrowserPagePickerAny?.()
-                    }
-                  >
-                    CSS
-                  </button>
-                  <button
-                    type="button"
-                    className="ai-chat-icon-btn ai-chat-icon-btn--compact"
-                    title="Pick a clickable control — append target details to the message"
-                    onClick={() =>
-                      window.legacyBrowser?.startBrowserPagePickerInteractive?.()
-                    }
-                  >
-                    Target
-                  </button>
-                  <button
-                    type="button"
-                    className="ai-chat-icon-btn ai-chat-icon-btn--compact"
-                    title="Click a region to save a snapshot — filename is added to the message"
-                    onClick={() =>
-                      window.legacyBrowser?.startBrowserPageElementScreenshot?.()
-                    }
-                  >
-                    Snap
-                  </button>
-                </>
-              ) : null}
-            </div>
           </div>
-          <div className="ai-chat-composer-input-row ai-chat-composer-input-row--mention-wrap">
-            {mentionCtx && !mentionSuppress ? (
-              <div
-                id={toolMentionListId}
-                className="ai-chat-tool-mention-popover"
-                role="listbox"
-                aria-label="Matching tools"
-              >
-                {mentionCtx.suggestions.length === 0 ? (
-                  <div
-                    className="ai-chat-tool-mention-empty"
-                    role="presentation"
-                  >
-                    {intelligentToolNames.length === 0
-                      ? "No tools enabled — open MCP tools to connect servers."
-                      : "No matching tools"}
-                  </div>
-                ) : (
-                  mentionCtx.suggestions.map((name, i) => (
-                    <button
-                      key={name}
-                      type="button"
-                      role="option"
-                      id={`${toolMentionListId}-opt-${i}`}
-                      aria-selected={i === 0}
-                      className={`ai-chat-tool-mention-option${i === 0 ? " ai-chat-tool-mention-option--first" : ""}`}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => applyMentionPick(name)}
-                    >
-                      {name}
-                    </button>
-                  ))
-                )}
+        </div>
+        <div
+          className={`ai-chat-composer${intelligentWorkspaceShell ? " ai-chat-composer--unified" : ""}`}
+        >
+          {!intelligentWorkspaceShell ? (
+            <>
+              <div className="ai-chat-composer-toolbar">
+                <div className="ai-chat-composer-toolbar__main">
+                  {composerToolbarMain}
+                </div>
               </div>
-            ) : null}
-            <textarea
-              ref={composerTextareaRef}
-              className="ai-chat-textarea"
-              rows={COMPOSER_MIN_LINES}
-              placeholder={
-                isBrowserAgent
-                  ? "Tell the browser agent what to do…"
-                  : "Message the assistant…"
-              }
-              value={input}
-              aria-autocomplete={mentionCtx && !mentionSuppress ? "list" : "none"}
-              aria-expanded={!!(mentionCtx && !mentionSuppress)}
-              aria-controls={
-                mentionCtx && !mentionSuppress ? toolMentionListId : undefined
-              }
-              onChange={(e) => {
-                setInput(e.target.value);
-                setComposerCaret(
-                  e.target.selectionStart ?? e.target.value.length,
-                );
-                setMentionSuppress(false);
-              }}
-              onSelect={(e) => {
-                setComposerCaret(e.currentTarget.selectionStart ?? 0);
-              }}
-              onKeyDown={(e) => {
-                if (
-                  !isBrowserAgent &&
-                  mentionCtx &&
-                  !mentionSuppress &&
-                  mentionCtx.suggestions.length > 0
-                ) {
-                  if (e.key === "Tab") {
-                    e.preventDefault();
-                    applyMentionPick(mentionCtx.suggestions[0]!);
-                    return;
-                  }
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    setMentionSuppress(true);
-                    return;
-                  }
-                }
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void onSend();
-                }
-              }}
-            />
-            <button
-              type="button"
-              className="ai-chat-send"
-              disabled={busy || !input.trim()}
-              aria-label="Send"
-              title="Send"
-              onClick={() => void onSend()}
-            >
-              <IconSendPlane />
-            </button>
-          </div>
+              <div className="ai-chat-composer-input-row ai-chat-composer-input-row--mention-wrap">
+                {composerMentionBlock}
+                {composerTextarea}
+                {composerSendBtn}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="ai-chat-composer-input-row ai-chat-composer-input-row--mention-wrap ai-chat-composer-input-row--iw-query">
+                {composerMentionBlock}
+                {composerTextarea}
+              </div>
+              <div className="ai-chat-composer-iw-footer">
+                <div className="ai-chat-composer-toolbar__main">
+                  {composerToolbarMain}
+                </div>
+                {composerSendBtnIw}
+              </div>
+            </>
+          )}
         </div>
+        </div>
+        {showQueryRail ? (
+          <AiChatQueryRail
+            scrollRootRef={messagesScrollRef}
+            users={queryRailUsers}
+            conversationId={active?.id ?? null}
+          />
+        ) : null}
       </div>
       {mcpModal}
       {deleteChatModalEl}

@@ -7,6 +7,21 @@ import { SettingsPanel } from "../modals/SettingsPanel";
 
 const POLL_MS = 400;
 
+/** Clicks that open intelligent settings — must not run the outside-click closer first (close+reopen flicker). */
+function isIntelligentSettingsOpenTrigger(target: Element): boolean {
+  if (target.closest("#intelligentWorkspaceSettingsBtn")) return true;
+  if (target.closest("#chatHistoryRailSettingsBtn")) return true;
+  if (target.closest("#settingsBtnChat")) return true;
+  if (target.closest(".model-quick-pick__empty")) return true;
+  if (
+    document.getElementById("appContainer")?.getAttribute("data-shell-workspace") ===
+      "intelligent" && target.closest("#settingsBtn")
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function ModalsBridge(): ReactElement | null {
   const [useReactModalsUi, setUseReactModalsUi] = useState(true);
   const [profileOpen, setProfileOpen] = useState(true);
@@ -37,6 +52,26 @@ export function ModalsBridge(): ReactElement | null {
     };
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
+  }, [intelligentSettingsModalOpen]);
+
+  /** IW modal: backdrop is inset and does not cover chat history, so clicks there never hit
+   * .settings-overlay. Dismiss when pressing outside the panel (incl. history sidebar), but
+   * keep splitter drags working. */
+  useEffect(() => {
+    if (!intelligentSettingsModalOpen) return;
+    const onDownCapture = (e: MouseEvent) => {
+      const t = e.target;
+      if (!(t instanceof Element)) return;
+      if (t.closest("#chatHistoryResizeHandle")) return;
+      if (isIntelligentSettingsOpenTrigger(t)) return;
+      const panel = document.querySelector(
+        "#webviewOverlayHost .settings-panel.settings-panel--modal-xl",
+      );
+      if (panel?.contains(t)) return;
+      setIntelligentSettingsModalOpen(false);
+    };
+    document.addEventListener("mousedown", onDownCapture, true);
+    return () => document.removeEventListener("mousedown", onDownCapture, true);
   }, [intelligentSettingsModalOpen]);
 
   if (!useReactModalsUi) return null;

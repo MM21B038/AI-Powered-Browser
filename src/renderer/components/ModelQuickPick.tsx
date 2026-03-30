@@ -46,7 +46,6 @@ export function ModelQuickPick({
       <button
         type="button"
         className="ai-chat-icon-btn ai-chat-icon-btn--model"
-        title="Choose model (scroll the list for more)"
         disabled={disabled}
         aria-expanded={open}
         aria-haspopup="listbox"
@@ -76,7 +75,6 @@ export function ModelQuickPick({
                 role="option"
                 aria-selected={id === selectedModelId}
                 className={`model-quick-pick__opt${id === selectedModelId ? " model-quick-pick__opt--active" : ""}`}
-                title={id}
                 onClick={() => {
                   onSelect(id);
                   setOpen(false);

@@ -2,6 +2,8 @@ const STORAGE_KEY = "intelligentWorkspace.layout";
 
 export const IW_HISTORY_WIDTH_DEFAULT = 280;
 export const IW_HISTORY_WIDTH_MIN = 200;
+/** Hard cap for the draggable history sidebar (must match drag + CSS max-width). */
+export const IW_HISTORY_WIDTH_MAX = 280;
 export const IW_HISTORY_COLLAPSED_WIDTH_PX = 52;
 
 export type IntelligentWorkspaceLayoutState = {
@@ -25,7 +27,7 @@ export function loadIntelligentWorkspaceLayout(): IntelligentWorkspaceLayoutStat
         ? Math.round(
             Math.max(
               IW_HISTORY_WIDTH_MIN,
-              Math.min(1200, w),
+              Math.min(IW_HISTORY_WIDTH_MAX, w),
             ),
           )
         : IW_HISTORY_WIDTH_DEFAULT;
@@ -46,6 +48,14 @@ export function saveIntelligentWorkspaceLayout(
 ): void {
   const cur = loadIntelligentWorkspaceLayout();
   const next: IntelligentWorkspaceLayoutState = { ...cur, ...patch };
+  if (typeof next.historyWidthPx === "number") {
+    next.historyWidthPx = Math.round(
+      Math.max(
+        IW_HISTORY_WIDTH_MIN,
+        Math.min(IW_HISTORY_WIDTH_MAX, next.historyWidthPx),
+      ),
+    );
+  }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   } catch {
@@ -62,7 +72,11 @@ export function applyIntelligentWorkspaceLayoutToDom(): void {
   if (app.getAttribute("data-shell-workspace") !== "intelligent") return;
 
   const { historyWidthPx, historyCollapsed } = loadIntelligentWorkspaceLayout();
-  app.style.setProperty("--iw-history-width", `${historyWidthPx}px`);
+  const w = Math.max(
+    IW_HISTORY_WIDTH_MIN,
+    Math.min(IW_HISTORY_WIDTH_MAX, historyWidthPx),
+  );
+  app.style.setProperty("--iw-history-width", `${w}px`);
   panel.classList.toggle("chat-history-panel--collapsed", historyCollapsed);
   panel.setAttribute("aria-expanded", historyCollapsed ? "false" : "true");
   if (rail) {
