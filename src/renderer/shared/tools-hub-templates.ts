@@ -37,11 +37,24 @@ export function getToolTemplateLine(command: string, sessionId?: string): string
     viewportMd: withSession("viewport md", sessionId),
     formSchema: withSession("form schema", sessionId),
     interactables: withSession("interactables", sessionId),
+    browserSearch: "browser search autonomous browser",
+    runJs: withSession("run js return document.title", sessionId),
     click: withSession("click #submit", sessionId),
     fill: withSession('fill #email with "value"', sessionId),
+    select: withSession('select Region by path "Americas > Canada"', sessionId),
     press: withSession("press #submit for 1200ms", sessionId),
     session: "session headless false",
     killSession: "kill session s_ab12cd",
+    scientificCalc: JSON.stringify(
+      {
+        kind: "info",
+        op: "scientific_calc",
+        expression: "sin(pi / 2)",
+        precision: 64,
+      },
+      null,
+      0,
+    ),
     picker: "",
     pickerInteractive: "",
     elemshot: "",
@@ -54,6 +67,28 @@ export function buildFillCommandLine(selector: string, value: string, sessionId?
   const val = value.trim() || "value";
   if (/[\s"]/.test(val)) return withSession(`fill ${sel} with "${val.replace(/"/g, '\\"')}"`, sessionId);
   return withSession(`fill ${sel} with ${val}`, sessionId);
+}
+
+export function buildSelectCommandLine(
+  selector: string,
+  by: "label" | "value" | "index" | "path",
+  value: string,
+  sessionId?: string,
+): string {
+  const sel = selector.trim() || "#country";
+  if (by === "index") {
+    const n = Number((value || "0").trim());
+    const idx = Number.isFinite(n) ? Math.floor(n) : 0;
+    return withSession(`select ${sel} by index ${idx}`, sessionId);
+  }
+  if (by === "path") {
+    const p = (value || "").trim() || "Americas > Canada";
+    if (/[\s"]/.test(p)) return withSession(`select ${sel} by path "${p.replace(/"/g, '\\"')}"`, sessionId);
+    return withSession(`select ${sel} by path ${p}`, sessionId);
+  }
+  const v = (value || "").trim() || "Canada";
+  if (/[\s"]/.test(v)) return withSession(`select ${sel} by ${by} "${v.replace(/"/g, '\\"')}"`, sessionId);
+  return withSession(`select ${sel} by ${by} ${v}`, sessionId);
 }
 
 export function buildClickCommandLine(selector: string, sessionId?: string): string {
@@ -107,4 +142,60 @@ export function buildPressHoldLine(selector: string, holdMs: number, sessionId?:
   const sel = selector.trim() || "#submit";
   const ms = Number.isFinite(holdMs) && holdMs > 0 ? Math.floor(holdMs) : 1200;
   return withSession(`press ${sel} for ${ms}ms`, sessionId);
+}
+
+export function buildRunJsPayload(script: string, argsJson: string, timeoutMs: number, sessionId?: string): string {
+  const scriptBody = (script || "").trim() || "return document.title;";
+  const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.floor(timeoutMs) : 8000;
+  let parsedArgs: unknown = null;
+  const raw = (argsJson || "").trim();
+  if (raw) {
+    try {
+      parsedArgs = JSON.parse(raw);
+    } catch {
+      parsedArgs = raw;
+    }
+  }
+  return JSON.stringify(
+    {
+      kind: "action",
+      op: "run_js",
+      script: scriptBody,
+      args: parsedArgs,
+      timeoutMs: timeout,
+      sessionId: (sessionId || "").trim() || SESSION_PLACEHOLDER,
+    },
+    null,
+    2,
+  );
+}
+
+export function buildBrowserSearchPayload(query: string, limit: number): string {
+  const q = (query || "").trim() || "autonomous browser";
+  const lim = Number.isFinite(limit) ? Math.max(1, Math.min(5, Math.floor(limit))) : 5;
+  return JSON.stringify(
+    {
+      kind: "info",
+      op: "browser_search",
+      query: q,
+      limit: lim,
+    },
+    null,
+    2,
+  );
+}
+
+export function buildScientificCalcPayload(params: { expression: string; precision?: number }): string {
+  const expression = (params.expression || "").trim() || "3 + 4 * 2";
+  const precision = Number.isFinite(params.precision) ? Math.max(16, Math.min(256, Math.floor(params.precision as number))) : 64;
+  return JSON.stringify(
+    {
+      kind: "info",
+      op: "scientific_calc",
+      expression,
+      precision,
+    },
+    null,
+    2,
+  );
 }

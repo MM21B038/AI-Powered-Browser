@@ -71,9 +71,18 @@ function ioExampleFor(command: string): { title: string; output: string; hint?: 
       return {
         title: "Example output",
         output:
-          "- button: \"Submit\" (selector: button[type=submit])\n" +
-          "- input: \"Work email\" (selector: #email)\n" +
-          "- a: \"Pricing\" (selector: a[href*=\"pricing\"])",
+          "| Kind | Label | MCP | How | Chat command |\n" +
+          "|---|---|---|---|---|\n" +
+          '| select | Country | butcher_select | `{"by":"label","value":"Canada"}…` | `select #country by label Canada…` |\n' +
+          '| combobox | Region | butcher_select | `{"by":"path","value":"EU > DE"}…` | `select "Region" by path…` |\n' +
+          "| input | Work email | butcher_fill | … | `fill #email with …` |\n" +
+          "| button | Submit | butcher_click | iframe: guest ids on line | `click …` |",
+        hint: (
+          <p className="tools-hub-tool-output-hint">
+            Full results include <code>suggestedMcpTool</code>, <code>toolHint</code>, and <code>suggestedCommand</code> per row in JSON (
+            <code>data.items</code>).
+          </p>
+        ),
       };
     default:
       return {
@@ -233,12 +242,17 @@ export function ToolsHubPickerDemoDetail({
         ? ["Toggle picker", "Snap to nearest", "Pick + run", "Done"]
         : ["Toggle picker", "Hover highlight", "Copy selector", "Ready"];
 
+  const whatId = `tools-hub-picker-what-${item.id}`;
+  const cmdId = `tools-hub-picker-cmd-${item.id}`;
+
   return (
     <div className="tools-hub-inner tools-hub-inner--tool">
       <ToolHero category={category} item={item} onBack={onBack} />
 
-      <section className="tools-hub-tool-section">
-        <h3 className="tools-hub-tool-h3">What it does</h3>
+      <section className="tools-hub-tool-section" aria-labelledby={whatId}>
+        <h3 id={whatId} className="tools-hub-tool-h3">
+          What it does
+        </h3>
         <p className="tools-hub-tool-lead">{item.description}</p>
         <ol className="tools-hub-fill-story-steps tools-hub-picker-steps" aria-hidden>
           <li className={phase >= 1 ? "tools-hub-fill-story-step--on" : ""}>{steps[0]}</li>
@@ -284,8 +298,10 @@ export function ToolsHubPickerDemoDetail({
         </div>
       </section>
 
-      <section className="tools-hub-tool-section">
-        <h3 className="tools-hub-tool-h3">Command format</h3>
+      <section className="tools-hub-tool-section" aria-labelledby={cmdId}>
+        <h3 id={cmdId} className="tools-hub-tool-h3">
+          Command format
+        </h3>
         <pre className="tools-hub-tool-pre" tabIndex={0}>
           {toolUsesQuickCommand(cmd) ? `Quick / Tools: ${cmd}` : line}
         </pre>

@@ -133,7 +133,7 @@ export function SidePanelsBridge(): ReactElement | null {
             <button
               type="button"
               className="side-item-del"
-              title="Remove"
+              aria-label="Remove bookmark"
               onClick={(e) => {
                 e.stopPropagation();
                 bridge.removeBookmarkByUrl?.(b.url);
@@ -222,7 +222,7 @@ export function SidePanelsBridge(): ReactElement | null {
                   <button
                     type="button"
                     className="pw-copy-btn"
-                    title="Copy username"
+                    aria-label="Copy username"
                     onClick={() => {
                       void navigator.clipboard.writeText(pw.username).then(() => {
                         bridge.showToast?.("📋 Username copied");
@@ -234,7 +234,7 @@ export function SidePanelsBridge(): ReactElement | null {
                   <button
                     type="button"
                     className="pw-copy-btn"
-                    title="Copy password"
+                    aria-label="Copy password"
                     onClick={() => {
                       void navigator.clipboard.writeText(pw.password).then(() => {
                         bridge.showToast?.("📋 Password copied");
@@ -246,7 +246,7 @@ export function SidePanelsBridge(): ReactElement | null {
                   <button
                     type="button"
                     className="pw-del-btn"
-                    title="Delete"
+                    aria-label="Delete password entry"
                     onClick={() => bridge.deletePasswordEntry?.(pw.url, pw.username)}
                   >
                     ✕

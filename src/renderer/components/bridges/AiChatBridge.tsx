@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useId,
@@ -30,12 +31,18 @@ import { generateMessageId } from "../../chat/conversation-ids";
 import {
   loadIntelligentSettings,
   saveIntelligentSettings,
+  selectedModelIdForChatScope,
+  thinkingLevelForChatScope,
   BUTCHER_BUILTIN_MCP_ID,
+  INTELLIGENT_BUILTIN_MCP_ID,
   mcpServerHasConnectionParams,
   mcpServerToPayload,
   type IntelligentSettingsState,
 } from "../../state/session-settings-store";
-import { MCP_TOOL_DEFINITIONS } from "../../../shared/mcp-tool-registry";
+import {
+  MCP_BROWSER_TOOL_DEFINITIONS,
+  MCP_INTELLIGENT_TOOL_DEFINITIONS,
+} from "../../../shared/mcp-tool-registry";
 import { getElectronApi } from "../../services/electron-api";
 import {
   appendUserMessage,
@@ -52,8 +59,13 @@ import {
 } from "../../chat/ai-tool-mentions";
 import type { McpBridgeState } from "../../../shared/ipc-types";
 import { ModelQuickPick } from "../ModelQuickPick";
+import { ThinkingPicker } from "../ThinkingPicker";
 import { friendlyMcpConnectionError } from "../../shared/mcp-error-messages";
 import { McpIcon } from "../icons/McpIcon";
+import {
+  AiChatCalculatorToolRow,
+  isCalculatorToolName,
+} from "./AiChatCalculatorToolRow";
 import { AiChatToolResultBlock } from "./ai-chat-tool-result";
 import { AiChatQueryRail } from "./AiChatQueryRail";
 import { renderChatMarkdownToHtml } from "../../chat/chat-markdown";
@@ -193,6 +205,15 @@ function AiChatThinkingLive({
         {text}
       </div>
     </details>
+  );
+}
+
+function AiChatToolRunning({ name }: { name: string }): ReactElement {
+  return (
+    <div className="ai-chat-tool-running">
+      <span className="ai-chat-tool-running__spinner" aria-hidden />
+      <span className="ai-chat-tool-running__name">{name}</span>
+    </div>
   );
 }
 
@@ -342,7 +363,6 @@ function AiChatMsgFooter({
       <button
         type="button"
         className="ai-chat-msg-icon-btn"
-        title="Copy message"
         aria-label="Copy message"
         onClick={() => void copyPlainTextToClipboard(plainText)}
       >
@@ -363,7 +383,6 @@ function AiChatMsgFooter({
         <button
           type="button"
           className="ai-chat-msg-icon-btn"
-          title="Edit message"
           aria-label="Edit message"
           disabled={editDisabled}
           onClick={onEdit}
@@ -407,54 +426,270 @@ function scopeFromDom(): ChatScope {
   return w === "intelligent" ? "intelligent" : "browser";
 }
 
-type PipelineResult = {
-  toolMsgs: ChatMessageV2[];
-  assistantBuf: string;
-  thinkingBuf: string;
+/** One agent round that ended with tool execution (thinking captured before those tools). */
+type PipelineRoundPersisted = {
+  thinking: string;
+  tools: ChatMessageV2[];
 };
+
+type PipelineResult = {
+  /** Ordered messages to append after `stored` — interleaved assistant(thinking) + tools per round, then final assistant. */
+  messagesToAppend: ChatMessageV2[];
+};
+
+/** Ordered streaming UI segments (live assistant message while pipeline runs). */
+type StreamSegment =
+  | { kind: "thinking"; text: string; live: boolean }
+  | { kind: "tool_running"; name: string; toolCallId: string }
+  | {
+      kind: "tool_done";
+      name: string;
+      toolCallId: string;
+      arguments: string;
+      content: string;
+    }
+  | { kind: "text"; plain: string };
+
+function pushSegmentSnapshot(
+  segments: StreamSegment[],
+  onSegmentUpdate: (segments: StreamSegment[]) => void,
+): void {
+  onSegmentUpdate(segments.map((s) => ({ ...s })));
+}
+
+function closeLiveThinkingSegments(segments: StreamSegment[]): StreamSegment[] {
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const s = segments[i];
+    if (s?.kind === "thinking" && s.live) {
+      return [
+        ...segments.slice(0, i),
+        { kind: "thinking", text: s.text, live: false },
+        ...segments.slice(i + 1),
+      ];
+    }
+  }
+  return segments;
+}
+
+/** Pin-to-bottom scroll: ignore live thinking token deltas (same as legacy `streamThinking` omission). */
+function streamScrollSignature(segments: StreamSegment[]): string {
+  return segments
+    .map((s) => {
+      if (s.kind === "thinking" && s.live) return "thinkL";
+      if (s.kind === "thinking") return `thinkD:${s.text.length}`;
+      if (s.kind === "text") return `txt:${s.plain.length}`;
+      if (s.kind === "tool_running") return `run:${s.toolCallId}`;
+      return `done:${s.name}:${s.toolCallId}`;
+    })
+    .join("|");
+}
+
+/**
+ * Single persistence path: interleaved thinking from `rounds`, every tool in `toolMsgs`
+ * exactly once (orphan tools appended if `rounds` slices drift), then final assistant.
+ */
+function buildPersistedMessagesRobust(
+  rounds: PipelineRoundPersisted[],
+  toolMsgs: ChatMessageV2[],
+  finalRoundThinking: string,
+  assistantBuf: string,
+  thinkingBufAll: string,
+): ChatMessageV2[] {
+  const out: ChatMessageV2[] = [];
+  let consumedFromFlat = 0;
+
+  for (const r of rounds) {
+    const th = r.thinking.trim();
+    if (th) {
+      out.push({
+        id: generateMessageId(),
+        role: "assistant",
+        content: "",
+        thinking: th,
+      });
+    }
+    for (const t of r.tools) {
+      out.push(t);
+      consumedFromFlat++;
+    }
+  }
+
+  while (consumedFromFlat < toolMsgs.length) {
+    out.push(toolMsgs[consumedFromFlat]!);
+    consumedFromFlat++;
+  }
+
+  const outText = assistantBuf.trim();
+  const ft = finalRoundThinking.trim();
+
+  if (!outText && !ft) {
+    if (thinkingBufAll.trim() && out.length === 0) {
+      out.push({
+        id: generateMessageId(),
+        role: "assistant",
+        content: "",
+        thinking: thinkingBufAll.trim(),
+      });
+    }
+    return out;
+  }
+
+  out.push({
+    id: generateMessageId(),
+    role: "assistant",
+    content: outText,
+    ...(ft ? { thinking: ft } : {}),
+  });
+  return out;
+}
 
 async function runChatPipelineRound(
   scope: ChatScope,
   api: NonNullable<ReturnType<typeof getElectronApi>>,
   storedMessages: ChatMessageV2[],
-  onStream: (
-    assistantBuf: string,
-    toolLines: string[],
-    thinkingBuf: string,
-  ) => void,
+  onSegmentUpdate: (segments: StreamSegment[]) => void,
   toolAllowlist?: string[] | null,
+  onNewThinkingRound?: () => void,
 ): Promise<PipelineResult> {
   const toolMsgs: ChatMessageV2[] = [];
+  const rounds: PipelineRoundPersisted[] = [];
+  let toolCountAtRoundStart = 0;
+  /** Thinking for the stream segment before the next `round_end` or final `done`. */
+  let roundThinking = "";
+  /** Concatenated thinking for fallback persistence (never dropped). */
+  let thinkingBufAll = "";
   let assistantBuf = "";
-  let thinkingBuf = "";
-  const toolLineList: string[] = [];
+  let segments: StreamSegment[] = [];
+  /** Preamble strip + assistantBuf reset at most once per SSE stream (first tool in batch). */
+  let preambleClearedForStream = false;
 
   const onEvent = (e: ChatStreamEvent) => {
-    if (e.type === "assistant_delta") {
-      assistantBuf += e.text;
-      onStream(assistantBuf, toolLineList, thinkingBuf);
-    } else if (e.type === "thinking") {
-      thinkingBuf += e.text;
-      onStream(assistantBuf, toolLineList, thinkingBuf);
-    } else if (e.type === "tool_start") {
-      toolLineList.push(`→ ${e.name}…`);
-      onStream(assistantBuf, [...toolLineList], thinkingBuf);
-    } else if (e.type === "tool_end") {
-      toolMsgs.push({
-        id: generateMessageId(),
-        role: "tool",
-        toolCallId: e.toolCallId,
-        name: e.name,
-        content: e.fullResult,
-        arguments: e.arguments,
-      });
-      toolLineList.push(`✓ ${e.name}`);
-      onStream(assistantBuf, [...toolLineList], thinkingBuf);
-    } else if (e.type === "error") {
-      assistantBuf += `\n\n_Error: ${e.message}_`;
-      onStream(assistantBuf, toolLineList, thinkingBuf);
-    } else if (e.type === "done") {
-      onStream(assistantBuf, toolLineList, thinkingBuf);
+    switch (e.type) {
+      case "stream_start":
+        preambleClearedForStream = false;
+        break;
+      case "assistant_delta": {
+        if (!e.text) break;
+        assistantBuf += e.text;
+        const last = segments[segments.length - 1];
+        if (last?.kind === "text") {
+          segments = [
+            ...segments.slice(0, -1),
+            { kind: "text", plain: last.plain + e.text },
+          ];
+        } else {
+          segments = [...segments, { kind: "text", plain: e.text }];
+        }
+        pushSegmentSnapshot(segments, onSegmentUpdate);
+        break;
+      }
+      case "thinking": {
+        roundThinking += e.text;
+        thinkingBufAll += e.text;
+        const last = segments[segments.length - 1];
+        if (last?.kind === "thinking" && last.live) {
+          segments = [
+            ...segments.slice(0, -1),
+            { kind: "thinking", text: last.text + e.text, live: true },
+          ];
+        } else {
+          segments = [
+            ...segments,
+            { kind: "thinking", text: e.text, live: true },
+          ];
+          onNewThinkingRound?.();
+        }
+        pushSegmentSnapshot(segments, onSegmentUpdate);
+        break;
+      }
+      case "tool_start": {
+        segments = closeLiveThinkingSegments(segments);
+        const running: StreamSegment = {
+          kind: "tool_running",
+          name: e.name,
+          toolCallId: e.toolCallId,
+        };
+        if (preambleClearedForStream) {
+          segments = [...segments, running];
+          pushSegmentSnapshot(segments, onSegmentUpdate);
+          break;
+        }
+        preambleClearedForStream = true;
+        while (
+          segments.length > 0 &&
+          segments[segments.length - 1]?.kind === "text"
+        ) {
+          segments = segments.slice(0, -1);
+        }
+        assistantBuf = "";
+        segments = [...segments, running];
+        pushSegmentSnapshot(segments, onSegmentUpdate);
+        break;
+      }
+      case "tool_end": {
+        toolMsgs.push({
+          id: generateMessageId(),
+          role: "tool",
+          toolCallId: e.toolCallId,
+          name: e.name,
+          content: e.fullResult,
+          arguments: e.arguments,
+        });
+        let idx = -1;
+        for (let j = segments.length - 1; j >= 0; j--) {
+          const s = segments[j];
+          if (s?.kind === "tool_running" && s.toolCallId === e.toolCallId) {
+            idx = j;
+            break;
+          }
+        }
+        if (idx >= 0) {
+          segments = [
+            ...segments.slice(0, idx),
+            {
+              kind: "tool_done",
+              name: e.name,
+              toolCallId: e.toolCallId,
+              arguments: e.arguments,
+              content: e.fullResult,
+            },
+            ...segments.slice(idx + 1),
+          ];
+        }
+        pushSegmentSnapshot(segments, onSegmentUpdate);
+        break;
+      }
+      case "round_end": {
+        const toolsThisRound = toolMsgs.slice(toolCountAtRoundStart);
+        rounds.push({ thinking: roundThinking, tools: toolsThisRound });
+        toolCountAtRoundStart = toolMsgs.length;
+        roundThinking = "";
+        break;
+      }
+      case "error":
+        segments = closeLiveThinkingSegments(segments);
+        assistantBuf += `\n\n_Error: ${e.message}_`;
+        break;
+      case "done":
+        segments = closeLiveThinkingSegments(segments);
+        while (
+          segments.length > 0 &&
+          segments[segments.length - 1]?.kind === "text"
+        ) {
+          segments = segments.slice(0, -1);
+        }
+        {
+          const tail = assistantBuf.trim();
+          if (tail) {
+            segments = [...segments, { kind: "text", plain: tail }];
+          }
+        }
+        pushSegmentSnapshot(segments, onSegmentUpdate);
+        break;
+      default: {
+        const _never: never = e;
+        void _never;
+      }
     }
   };
 
@@ -470,7 +705,14 @@ async function runChatPipelineRound(
         : null,
   });
 
-  return { toolMsgs, assistantBuf, thinkingBuf };
+  const messagesToAppend = buildPersistedMessagesRobust(
+    rounds,
+    toolMsgs,
+    roundThinking,
+    assistantBuf,
+    thinkingBufAll,
+  );
+  return { messagesToAppend };
 }
 
 function AiChatPanel(): ReactElement {
@@ -485,14 +727,13 @@ function AiChatPanel(): ReactElement {
   );
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [streamText, setStreamText] = useState("");
-  const [streamThinking, setStreamThinking] = useState("");
-  const [toolLines, setToolLines] = useState<string[]>([]);
+  const [streamSegments, setStreamSegments] = useState<StreamSegment[]>([]);
   /** Live streaming thinking `<details>`; reset closed on each new send / regenerate. */
   const [thinkingLiveOpen, setThinkingLiveOpen] = useState(false);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
   const [mcpBridge, setMcpBridge] = useState<McpBridgeState | null>(null);
   const [butcherToolsExpanded, setButcherToolsExpanded] = useState(false);
+  const [intelligentToolsExpanded, setIntelligentToolsExpanded] = useState(false);
   const [expandedMcpIds, setExpandedMcpIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -519,7 +760,6 @@ function AiChatPanel(): ReactElement {
     null,
   );
   const retryRunningRef = useRef(false);
-  const streamRef = useRef("");
   const thinkingStartRef = useRef<number | null>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   /** When false, streaming updates must not reset scroll (user scrolled up to read). */
@@ -654,13 +894,17 @@ function AiChatPanel(): ReactElement {
     () => active?.messages.filter((m) => m.role !== "system") ?? [],
     [active?.messages],
   );
+  const streamScrollSig = useMemo(
+    () => streamScrollSignature(streamSegments),
+    [streamSegments],
+  );
+
   const welcomeSpotlightMessageId = useMemo(() => {
-    if (busy || streamText || streamThinking || toolLines.length > 0)
-      return null;
+    if (busy || streamSegments.length > 0) return null;
     if (nonSystemMessages.length !== 1) return null;
     const only = nonSystemMessages[0];
     return only && only.role === "assistant" ? only.id : null;
-  }, [busy, nonSystemMessages, streamText, streamThinking, toolLines.length]);
+  }, [busy, nonSystemMessages, streamSegments.length]);
 
   const queryRailUsers = useMemo(() => {
     if (!active?.messages) return [];
@@ -681,7 +925,7 @@ function AiChatPanel(): ReactElement {
 
   /**
    * Pin to bottom only while the user is already at the tail (avoids fighting scroll during streaming).
-   * `streamThinking` is omitted from deps so thinking tokens do not yank the main message scroll.
+   * Live thinking token updates are excluded via `streamScrollSig` (stable placeholder for live blocks).
    */
   useLayoutEffect(() => {
     if (!stickMessagesToBottomRef.current) return;
@@ -690,8 +934,7 @@ function AiChatPanel(): ReactElement {
     el.scrollTop = el.scrollHeight;
   }, [
     scoped.activeConversationId,
-    streamText,
-    toolLines,
+    streamScrollSig,
     nonSystemMessages.length,
     busy,
   ]);
@@ -823,10 +1066,7 @@ function AiChatPanel(): ReactElement {
       stickMessagesToBottomRef.current = true;
       setThinkingLiveOpen(false);
       setBusy(true);
-      setStreamText("");
-      setStreamThinking("");
-      setToolLines([]);
-      streamRef.current = "";
+      setStreamSegments([]);
       thinkingStartRef.current = null;
 
       const stored = appendUserMessage([...conv.messages], text);
@@ -865,41 +1105,37 @@ function AiChatPanel(): ReactElement {
         }
       }
       try {
-        const { toolMsgs, assistantBuf, thinkingBuf } =
-          await runChatPipelineRound(
-            scope,
-            api,
-            stored,
-            (buf, lines, think) => {
-              if (think.trim() && thinkingStartRef.current === null)
-                thinkingStartRef.current = Date.now();
-              streamRef.current = buf;
-              setStreamText(buf);
-              setStreamThinking(think);
-              setToolLines(lines);
-            },
-            toolAllowlist,
-          );
+        const { messagesToAppend } = await runChatPipelineRound(
+          scope,
+          api,
+          stored,
+          setStreamSegments,
+          toolAllowlist,
+          () => {
+            thinkingStartRef.current = Date.now();
+          },
+        );
 
-        const finalMessages: ChatMessageV2[] = [...stored, ...toolMsgs];
-        const outText = assistantBuf.trim();
-        const t = thinkingBuf.trim();
-        if (outText || t) {
-          let thinkingDurationMs: number | undefined;
-          if (t && thinkingStartRef.current != null) {
-            thinkingDurationMs = Date.now() - thinkingStartRef.current;
+        let append = messagesToAppend;
+        if (append.length > 0) {
+          const last = append[append.length - 1];
+          if (
+            last.role === "assistant" &&
+            last.thinking &&
+            thinkingStartRef.current != null
+          ) {
+            append = [
+              ...append.slice(0, -1),
+              {
+                ...last,
+                thinkingDurationMs: Date.now() - thinkingStartRef.current,
+              },
+            ];
           }
-          thinkingStartRef.current = null;
-          finalMessages.push({
-            id: generateMessageId(),
-            role: "assistant",
-            content: outText,
-            ...(t ? { thinking: t } : {}),
-            ...(thinkingDurationMs != null && t ? { thinkingDurationMs } : {}),
-          });
-        } else {
-          thinkingStartRef.current = null;
         }
+        thinkingStartRef.current = null;
+
+        const finalMessages: ChatMessageV2[] = [...stored, ...append];
 
         setStore((s) => {
           const sc = getScopedStore(s, scope);
@@ -915,9 +1151,7 @@ function AiChatPanel(): ReactElement {
         });
       } finally {
         setBusy(false);
-        setStreamText("");
-        setStreamThinking("");
-        setToolLines([]);
+        setStreamSegments([]);
       }
     },
     [api, active, busy, scope, scoped, settings, updateScoped],
@@ -929,9 +1163,7 @@ function AiChatPanel(): ReactElement {
       stickMessagesToBottomRef.current = true;
       setThinkingLiveOpen(false);
       setBusy(true);
-      setStreamText("");
-      setStreamThinking("");
-      setToolLines([]);
+      setStreamSegments([]);
       thinkingStartRef.current = null;
       let toolAllowlist: string[] | null = null;
       if (scope === "intelligent") {
@@ -949,40 +1181,37 @@ function AiChatPanel(): ReactElement {
         }
       }
       try {
-        const { toolMsgs, assistantBuf, thinkingBuf } =
-          await runChatPipelineRound(
-            scope,
-            api,
-            stored,
-            (buf, lines, think) => {
-              if (think.trim() && thinkingStartRef.current === null)
-                thinkingStartRef.current = Date.now();
-              setStreamText(buf);
-              setStreamThinking(think);
-              setToolLines(lines);
-            },
-            toolAllowlist,
-          );
+        const { messagesToAppend } = await runChatPipelineRound(
+          scope,
+          api,
+          stored,
+          setStreamSegments,
+          toolAllowlist,
+          () => {
+            thinkingStartRef.current = Date.now();
+          },
+        );
 
-        const finalMessages: ChatMessageV2[] = [...stored, ...toolMsgs];
-        const outText = assistantBuf.trim();
-        const t = thinkingBuf.trim();
-        if (outText || t) {
-          let thinkingDurationMs: number | undefined;
-          if (t && thinkingStartRef.current != null) {
-            thinkingDurationMs = Date.now() - thinkingStartRef.current;
+        let append = messagesToAppend;
+        if (append.length > 0) {
+          const last = append[append.length - 1];
+          if (
+            last.role === "assistant" &&
+            last.thinking &&
+            thinkingStartRef.current != null
+          ) {
+            append = [
+              ...append.slice(0, -1),
+              {
+                ...last,
+                thinkingDurationMs: Date.now() - thinkingStartRef.current,
+              },
+            ];
           }
-          thinkingStartRef.current = null;
-          finalMessages.push({
-            id: generateMessageId(),
-            role: "assistant",
-            content: outText,
-            ...(t ? { thinking: t } : {}),
-            ...(thinkingDurationMs != null && t ? { thinkingDurationMs } : {}),
-          });
-        } else {
-          thinkingStartRef.current = null;
         }
+        thinkingStartRef.current = null;
+
+        const finalMessages: ChatMessageV2[] = [...stored, ...append];
 
         setStore((s) => {
           const sc = getScopedStore(s, scope);
@@ -997,9 +1226,7 @@ function AiChatPanel(): ReactElement {
         });
       } finally {
         setBusy(false);
-        setStreamText("");
-        setStreamThinking("");
-        setToolLines([]);
+        setStreamSegments([]);
       }
     },
     [api, scope, settings],
@@ -1376,6 +1603,7 @@ function AiChatPanel(): ReactElement {
     : settings.mcpTogglesIntelligent;
   const setConn = (id: string, v: boolean) => {
     if (isBrowserAgent && id === BUTCHER_BUILTIN_MCP_ID) return;
+    if (!isBrowserAgent && id === INTELLIGENT_BUILTIN_MCP_ID && !v) return;
     persistSettings({
       ...settings,
       [isBrowserAgent ? "mcpTogglesBrowser" : "mcpTogglesIntelligent"]: {
@@ -1518,8 +1746,8 @@ function AiChatPanel(): ReactElement {
                 <div>
                   <div className="ai-chat-mcp-card__name">
                     {isBrowserAgent
-                      ? "Butcher (browser automation)"
-                      : "Butcher (built-in)"}
+                      ? "Browser Server (browser automation)"
+                      : "Browser Server (built-in)"}
                   </div>
                   {mcpBridge ? (
                     <div className="ai-chat-mcp-card__meta">
@@ -1537,7 +1765,7 @@ function AiChatPanel(): ReactElement {
                     </span>
                     <span
                       className="ai-chat-mcp-connection-pill"
-                      title="Cannot be disabled for Browser Agent"
+                      aria-label="Always on. Cannot be disabled for Browser Agent."
                     >
                       Always on
                     </span>
@@ -1561,7 +1789,7 @@ function AiChatPanel(): ReactElement {
                           ),
                         )
                       }
-                      ariaLabel="Butcher MCP connection"
+                      ariaLabel="Browser Server MCP connection"
                     />
                   </div>
                 )}
@@ -1580,7 +1808,7 @@ function AiChatPanel(): ReactElement {
               </button>
               {butcherToolsExpanded ? (
                 <div className="ai-chat-mcp-tool-grid">
-                  {MCP_TOOL_DEFINITIONS.map((def) => (
+                  {MCP_BROWSER_TOOL_DEFINITIONS.map((def) => (
                     <div key={def.name} className="ai-chat-mcp-tool-row">
                       <SlideToggle
                         on={
@@ -1614,6 +1842,67 @@ function AiChatPanel(): ReactElement {
                 </div>
               ) : null}
             </div>
+            {!isBrowserAgent ? (
+              <div className="ai-chat-mcp-card">
+                <div className="ai-chat-mcp-card__header">
+                  <div>
+                    <div className="ai-chat-mcp-card__name">Intelligent Server (built-in)</div>
+                    {mcpBridge ? (
+                      <div className="ai-chat-mcp-card__meta">
+                        Bridge:{" "}
+                        {mcpBridge.enabled && mcpBridge.intelligentListeningPort != null
+                          ? `listening on ${mcpBridge.intelligentListeningPort}`
+                          : "off"}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="ai-chat-mcp-toggle ai-chat-mcp-toggle--locked">
+                    <span className="ai-chat-mcp-toggle__label">Connection</span>
+                    <span
+                      className="ai-chat-mcp-connection-pill"
+                      aria-label="Always on. Cannot be disabled for AI Assistant."
+                    >
+                      Always on
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className={`ai-chat-mcp-card__expand${intelligentToolsExpanded ? " is-expanded" : ""}`}
+                  aria-expanded={intelligentToolsExpanded}
+                  onClick={() => setIntelligentToolsExpanded((v) => !v)}
+                >
+                  <span
+                    className="ai-chat-mcp-card__expand-chevron"
+                    aria-hidden
+                  />
+                  {intelligentToolsExpanded ? "Hide tools" : "Show tools"}
+                </button>
+                {intelligentToolsExpanded ? (
+                  <div className="ai-chat-mcp-tool-grid">
+                    {MCP_INTELLIGENT_TOOL_DEFINITIONS.map((def) => (
+                      <div key={def.name} className="ai-chat-mcp-tool-row">
+                        <SlideToggle
+                          on={toggleScope.toolEnabled[INTELLIGENT_BUILTIN_MCP_ID]?.[def.name] !== false}
+                          onToggle={() =>
+                            setToolT(
+                              INTELLIGENT_BUILTIN_MCP_ID,
+                              def.name,
+                              !(toggleScope.toolEnabled[INTELLIGENT_BUILTIN_MCP_ID]?.[def.name] !== false),
+                            )
+                          }
+                          ariaLabel={`Tool ${def.name}`}
+                        />
+                        <div className="ai-chat-mcp-tool-row__text">
+                          <span className="ai-chat-mcp-tool-row__name">{def.name}</span>
+                          <span className="ai-chat-mcp-tool-row__desc">{def.description}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             {!isBrowserAgent &&
               settings.mcpServers.map((s) => {
@@ -1797,11 +2086,6 @@ function AiChatPanel(): ReactElement {
       <button
         type="button"
         className="ai-chat-icon-btn ai-chat-icon-btn--mcp"
-        title={
-          isBrowserAgent
-            ? "Browser automation & MCP tools"
-            : "MCP & tools"
-        }
         aria-label={
           isBrowserAgent
             ? "Browser automation and MCP tools"
@@ -1814,14 +2098,31 @@ function AiChatPanel(): ReactElement {
       </button>
       <span className="ai-chat-composer-toolbar__sep" aria-hidden />
       <ModelQuickPick
-        selectedModelId={settings.selectedModelId}
+        selectedModelId={selectedModelIdForChatScope(settings, scope)}
         modelIds={settings.cachedModelIds}
         disabled={busy}
         onSelect={(id) =>
-          persistSettings({ ...settings, selectedModelId: id })
+          persistSettings({
+            ...settings,
+            ...(scope === "browser"
+              ? { browserSelectedModelId: id }
+              : { intelligentSelectedModelId: id }),
+          })
         }
         onOpenAssistantSettings={() =>
           window.legacyBrowser?.openIntelligentAssistantSettings?.()
+        }
+      />
+      <ThinkingPicker
+        level={thinkingLevelForChatScope(settings, scope)}
+        disabled={busy}
+        onSelect={(level) =>
+          persistSettings({
+            ...settings,
+            ...(scope === "browser"
+              ? { browserThinkingLevel: level }
+              : { intelligentThinkingLevel: level }),
+          })
         }
       />
       {intelligentWorkspaceShell ? (
@@ -1830,7 +2131,6 @@ function AiChatPanel(): ReactElement {
           <button
             type="button"
             className="ai-chat-icon-btn ai-chat-icon-btn--clear"
-            title="Clear chat"
             aria-label="Clear chat"
             disabled={busy || !active}
             onClick={() => clearChat()}
@@ -1846,7 +2146,7 @@ function AiChatPanel(): ReactElement {
           <button
             type="button"
             className="ai-chat-icon-btn ai-chat-icon-btn--compact"
-            title="Pick any element — append CSS selector and details to the message"
+            aria-label="Pick any element — append CSS selector and details to the message"
             onClick={() =>
               window.legacyBrowser?.startBrowserPagePickerAny?.()
             }
@@ -1856,7 +2156,7 @@ function AiChatPanel(): ReactElement {
           <button
             type="button"
             className="ai-chat-icon-btn ai-chat-icon-btn--compact"
-            title="Pick a clickable control — append target details to the message"
+            aria-label="Pick a clickable control — append target details to the message"
             onClick={() =>
               window.legacyBrowser?.startBrowserPagePickerInteractive?.()
             }
@@ -1866,7 +2166,7 @@ function AiChatPanel(): ReactElement {
           <button
             type="button"
             className="ai-chat-icon-btn ai-chat-icon-btn--compact"
-            title="Click a region to save a snapshot — filename is added to the message"
+            aria-label="Click a region to save a snapshot — filename is added to the message"
             onClick={() =>
               window.legacyBrowser?.startBrowserPageElementScreenshot?.()
             }
@@ -1972,7 +2272,6 @@ function AiChatPanel(): ReactElement {
       className="ai-chat-send"
       disabled={busy || !input.trim()}
       aria-label="Send"
-      title="Send"
       onClick={() => void onSend()}
     >
       <IconSendPlane />
@@ -1985,7 +2284,6 @@ function AiChatPanel(): ReactElement {
       className="ai-chat-send ai-chat-send--iw"
       disabled={busy || !input.trim()}
       aria-label="Send"
-      title="Send"
       onClick={() => void onSend()}
     >
       <IconSendPlane />
@@ -2041,16 +2339,26 @@ function AiChatPanel(): ReactElement {
           ) : null}
           {active?.messages?.map((m, msgIdx) => {
             if (m.role === "system") return null;
-            if (m.role === "tool")
+            if (m.role === "tool") {
+              const toolName = m.name?.trim() || "Tool result";
               return (
                 <div key={m.id} className="ai-chat-msg ai-chat-msg--tool">
-                  <AiChatToolResultBlock
-                    name={m.name?.trim() || "Tool result"}
-                    toolArguments={m.arguments}
-                    content={m.content}
-                  />
+                  {isCalculatorToolName(toolName) ? (
+                    <AiChatCalculatorToolRow
+                      instanceKey={m.id}
+                      toolArguments={m.arguments}
+                      content={m.content}
+                    />
+                  ) : (
+                    <AiChatToolResultBlock
+                      name={toolName}
+                      toolArguments={m.arguments}
+                      content={m.content}
+                    />
+                  )}
                 </div>
               );
+            }
             if (m.role === "user") {
               const editing =
                 scope === "intelligent" &&
@@ -2284,38 +2592,68 @@ function AiChatPanel(): ReactElement {
               </div>
             );
           })}
-          {streamText || streamThinking ? (
+          {streamSegments.length > 0 ? (
             <div
               className="ai-chat-msg ai-chat-msg--assistant ai-chat-msg--streaming"
               tabIndex={-1}
             >
               <div className="ai-chat-msg-stack">
-                {streamThinking ? (
-                  <AiChatThinkingLive
-                    text={streamThinking}
-                    open={thinkingLiveOpen}
-                    onOpenChange={setThinkingLiveOpen}
-                  />
-                ) : null}
-                {streamText ? (
-                  <div
-                    className="ai-chat-bubble"
-                    dangerouslySetInnerHTML={{ __html: renderAiChatMd(streamText) }}
-                  />
-                ) : null}
-                {streamText ? (
-                  <AiChatMsgFooter align="start" plainText={streamText} />
-                ) : null}
+                {streamSegments.map((seg, i) => {
+                  const key =
+                    seg.kind === "tool_running" || seg.kind === "tool_done"
+                      ? `${i}-${seg.kind}-${seg.toolCallId}`
+                      : `${i}-${seg.kind}`;
+                  switch (seg.kind) {
+                    case "thinking":
+                      return seg.live ? (
+                        <AiChatThinkingLive
+                          key={key}
+                          text={seg.text}
+                          open={thinkingLiveOpen}
+                          onOpenChange={setThinkingLiveOpen}
+                        />
+                      ) : (
+                        <AiChatThoughtBlock key={key} thinking={seg.text} />
+                      );
+                    case "tool_running":
+                      return <AiChatToolRunning key={key} name={seg.name} />;
+                    case "tool_done":
+                      return isCalculatorToolName(seg.name) ? (
+                        <AiChatCalculatorToolRow
+                          key={key}
+                          instanceKey={seg.toolCallId}
+                          toolArguments={seg.arguments}
+                          content={seg.content}
+                        />
+                      ) : (
+                        <AiChatToolResultBlock
+                          key={key}
+                          name={seg.name}
+                          toolArguments={seg.arguments}
+                          content={seg.content}
+                        />
+                      );
+                    case "text": {
+                      const isLast = i === streamSegments.length - 1;
+                      return (
+                        <Fragment key={key}>
+                          <div
+                            className="ai-chat-bubble"
+                            dangerouslySetInnerHTML={{
+                              __html: renderAiChatMd(seg.plain),
+                            }}
+                          />
+                          {isLast ? (
+                            <AiChatMsgFooter align="start" plainText={seg.plain} />
+                          ) : null}
+                        </Fragment>
+                      );
+                    }
+                    default:
+                      return null;
+                  }
+                })}
               </div>
-            </div>
-          ) : null}
-          {toolLines.length > 0 ? (
-            <div className="ai-chat-tool-tray">
-              {toolLines.map((t, i) => (
-                <div key={i} className="ai-chat-tool-line">
-                  {t}
-                </div>
-              ))}
             </div>
           ) : null}
           </div>

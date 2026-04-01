@@ -409,20 +409,23 @@ export function ScreenshotLibraryBridge(): ReactElement | null {
               <dd>{detailEntry.title || "—"}</dd>
               <dt>URL</dt>
               <dd className="screenshot-lib-url-dd">
-                <span title={detailEntry.url || ""}>
+                <span
+                  {...(detailEntry.url
+                    ? { "aria-label": detailEntry.url }
+                    : {})}
+                >
                   {detailEntry.url ? truncateUrl(detailEntry.url) : "—"}
                 </span>
               </dd>
               <dt>File</dt>
-              <dd className="screenshot-lib-path-dd" title={detailEntry.path}>
-                {detailEntry.path}
+              <dd className="screenshot-lib-path-dd">
+                <span aria-label={detailEntry.path}>{detailEntry.path}</span>
               </dd>
             </dl>
             <div className="screenshot-lib-detail-actions">
               <button
                 type="button"
                 className="screenshot-lib-icon-btn"
-                title="Open page in browser"
                 aria-label="Open page in browser"
                 disabled={!detailEntry.url?.trim()}
                 onClick={() => openPage(detailEntry.url)}
@@ -459,7 +462,6 @@ export function ScreenshotLibraryBridge(): ReactElement | null {
               <button
                 type="button"
                 className="screenshot-lib-icon-btn"
-                title="Copy image to clipboard"
                 aria-label="Copy image to clipboard"
                 disabled={!detailDataUrl}
                 onClick={() => {
@@ -497,7 +499,6 @@ export function ScreenshotLibraryBridge(): ReactElement | null {
               <button
                 type="button"
                 className="screenshot-lib-icon-btn screenshot-lib-icon-btn--danger"
-                title="Delete screenshot"
                 aria-label="Delete screenshot"
                 onClick={() => void deleteByIds([detailEntry.id])}
               >

@@ -35,7 +35,6 @@ export const CHAT_MARKDOWN_PURIFY_CONFIG = {
     "aria-hidden",
     "focusable",
     "class",
-    "title",
     "data-lang",
     "data-auto-lang",
   ],
@@ -46,10 +45,8 @@ export function buildMarkedRenderer() {
 
   r.link = function (this: InstanceType<typeof marked.Renderer>, tok: Tokens.Link) {
     const safeHref = tok.href || "";
-    const safeTitle = tok.title || "";
-    const titleAttr = safeTitle ? ` title="${escapeHtml(safeTitle)}"` : "";
     const inner = this.parser.parseInline(tok.tokens);
-    return `<a class="md-link" href="${escapeHtml(safeHref)}"${titleAttr}>${inner}</a>`;
+    return `<a class="md-link" href="${escapeHtml(safeHref)}">${inner}</a>`;
   };
 
   r.code = (tok: Tokens.Code) => {
@@ -67,7 +64,7 @@ export function buildMarkedRenderer() {
       <div class="md-codeblock"${langAttr}>
         <div class="md-codeblock-head">
           <span class="md-codeblock-lang"${autoLangAttr}>${escapeHtml(label)}</span>
-          <button type="button" class="md-codecopy" aria-label="Copy code" title="Copy">
+          <button type="button" class="md-codecopy" aria-label="Copy code">
             ${CLIPBOARD_ICON}
           </button>
         </div>

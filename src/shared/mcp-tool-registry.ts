@@ -34,7 +34,7 @@ function schemaWithSession(
 export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   {
     name: "butcher_navigate",
-    description: "Navigate the active tab to a URL (Tool Hub: Go to URL).",
+    description: "Navigate the active tab to a URL.",
     inputSchema: schemaWithSession(
       {
         url: { type: "string", description: "Absolute or resolvable URL" },
@@ -44,12 +44,12 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "butcher_go_back",
-    description: "History back in the active tab.",
+    description: "Go back in tab history.",
     inputSchema: schemaWithSession({}),
   },
   {
     name: "butcher_go_forward",
-    description: "History forward in the active tab.",
+    description: "Go forward in tab history.",
     inputSchema: schemaWithSession({}),
   },
   {
@@ -59,12 +59,12 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "butcher_get_url",
-    description: "Return the current page URL.",
+    description: "Get the current page URL.",
     inputSchema: schemaWithSession({}),
   },
   {
     name: "butcher_get_title",
-    description: "Return the current page title.",
+    description: "Get the current page title.",
     inputSchema: schemaWithSession({}),
   },
   {
@@ -74,19 +74,19 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "butcher_tab_cycle",
-    description: "Cycle to the next tab in the current session.",
+    description: "Cycle to the next tab in the session.",
     inputSchema: schemaWithSession({}),
   },
   {
     name: "butcher_new_tab",
-    description: "Open a new tab (optional URL).",
+    description: "Open a new tab.",
     inputSchema: schemaWithSession({
       url: { type: "string", description: "Optional URL to load in the new tab" },
     }),
   },
   {
     name: "butcher_switch_tab",
-    description: "Switch active tab by numeric tab id.",
+    description: "Switch to a tab by id.",
     inputSchema: schemaWithSession(
       {
         tabId: { type: "integer", description: "Tab id (see list_tabs)" },
@@ -96,15 +96,14 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "butcher_close_tab",
-    description: "Close a tab (current tab if tabId omitted).",
+    description: "Close a tab (or the current tab).",
     inputSchema: schemaWithSession({
       tabId: { type: "integer", description: "Optional tab id to close" },
     }),
   },
   {
     name: "butcher_click",
-    description:
-      "Click an element matched by CSS selector. For items from cross-origin iframes (see interactables `guestFrame`), pass guestProcessId and guestRoutingId from the suggested line.",
+    description: "Click an element by selector.",
     inputSchema: schemaWithSession(
       {
         selector: { type: "string", description: "CSS selector for the element" },
@@ -122,7 +121,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "butcher_fill",
-    description: "Fill an input or textarea with text.",
+    description: "Fill an input or textarea.",
     inputSchema: schemaWithSession(
       {
         selector: { type: "string", description: "CSS selector" },
@@ -132,8 +131,32 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
     ),
   },
   {
+    name: "butcher_select",
+    description: "Select an option in native or custom dropdowns using label, value, index, or path.",
+    inputSchema: schemaWithSession(
+      {
+        selector: {
+          type: "string",
+          description:
+            "CSS selector or visible label/control text identifying the dropdown trigger (not only select elements).",
+        },
+        by: {
+          type: "string",
+          enum: ["label", "value", "index", "path"],
+          description: "How to choose the option: label, value, index, or path for nested menus.",
+        },
+        value: {
+          oneOf: [{ type: "string" }, { type: "integer" }],
+          description:
+            "Choice to apply: string for label, value, or path (use > between levels); integer for index when by is index.",
+        },
+      },
+      ["selector", "by", "value"],
+    ),
+  },
+  {
     name: "butcher_type",
-    description: "Type text into the focused field or a specific selector.",
+    description: "Type text into a field.",
     inputSchema: schemaWithSession(
       {
         text: { type: "string", description: "Text to type" },
@@ -141,6 +164,45 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
       },
       ["text"],
     ),
+  },
+  {
+    name: "butcher_run_js",
+    description: "Run JavaScript in the active page context and return the result.",
+    inputSchema: schemaWithSession(
+      {
+        script: { type: "string", description: "JavaScript function body to execute in the page context." },
+        args: { description: "Optional JSON-serializable value passed into script as `args`." },
+        timeoutMs: { type: "integer", minimum: 200, maximum: 30000, description: "Optional timeout in milliseconds." },
+      },
+      ["script"],
+    ),
+  },
+  {
+    name: "intelligent_browser_search",
+    description: "Search the web and return heading, url, and snippet results.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query text." },
+        max_results: { type: "integer", minimum: 1, maximum: 5, description: "Maximum results to return (default 5)." },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "intelligent_scientific_calculate",
+    description:
+      "Calculator: mathjs expression with + − * / ^, parentheses, sqrt, nthRoot/nroot, sin/cos/tan (radians), inverse trig asin/acos/atan/atan2, exp, constants pi and e, ln (natural), log (natural; use log(x,b) or log10/log2 for other bases). Examples: {\"expression\":\"sin(pi/2)\"}, {\"expression\":\"ln(e)\"}, {\"expression\":\"log10(100)\"}, {\"expression\":\"2^10\"}.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        expression: { type: "string", description: "Math expression (see tool description)." },
+        precision: { type: "integer", minimum: 16, maximum: 256, description: "Optional BigNumber precision (default 64)." },
+      },
+      required: ["expression"],
+      additionalProperties: false,
+    },
   },
   {
     name: "butcher_scroll",
@@ -165,7 +227,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "butcher_press_hold",
-    description: "Press and hold an element for a duration.",
+    description: "Press and hold an element.",
     inputSchema: schemaWithSession(
       {
         selector: { type: "string", description: "CSS selector" },
@@ -176,14 +238,14 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "butcher_screenshot",
-    description: "Capture viewport or full-page screenshot (may return large payload; truncated in MCP responses).",
+    description: "Capture a viewport or full-page screenshot.",
     inputSchema: schemaWithSession({
       mode: { type: "string", enum: ["viewport", "full"], description: "Capture mode" },
     }),
   },
   {
     name: "butcher_viewport_markdown",
-    description: "Extract markdown representation of the visible viewport.",
+    description: "Extract markdown from the visible viewport.",
     inputSchema: schemaWithSession({}),
   },
   {
@@ -193,14 +255,14 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "butcher_interactables",
-    description: "List clickable / input elements (limit optional).",
+    description: "List interactive page elements with selectors and tool hints.",
     inputSchema: schemaWithSession({
       limit: { type: "integer", minimum: 1, maximum: 400, description: "Max rows" },
     }),
   },
   {
     name: "butcher_create_session",
-    description: "Create a new browser session (headless or windowed).",
+    description: "Create a new browser session.",
     inputSchema: {
       type: "object",
       properties: {
@@ -224,8 +286,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "butcher_run_automation_command",
-    description:
-      "Advanced: run a raw AutomationCommand object (same schema as chat automation). Prefer named tools when possible.",
+    description: "Run a raw AutomationCommand object.",
     inputSchema: {
       type: "object",
       properties: {
@@ -237,7 +298,13 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
 ];
 
+export const MCP_BROWSER_TOOL_DEFINITIONS = MCP_TOOL_DEFINITIONS.filter((t) => t.name.startsWith("butcher_"));
+export const MCP_INTELLIGENT_TOOL_DEFINITIONS = MCP_TOOL_DEFINITIONS.filter((t) =>
+  t.name.startsWith("intelligent_"),
+);
 export const MCP_TOOL_NAMES = MCP_TOOL_DEFINITIONS.map((t) => t.name);
+export const MCP_BROWSER_TOOL_NAMES = MCP_BROWSER_TOOL_DEFINITIONS.map((t) => t.name);
+export const MCP_INTELLIGENT_TOOL_NAMES = MCP_INTELLIGENT_TOOL_DEFINITIONS.map((t) => t.name);
 
 type JsonRecord = Record<string, unknown>;
 
@@ -319,6 +386,39 @@ export function automationCommandFromMcpTool(name: string, args: unknown): Autom
         if (!selector) return new Error("selector required");
         return { kind: "action", op: "fill", selector, value, ...(sid ? { sessionId: sid } : {}) };
       }
+      case "butcher_select": {
+        const selector = String(a.selector ?? "").trim();
+        if (!selector) return new Error("selector required");
+        const byRaw = String(a.by ?? "").toLowerCase();
+        if (byRaw !== "label" && byRaw !== "value" && byRaw !== "index" && byRaw !== "path") {
+          return new Error("by must be label, value, index, or path");
+        }
+        const by = byRaw as "label" | "value" | "index" | "path";
+        if (by === "index") {
+          const idx = typeof a.value === "number" ? a.value : Number(a.value);
+          if (!Number.isFinite(idx)) return new Error("value must be a number when by is index");
+          return {
+            kind: "action",
+            op: "select",
+            selector,
+            by: "index",
+            value: Math.floor(idx),
+            ...(sid ? { sessionId: sid } : {}),
+          };
+        }
+        const strVal = a.value == null ? "" : String(a.value);
+        if ((by === "label" || by === "path") && !strVal.trim()) {
+          return new Error("value required (non-empty string for label or path)");
+        }
+        return {
+          kind: "action",
+          op: "select",
+          selector,
+          by,
+          value: strVal,
+          ...(sid ? { sessionId: sid } : {}),
+        };
+      }
       case "butcher_type": {
         const text = String(a.text ?? "");
         const selector = a.selector != null ? String(a.selector).trim() : undefined;
@@ -327,6 +427,43 @@ export function automationCommandFromMcpTool(name: string, args: unknown): Autom
           op: "type",
           text,
           ...(selector ? { selector } : {}),
+          ...(sid ? { sessionId: sid } : {}),
+        };
+      }
+      case "intelligent_browser_search": {
+        const query = String(a.query ?? "").trim();
+        if (!query) return new Error("query required");
+        const limitRaw = a.max_results != null ? Number(a.max_results) : undefined;
+        if (limitRaw != null && !Number.isFinite(limitRaw)) return new Error("limit must be a number");
+        const limit = limitRaw != null ? Math.max(1, Math.min(5, Math.floor(limitRaw))) : undefined;
+        return { kind: "info", op: "browser_search", query, ...(limit != null ? { limit } : {}) };
+      }
+      case "intelligent_scientific_calculate": {
+        const expression = String(a.expression ?? "").trim();
+        if (!expression) return new Error("expression required");
+        const precisionRaw = a.precision != null ? Number(a.precision) : undefined;
+        if (precisionRaw != null && !Number.isFinite(precisionRaw)) return new Error("precision must be a number");
+        const precision = precisionRaw != null ? Math.floor(precisionRaw) : undefined;
+        return {
+          kind: "info",
+          op: "scientific_calc",
+          expression,
+          ...(precision != null ? { precision } : {}),
+          ...(sid ? { sessionId: sid } : {}),
+        };
+      }
+      case "butcher_run_js": {
+        const script = String(a.script ?? "");
+        if (!script.trim()) return new Error("script required");
+        const timeoutMsRaw = a.timeoutMs != null ? Number(a.timeoutMs) : undefined;
+        if (timeoutMsRaw != null && !Number.isFinite(timeoutMsRaw)) return new Error("timeoutMs must be a number");
+        const timeoutMs = timeoutMsRaw != null ? Math.floor(timeoutMsRaw) : undefined;
+        return {
+          kind: "action",
+          op: "run_js",
+          script,
+          ...(a.args !== undefined ? { args: a.args } : {}),
+          ...(timeoutMs != null ? { timeoutMs } : {}),
           ...(sid ? { sessionId: sid } : {}),
         };
       }
@@ -403,7 +540,43 @@ const MAX_DATA_URL_CHARS = 120_000;
 /**
  * Shrink screenshot data URLs for JSON-RPC / MCP responses.
  */
-export function sanitizeAutomationResultForMcp(result: AutomationResult): AutomationResult {
+export function sanitizeAutomationResultForMcp(result: AutomationResult): unknown {
+  if (result.op === "browser_search") {
+    const d = (result.data ?? {}) as Record<string, unknown>;
+    const query = typeof d.query === "string" ? d.query : "";
+    const results = Array.isArray(d.results)
+      ? d.results.map((r) => {
+          const row = (r ?? {}) as Record<string, unknown>;
+          return {
+            heading: String(row.heading ?? ""),
+            url: String(row.url ?? ""),
+            snippet: String(row.snippet ?? ""),
+          };
+        })
+      : [];
+    const resultsCountRaw = d.results_count;
+    const results_count =
+      typeof resultsCountRaw === "number" && Number.isFinite(resultsCountRaw)
+        ? Math.max(0, Math.floor(resultsCountRaw))
+        : results.length;
+    return {
+      success: !!result.success,
+      query,
+      results_count,
+      results,
+      ...(result.success ? {} : { error: String(result.error ?? "search_failed") }),
+    };
+  }
+  if (result.op === "scientific_calc") {
+    const d = (result.data ?? {}) as Record<string, unknown>;
+    return {
+      success: !!result.success,
+      expression: String(d.expression ?? ""),
+      ...(d.result != null ? { result: String(d.result) } : {}),
+      ...(result.success ? {} : { error: String(result.error ?? d.error ?? "scientific_calc_failed") }),
+    };
+  }
+
   if (!result.artifacts?.length) return result;
   const artifacts = result.artifacts.map((art) => {
     if (art.type !== "screenshot" || !art.dataUrl) return art;

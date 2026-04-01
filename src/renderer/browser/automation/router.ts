@@ -5,7 +5,7 @@ import {
   domTypeHuman,
   domPressKey,
   domPressHold,
-  domSelectBy,
+  domSelectSmart,
   domSetDate,
   domToggleCheckbox,
   domToggleRadio,
@@ -19,6 +19,8 @@ import {
   INTERACTABLES_MAX_LIMIT,
   VIEWPORT_MARKDOWN_SCRIPT,
 } from "./markdown-extractor";
+import { searchDuckDuckGoWeb } from "./ddg-search";
+import { runScientificCalculator } from "../../services/scientific-calculator";
 
 export interface TabInfo {
   id: number;
@@ -36,6 +38,10 @@ export type InteractableRow = {
   role?: string;
   type?: string;
   suggestedCommand?: string;
+  /** Primary Butcher MCP tool for this row, when applicable (e.g. butcher_select). */
+  suggestedMcpTool?: string;
+  /** Short guidance: MCP args shape, by label vs path, iframe ids, etc. */
+  toolHint?: string;
   guestFrame?: GuestFrameRef;
 };
 
@@ -78,6 +84,9 @@ function now() {
   return Date.now();
 }
 
+const RUN_JS_TIMEOUT_DEFAULT_MS = 8000;
+const RUN_JS_TIMEOUT_MAX_MS = 30000;
+
 function finish(
   op: string,
   success: boolean,
@@ -108,6 +117,11 @@ function mdTable(headers: string[], rows: Array<Array<string | number | boolean>
     .map((r) => `| ${r.map((c) => mdEscapePipes(String(c))).join(" | ")} |`)
     .join("\n");
   return [h, sep, body].filter(Boolean).join("\n");
+}
+
+function truncateCell(s: string, max: number): string {
+  const t = String(s || "").replace(/\s+/g, " ").trim();
+  return t.length > max ? `${t.slice(0, Math.max(0, max - 1))}…` : t;
 }
 
 function toIsoDate(d: Date): string {
@@ -191,6 +205,7 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
     "close_tab",
     "new_tab",
     "wait_for_selector",
+    "run_js",
     "reload",
     "back",
     "forward",
@@ -232,7 +247,7 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
 
   try {
     if (cmd.kind === "info") {
-      if (!wv && cmd.op !== "list_tabs") {
+      if (!wv && cmd.op !== "list_tabs" && cmd.op !== "browser_search" && cmd.op !== "scientific_calc") {
         return wrap(cmd.op, finish(cmd.op, false, { kind: "info", error: "No webview", message: "No page loaded." }));
       }
       switch (cmd.op) {
@@ -290,16 +305,22 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
               const { processId, routingId } = it.guestFrame;
               const base = it.suggestedCommand || `click ${it.selector}`;
               it.suggestedCommand = `${base} (guestProcessId=${processId} guestRoutingId=${routingId})`;
+              const ih = (it.toolHint || "").trim();
+              const extra =
+                " Iframe: include guestProcessId and guestRoutingId on MCP tools that support them (e.g. butcher_click).";
+              it.toolHint = ih ? ih + extra : extra.trim();
             }
           }
 
           const rows = items.slice(0, 40).map((it) => [
             it.kind ?? "",
-            it.label ?? "",
-            it.guestFrame ? mdEscapePipes(it.guestFrame.url.slice(0, 56)) : "—",
-            it.selector ?? "",
+            (it.label ?? "").slice(0, 72),
+            it.guestFrame ? it.guestFrame.url.slice(0, 56) : "—",
+            (it.selector ?? "").slice(0, 96),
             [it.role ? `role=${it.role}` : "", it.type ? `type=${it.type}` : ""].filter(Boolean).join(" "),
-            it.suggestedCommand ?? "",
+            it.suggestedMcpTool ?? "—",
+            (it.toolHint ?? "").slice(0, 160),
+            (it.suggestedCommand ?? "").slice(0, 200),
           ]);
           return wrap(
             cmd.op,
@@ -307,9 +328,74 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
               kind: "info",
               message:
                 "**Interactables**\n\n" +
-                mdTable(["Kind", "Label", "Frame", "Selector", "Role/Type", "Suggested"], rows) +
-                "\n\nFull JSON in `data`.",
+                mdTable(
+                  ["Kind", "Label", "Frame", "Selector", "Role/Type", "MCP", "How", "Chat command"],
+                  rows,
+                ) +
+                "\n\nRows **select** / **combobox** / **listbox-trigger** → **butcher_select** (native: `by` label|value|index; custom: `by` path). Full JSON in `data`.",
               data: { items },
+            }),
+          );
+        }
+        case "browser_search": {
+          const q = (cmd.query || "").trim();
+          if (!q) {
+            return wrap(cmd.op, finish(cmd.op, false, { kind: "info", error: "query_required", message: "Search query required." }));
+          }
+          const lim = Math.max(1, Math.min(5, Math.floor(cmd.limit ?? 5)));
+          try {
+            const items = await searchDuckDuckGoWeb(q, lim);
+            if (!items.length) {
+              return wrap(
+                cmd.op,
+                finish(cmd.op, true, {
+                  kind: "info",
+                  message: `No results for **${q}**.`,
+                  data: { query: q, results_count: 0, results: [], error: null, items: [] },
+                }),
+              );
+            }
+            const results = items.map((it) => ({
+              heading: truncateCell(it.heading, 120),
+              url: truncateCell(it.url, 180),
+              snippet: truncateCell(it.snippet, 200),
+            }));
+            const rows = results.map((it) => [it.heading, it.url, it.snippet]);
+            return wrap(
+              cmd.op,
+              finish(cmd.op, true, {
+                kind: "info",
+                message: `**Browser search:** ${q}\n\n` + mdTable(["heading", "url", "snippet"], rows),
+                data: { query: q, results_count: results.length, results, error: null, items: results },
+              }),
+            );
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            return wrap(
+              cmd.op,
+              finish(cmd.op, false, {
+                kind: "info",
+                error: msg,
+                message: `Web search failed: ${msg}`,
+                data: { query: q, results_count: 0, results: [], error: msg, items: [] },
+              }),
+            );
+          }
+        }
+        case "scientific_calc": {
+          const out = runScientificCalculator({
+            expression: cmd.expression,
+            precision: cmd.precision,
+          });
+          return wrap(
+            cmd.op,
+            finish(cmd.op, out.success, {
+              kind: "info",
+              message: out.success
+                ? `Calculator: ${out.expression} = ${out.result ?? ""}`
+                : `Calculator failed: ${out.error || "unknown error"}`,
+              ...(out.success ? {} : { error: out.error || "scientific_calc_failed" }),
+              data: out,
             }),
           );
         }
@@ -479,7 +565,7 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
       }
       case "select": {
         if (!wv) return wrap(cmd.op, finish(cmd.op, false, { error: "No webview", message: "No page to automate." }));
-        const r = await domSelectBy(wv, cmd.selector, cmd.by, cmd.value);
+        const r = await domSelectSmart(wv, cmd.selector, cmd.by, cmd.value);
         return wrap(cmd.op, finish(cmd.op, r.success, { message: r.success ? "Select updated." : r.error || "Failed" }));
       }
       case "toggle_checkbox": {
@@ -584,6 +670,41 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
         return wrap(
           cmd.op,
           finish(cmd.op, r.found, { message: r.found ? "Element appeared." : "Timeout waiting for selector." }),
+        );
+      }
+      case "run_js": {
+        if (!wv) return wrap(cmd.op, finish(cmd.op, false, { error: "No webview", message: "No page to automate." }));
+        const script = String(cmd.script ?? "");
+        if (!script.trim()) {
+          return wrap(cmd.op, finish(cmd.op, false, { error: "script_required", message: "run_js requires `script`." }));
+        }
+        const timeoutMs = Math.max(
+          200,
+          Math.min(
+            RUN_JS_TIMEOUT_MAX_MS,
+            Number.isFinite(Number(cmd.timeoutMs)) ? Math.floor(Number(cmd.timeoutMs)) : RUN_JS_TIMEOUT_DEFAULT_MS,
+          ),
+        );
+        const code = `
+          (async function(){
+            var __src = ${JSON.stringify(script)};
+            var __args = ${JSON.stringify(cmd.args ?? null)};
+            var __fn = new Function("args", __src);
+            return await __fn(__args);
+          })()
+        `;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error("run_js timeout")), timeoutMs);
+        });
+        const result = await Promise.race([wv.executeJavaScript(code), timeoutPromise]);
+        if (timer) clearTimeout(timer);
+        return wrap(
+          cmd.op,
+          finish(cmd.op, true, {
+            message: result === undefined ? "JavaScript executed (no return value)." : "JavaScript executed.",
+            data: result === undefined ? {} : { result },
+          }),
         );
       }
       case "wait_ms":
@@ -707,6 +828,42 @@ export async function dispatchAutomationLine(text: string, ctx: AutomationKernel
       ctx,
     );
   }
+  const selectMatch = raw.match(/^select\s+(.+?)\s+by\s+(label|value|index|path)\s+(.+)$/i);
+  if (selectMatch) {
+    const target = selectMatch[1].trim();
+    const by = selectMatch[2].toLowerCase() as "label" | "value" | "index" | "path";
+    let choice = selectMatch[3].trim();
+    if (by === "path") {
+      if (choice.length >= 2 && choice.startsWith('"') && choice.endsWith('"')) {
+        choice = choice.slice(1, -1).replace(/\\"/g, '"');
+      }
+      return runAutomationCommand(
+        { kind: "action", op: "select", selector: target, by: "path", value: choice, sessionId },
+        ctx,
+      );
+    }
+    if (by === "index") {
+      const idx = Number(choice);
+      if (!Number.isFinite(idx)) {
+        return finish("select", false, {
+          kind: "action",
+          op: "select",
+          message: "Index must be a number. Example: **select #country by index 0**.",
+        });
+      }
+      return runAutomationCommand(
+        { kind: "action", op: "select", selector: target, by: "index", value: Math.floor(idx), sessionId },
+        ctx,
+      );
+    }
+    if (choice.length >= 2 && choice.startsWith('"') && choice.endsWith('"')) {
+      choice = choice.slice(1, -1).replace(/\\"/g, '"');
+    }
+    return runAutomationCommand(
+      { kind: "action", op: "select", selector: target, by, value: choice, sessionId },
+      ctx,
+    );
+  }
   const typeIntoMatch = raw.match(/^(?:type into|type in)\s+(.+?)\s+with\s+(.+)$/i);
   if (typeIntoMatch) {
     const selector = typeIntoMatch[1].trim();
@@ -738,6 +895,10 @@ export async function dispatchAutomationLine(text: string, ctx: AutomationKernel
       message: "Type requires a selector. Use **type into <selector> with <text>**.",
     });
   }
+  const runJsMatch = raw.match(/^(?:run\s+js|js)\s+([\s\S]+)$/i);
+  if (runJsMatch) {
+    return runAutomationCommand({ kind: "action", op: "run_js", script: runJsMatch[1].trim(), sessionId }, ctx);
+  }
   if (t === "get text" || t === "read page" || t === "page text") {
     return runAutomationCommand({ kind: "info", op: "get_page_text", maxChars: 500, sessionId }, ctx);
   }
@@ -749,6 +910,13 @@ export async function dispatchAutomationLine(text: string, ctx: AutomationKernel
   }
   if (t === "interactables" || t === "get interactables") {
     return runAutomationCommand({ kind: "info", op: "get_interactables", limit: 200, sessionId }, ctx);
+  }
+  const browserSearchMatch = raw.match(/^(?:browser\s+search|search\s+web)\s+(.+)$/i);
+  if (browserSearchMatch) {
+    return runAutomationCommand(
+      { kind: "info", op: "browser_search", query: browserSearchMatch[1].trim(), limit: 5, sessionId },
+      ctx,
+    );
   }
   if (t === "list tabs" || t === "tabs") {
     return runAutomationCommand({ kind: "info", op: "list_tabs", sessionId }, ctx);
@@ -821,9 +989,10 @@ export async function dispatchAutomationLine(text: string, ctx: AutomationKernel
         "### Tabs\n" +
         "- `list tabs in session s_ab12cd` (returns a table with 5-digit TabIds)\n- `switch tab 24532 in session s_ab12cd`\n- `new tab in session s_ab12cd`\n- `close tab in session s_ab12cd`\n\n" +
         "### Page actions\n" +
-        "- `click <selector or text> in session s_ab12cd`\n- `fill <selector> with <value> in session s_ab12cd`\n- `type into <selector> with <text> in session s_ab12cd`\n- `press <selector> for 1200ms in session s_ab12cd`\n- `submit <selector> in session s_ab12cd`\n- `scroll up|down in session s_ab12cd`\n- `screenshot in session s_ab12cd`\n- `wait 1200ms in session s_ab12cd` / `wait 2s in session s_ab12cd`\n\n" +
+        "- `click <selector or text> in session s_ab12cd`\n- `fill <selector> with <value> in session s_ab12cd`\n- `select <selector or label> by label|value|index <choice> in session s_ab12cd`\n- `select <target> by path \"Level1 > Level2\" in session s_ab12cd` (nested custom menus; native select: one segment)\n- `type into <selector> with <text> in session s_ab12cd`\n- `press <selector> for 1200ms in session s_ab12cd`\n- `submit <selector> in session s_ab12cd`\n- `scroll up|down in session s_ab12cd`\n- `screenshot in session s_ab12cd`\n- `wait 1200ms in session s_ab12cd` / `wait 2s in session s_ab12cd`\n\n" +
+        "- `run js return document.title in session s_ab12cd`\n" +
         "### Info / extraction\n" +
-        "- `url`, `title`\n- `viewport md`\n- `form schema`\n- `interactables`\n\n" +
+        "- `url`, `title`\n- `viewport md`\n- `form schema`\n- `interactables`\n- `browser search <query>`\n\n" +
         "### Date picker\n" +
         "- `date <selector_or_label> = Mar 25 2026`\n- `date <selector_or_label> = 2026-03-25`\n\n" +
         "### Tools (UI toggles)\n" +

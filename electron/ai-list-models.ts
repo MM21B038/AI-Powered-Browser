@@ -2,6 +2,8 @@
  * List AI models from main process (no browser CORS).
  */
 
+import { httpsRequestBody } from "./ai-custom-tls";
+
 export type ListedAiModel = { id: string; displayName?: string };
 
 function normalizeOpenAiBase(base: string): string {
@@ -45,17 +47,24 @@ export async function listGoogleModelsMain(apiKey: string): Promise<ListedAiMode
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export async function listOpenAiCompatibleModelsMain(baseUrl: string, apiKey: string): Promise<ListedAiModel[]> {
+export async function listOpenAiCompatibleModelsMain(
+  baseUrl: string,
+  apiKey: string,
+  tlsCaPem?: string,
+): Promise<ListedAiModel[]> {
   const key = apiKey.trim();
   if (!key) throw new Error("API key required");
   const base = normalizeOpenAiBase(baseUrl || "https://api.openai.com");
   const url = `${base}/v1/models`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${key}` },
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(text.slice(0, 500) || `HTTP ${res.status}`);
+  const { statusCode, body: text } = await httpsRequestBody(
+    url,
+    "GET",
+    { Authorization: `Bearer ${key}` },
+    undefined,
+    tlsCaPem,
+  );
+  if (statusCode < 200 || statusCode >= 300) {
+    throw new Error(text.slice(0, 500) || `HTTP ${statusCode}`);
   }
   const data = JSON.parse(text) as { data?: Array<{ id?: string }> };
   const rows = data.data ?? [];

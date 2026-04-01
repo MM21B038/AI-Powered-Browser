@@ -1,12 +1,12 @@
 /**
- * Stdio MCP server: registers Browser Server tools and forwards each call to the Electron TCP bridge
- * (BUTCHER_MCP_PORT + BUTCHER_MCP_TOKEN). Run with: node stdio-server.js
+ * Stdio MCP server: registers Intelligent server tools and forwards each call
+ * to the Electron TCP bridge (INTELLIGENT_MCP_PORT + INTELLIGENT_MCP_TOKEN).
  */
 import net from "node:net";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod/v4";
-import { MCP_BROWSER_TOOL_DEFINITIONS } from "../../src/shared/mcp-tool-registry";
+import { MCP_INTELLIGENT_TOOL_DEFINITIONS } from "../../src/shared/mcp-tool-registry";
 
 let nextBridgeId = 1;
 
@@ -35,9 +35,8 @@ function bridgeToolsCall(port: number, token: string, toolName: string, args: un
       sock.destroy();
       try {
         const parsed = JSON.parse(line) as {
-          id?: number;
           result?: unknown;
-          error?: { message?: string; code?: string };
+          error?: { message?: string };
         };
         if (parsed.error) {
           reject(new Error(parsed.error.message || "bridge error"));
@@ -48,32 +47,26 @@ function bridgeToolsCall(port: number, token: string, toolName: string, args: un
         reject(e instanceof Error ? e : new Error(String(e)));
       }
     });
-    sock.on("error", (err) => {
-      reject(err);
-    });
+    sock.on("error", (err) => reject(err));
   });
 }
 
 async function main(): Promise<void> {
-  const port = Number(process.env.BUTCHER_MCP_PORT || "47842");
-  const token = process.env.BUTCHER_MCP_TOKEN || "";
+  const port = Number(process.env.INTELLIGENT_MCP_PORT || process.env.BUTCHER_MCP_PORT || "47843");
+  const token = process.env.INTELLIGENT_MCP_TOKEN || process.env.BUTCHER_MCP_TOKEN || "";
   if (!token.trim()) {
-    console.error("Butcher MCP: set BUTCHER_MCP_TOKEN to match the token in app settings.");
+    console.error("Intelligent server: set BUTCHER_MCP_TOKEN to match app settings.");
     process.exit(1);
   }
 
-  const mcp = new McpServer({ name: "browser-server", version: "1.0.0" });
-
+  const mcp = new McpServer({ name: "intelligent-server", version: "1.0.0" });
   const looseArgs = z.record(z.string(), z.unknown());
 
-  for (const def of MCP_BROWSER_TOOL_DEFINITIONS) {
+  for (const def of MCP_INTELLIGENT_TOOL_DEFINITIONS) {
     const name = def.name;
     mcp.registerTool(
       name,
-      {
-        description: def.description,
-        inputSchema: looseArgs,
-      },
+      { description: def.description, inputSchema: looseArgs },
       async (args) => {
         const result = await bridgeToolsCall(port, token, name, args);
         const text =
@@ -82,9 +75,7 @@ async function main(): Promise<void> {
             : typeof result === "string"
               ? result
               : JSON.stringify(result, null, 2);
-        return {
-          content: [{ type: "text" as const, text }],
-        };
+        return { content: [{ type: "text" as const, text }] };
       },
     );
   }

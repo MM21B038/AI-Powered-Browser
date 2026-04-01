@@ -61,13 +61,20 @@ function IconTrash(): ReactElement {
   );
 }
 import type { McpRemoteTransport } from "../../../shared/mcp-external-types";
-import { MCP_TOOL_NAMES } from "../../../shared/mcp-tool-registry";
+import {
+  MCP_BROWSER_TOOL_NAMES,
+  MCP_INTELLIGENT_TOOL_NAMES,
+} from "../../../shared/mcp-tool-registry";
 import { getElectronApi } from "../../services/electron-api";
 import {
+  AI_PROVIDER_SELECT_OPTIONS,
   BUTCHER_BUILTIN_MCP_ID,
+  INTELLIGENT_BUILTIN_MCP_ID,
   createEmptyMcpServer,
   loadIntelligentSettings,
   mcpServerHasConnectionParams,
+  parseAiProvider,
+  resolveOpenAiCompatibleBaseUrl,
   saveIntelligentSettings,
   type IntelligentSettingsState,
   type McpServerConfig,
@@ -89,7 +96,7 @@ const INTELLIGENT_SETTINGS_SECTIONS: readonly {
   id: string;
   label: string;
   hint: string;
-  icon: "appearance" | "ai" | "mcp-bridge" | "mcp-tools";
+  icon: "appearance" | "ai" | "mcp-browser-bridge" | "mcp-intelligent-bridge" | "mcp-tools";
 }[] = [
   {
     id: "iw-settings-appearance",
@@ -99,10 +106,16 @@ const INTELLIGENT_SETTINGS_SECTIONS: readonly {
   },
   { id: "iw-settings-ai", label: "AI", hint: "AI provider and keys", icon: "ai" },
   {
-    id: "iw-settings-mcp-bridge",
-    label: "MCP bridge",
-    hint: "Butcher MCP bridge",
-    icon: "mcp-bridge",
+    id: "iw-settings-mcp-browser-bridge",
+    label: "Browser MCP",
+    hint: "Browser Server bridge",
+    icon: "mcp-browser-bridge",
+  },
+  {
+    id: "iw-settings-mcp-intelligent-bridge",
+    label: "Intelligent MCP",
+    hint: "Intelligent Server bridge",
+    icon: "mcp-intelligent-bridge",
   },
   {
     id: "iw-settings-mcp-tools",
@@ -177,11 +190,26 @@ function IntelligentSettingsNavIcon({
           <path d="M5 19h14" opacity="0.85" />
         </svg>
       );
-    case "mcp-bridge":
+    case "mcp-browser-bridge":
       return (
         <svg {...s}>
-          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+          <circle cx="10.5" cy="12" r="6.5" />
+          <path d="M4 12h13M10.5 5.5v13" />
+          <path d="M8.3 6.4a9.6 9.6 0 0 0 0 11.2M12.7 6.4a9.6 9.6 0 0 1 0 11.2" />
+          <rect x="15.6" y="9.9" width="5.1" height="4.2" rx="1" />
+          <path d="M20.7 11h1.4M20.7 13h1.4" />
+        </svg>
+      );
+    case "mcp-intelligent-bridge":
+      return (
+        <svg {...s}>
+          <rect x="4" y="6.2" width="13" height="10.3" rx="2.5" />
+          <circle cx="8.8" cy="11.4" r="1" />
+          <circle cx="12.2" cy="11.4" r="1" />
+          <path d="M7.7 14.1h5.6" />
+          <path d="M10.5 3.8v2.4M7.6 4.9h5.8" />
+          <rect x="17.2" y="9.9" width="4.6" height="4.2" rx="1" />
+          <path d="M21.8 11h1.2M21.8 13h1.2" />
         </svg>
       );
     case "mcp-tools":
@@ -361,6 +389,7 @@ export function SettingsPanel({
   const intelligentHydratedRef = useRef(false);
   const [mcpBridge, setMcpBridge] = useState<McpBridgeState | null>(null);
   const [mcpPortDraft, setMcpPortDraft] = useState("");
+  const [mcpIntelligentPortDraft, setMcpIntelligentPortDraft] = useState("");
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelTestBusy, setModelTestBusy] = useState(false);
   const [aiModelActionFeedback, setAiModelActionFeedback] = useState<
@@ -472,6 +501,7 @@ export function SettingsPanel({
       void api.mcpBridgeGetState().then((s) => {
         setMcpBridge(s);
         setMcpPortDraft(String(s.port));
+        setMcpIntelligentPortDraft(String(s.intelligentPort));
       });
     }
     return () => {
@@ -545,13 +575,16 @@ export function SettingsPanel({
 
   const modelIdsForPicker = useMemo(() => {
     const fromCache = intelligentSettings.cachedModelIds;
-    const sel = intelligentSettings.selectedModelId.trim();
+    const sel = intelligentSettings.intelligentSelectedModelId.trim();
     if (fromCache.length > 0) {
       if (sel && !fromCache.includes(sel)) return [sel, ...fromCache];
       return fromCache;
     }
     return sel ? [sel] : [];
-  }, [intelligentSettings.cachedModelIds, intelligentSettings.selectedModelId]);
+  }, [
+    intelligentSettings.cachedModelIds,
+    intelligentSettings.intelligentSelectedModelId,
+  ]);
 
   const filteredModelIds = useMemo(() => {
     const q = modelListFilter.trim().toLowerCase();
@@ -761,7 +794,8 @@ export function SettingsPanel({
 
   /** Model / provider only — API key typing stays debounced to avoid spamming localStorage + chat reloads. */
   const AI_SETTINGS_IMMEDIATE_PERSIST = new Set([
-    "selectedModelId",
+    "browserSelectedModelId",
+    "intelligentSelectedModelId",
     "cachedModelIds",
     "aiProvider",
   ]);
@@ -919,7 +953,41 @@ export function SettingsPanel({
     const snippet = JSON.stringify(
       {
         mcpServers: {
-          butcher: {
+          browserServer: {
+            command: "node",
+            args: [mcpBridge.stdioServerPath],
+            env: {
+              BUTCHER_MCP_PORT: String(mcpBridge.port),
+              BUTCHER_MCP_TOKEN: mcpBridge.token,
+            },
+          },
+          intelligentServer: {
+            command: "node",
+            args: [mcpBridge.intelligentStdioServerPath],
+            env: {
+              INTELLIGENT_MCP_PORT: String(mcpBridge.intelligentPort),
+              INTELLIGENT_MCP_TOKEN: mcpBridge.intelligentToken,
+            },
+          },
+        },
+      },
+      null,
+      2,
+    );
+    try {
+      await navigator.clipboard.writeText(snippet);
+      bridge?.showToast?.("MCP config JSON copied");
+    } catch {
+      bridge?.showToast?.("Copy failed");
+    }
+  };
+
+  const copyBrowserMcpClientSnippet = async () => {
+    if (!mcpBridge || !api) return;
+    const snippet = JSON.stringify(
+      {
+        mcpServers: {
+          browserServer: {
             command: "node",
             args: [mcpBridge.stdioServerPath],
             env: {
@@ -934,7 +1002,33 @@ export function SettingsPanel({
     );
     try {
       await navigator.clipboard.writeText(snippet);
-      bridge?.showToast?.("MCP config JSON copied");
+      bridge?.showToast?.("Browser Server MCP JSON copied");
+    } catch {
+      bridge?.showToast?.("Copy failed");
+    }
+  };
+
+  const copyIntelligentMcpClientSnippet = async () => {
+    if (!mcpBridge || !api) return;
+    const snippet = JSON.stringify(
+      {
+        mcpServers: {
+          intelligentServer: {
+            command: "node",
+            args: [mcpBridge.intelligentStdioServerPath],
+            env: {
+              INTELLIGENT_MCP_PORT: String(mcpBridge.intelligentPort),
+              INTELLIGENT_MCP_TOKEN: mcpBridge.intelligentToken,
+            },
+          },
+        },
+      },
+      null,
+      2,
+    );
+    try {
+      await navigator.clipboard.writeText(snippet);
+      bridge?.showToast?.("Intelligent Server MCP JSON copied");
     } catch {
       bridge?.showToast?.("Copy failed");
     }
@@ -951,6 +1045,19 @@ export function SettingsPanel({
     setMcpBridge(s);
     setMcpPortDraft(String(s.port));
     bridge?.showToast?.("Port updated");
+  };
+
+  const applyIntelligentMcpPort = async () => {
+    if (!api) return;
+    const n = Number.parseInt(mcpIntelligentPortDraft.trim(), 10);
+    if (!Number.isFinite(n) || n < 1 || n > 65535) {
+      bridge?.showToast?.("Invalid intelligent MCP port");
+      return;
+    }
+    const s = await api.mcpIntelligentBridgeSetPort(n);
+    setMcpBridge(s);
+    setMcpIntelligentPortDraft(String(s.intelligentPort));
+    bridge?.showToast?.("Intelligent MCP port updated");
   };
 
   const portalTarget =
@@ -999,7 +1106,6 @@ export function SettingsPanel({
           <button
             type="button"
             className="icon-btn"
-            title="Close"
             aria-label="Close"
             onClick={onClose}
           >
@@ -1353,7 +1459,7 @@ export function SettingsPanel({
                           : undefined
                       }
                       aria-label={s.label}
-                      title={s.hint}
+                      aria-description={s.hint}
                       tabIndex={
                         activeIntelligentSectionId === s.id ||
                         (activeIntelligentSectionId === null && i === 0)
@@ -1464,40 +1570,35 @@ export function SettingsPanel({
                   <p className="settings-hint settings-hint--compact">
                     Keys are stored only on this device in local storage.
                   </p>
-                  <div
-                    className="settings-ai-provider"
-                    role="radiogroup"
-                    aria-label="AI provider"
+                  <label
+                    className="settings-label settings-label-mt"
+                    htmlFor="aiProviderSelectReact"
                   >
-                    <label className="settings-radio-tile">
-                      <input
-                        type="radio"
-                        name="aiProviderReact"
-                        checked={intelligentSettings.aiProvider === "google"}
-                        onChange={() =>
-                          updateIntelligentSettings({ aiProvider: "google" })
-                        }
-                      />
-                      <span>Google</span>
-                      <span className="settings-radio-tile-sub">
-                        Gemini API key (Google AI Studio)
-                      </span>
-                    </label>
-                    <label className="settings-radio-tile">
-                      <input
-                        type="radio"
-                        name="aiProviderReact"
-                        checked={intelligentSettings.aiProvider === "custom"}
-                        onChange={() =>
-                          updateIntelligentSettings({ aiProvider: "custom" })
-                        }
-                      />
-                      <span>Custom</span>
-                      <span className="settings-radio-tile-sub">
-                        OpenAI-compatible API (optional base URL)
-                      </span>
-                    </label>
-                  </div>
+                    Provider
+                  </label>
+                  <select
+                    id="aiProviderSelectReact"
+                    className="settings-input"
+                    value={intelligentSettings.aiProvider}
+                    onChange={(e) =>
+                      updateIntelligentSettings({
+                        aiProvider: parseAiProvider(e.target.value),
+                      })
+                    }
+                  >
+                    {AI_PROVIDER_SELECT_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="settings-hint settings-hint--compact">
+                    {
+                      AI_PROVIDER_SELECT_OPTIONS.find(
+                        (o) => o.value === intelligentSettings.aiProvider,
+                      )?.description
+                    }
+                  </p>
                   {intelligentSettings.aiProvider === "google" ? (
                     <>
                       <label
@@ -1523,25 +1624,40 @@ export function SettingsPanel({
                     </>
                   ) : (
                     <>
-                      <label
-                        className="settings-label settings-label-mt"
-                        htmlFor="customBaseUrlReact"
-                      >
-                        Base URL (optional)
-                      </label>
-                      <input
-                        ref={customBaseUrlInputRef}
-                        id="customBaseUrlReact"
-                        type="url"
-                        className="settings-input"
-                        placeholder="https://api.openai.com/v1"
-                        value={intelligentSettings.customBaseUrl}
-                        onChange={(e) =>
-                          updateIntelligentSettings({
-                            customBaseUrl: e.target.value.trim(),
-                          })
-                        }
-                      />
+                      {intelligentSettings.aiProvider === "custom" ? (
+                        <>
+                          <label
+                            className="settings-label settings-label-mt"
+                            htmlFor="customBaseUrlReact"
+                          >
+                            Base URL (optional)
+                          </label>
+                          <input
+                            ref={customBaseUrlInputRef}
+                            id="customBaseUrlReact"
+                            type="url"
+                            className="settings-input"
+                            placeholder="https://api.openai.com/v1"
+                            value={intelligentSettings.customBaseUrl}
+                            onChange={(e) =>
+                              updateIntelligentSettings({
+                                customBaseUrl: e.target.value.trim(),
+                              })
+                            }
+                          />
+                        </>
+                      ) : (
+                        <p className="settings-hint settings-hint--compact settings-label-mt">
+                          Chat endpoint:{" "}
+                          <code className="settings-code-inline">
+                            {resolveOpenAiCompatibleBaseUrl(
+                              intelligentSettings.aiProvider,
+                              intelligentSettings.customBaseUrl,
+                            )}
+                            /v1/chat/completions
+                          </code>
+                        </p>
+                      )}
                       <label
                         className="settings-label settings-label-mt"
                         htmlFor="customApiKeyReact"
@@ -1562,12 +1678,48 @@ export function SettingsPanel({
                           })
                         }
                       />
+                      {intelligentSettings.aiProvider === "custom" ? (
+                        <>
+                          <label
+                            className="settings-label settings-label-mt"
+                            htmlFor="customTlsCaPemReact"
+                          >
+                            Custom TLS CA (PEM, optional)
+                          </label>
+                          <p className="settings-hint settings-hint--compact">
+                            For private or corporate HTTPS (self‑signed or internal
+                            CA). Pasted certificate is trusted in addition to the
+                            system store; stored only on this device.
+                          </p>
+                          <textarea
+                            id="customTlsCaPemReact"
+                            className="settings-textarea settings-textarea--mono"
+                            rows={5}
+                            spellCheck={false}
+                            autoComplete="off"
+                            placeholder={
+                              "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+                            }
+                            value={intelligentSettings.customTlsCaPem}
+                            onChange={(e) =>
+                              updateIntelligentSettings({
+                                customTlsCaPem: e.target.value,
+                              })
+                            }
+                          />
+                        </>
+                      ) : null}
                     </>
                   )}
                   <label className="settings-label settings-label-mt">
                     Model
                   </label>
                   <p className="settings-hint settings-hint--compact settings-model-picker-intro">
+                    Applies to the <strong>AI Assistant</strong> workspace. The{" "}
+                    <strong>Browser agent</strong> keeps a separate model in its
+                    chat toolbar.
+                  </p>
+                  <p className="settings-hint settings-hint--compact">
                     Use the dropdown to search loaded models, or set the ID
                     manually below.
                   </p>
@@ -1590,24 +1742,34 @@ export function SettingsPanel({
                             const customBase =
                               customBaseUrlInputRef.current?.value?.trim() ||
                               intelligentSettings.customBaseUrl.trim();
-                            const ids =
-                              intelligentSettings.aiProvider === "google"
-                                ? (await listGoogleModels(googleKey)).map(
-                                    (m) => m.id,
-                                  )
-                                : (
-                                    await listOpenAiCompatibleModels(
-                                      customBase,
-                                      customKey,
-                                    )
-                                  ).map((m) => m.id);
+                            let ids: string[];
+                            if (intelligentSettings.aiProvider === "google") {
+                              ids = (await listGoogleModels(googleKey)).map(
+                                (m) => m.id,
+                              );
+                            } else {
+                              const listBase = resolveOpenAiCompatibleBaseUrl(
+                                intelligentSettings.aiProvider,
+                                customBase,
+                              );
+                              ids = (
+                                await listOpenAiCompatibleModels(
+                                  listBase,
+                                  customKey,
+                                  intelligentSettings.aiProvider === "custom"
+                                    ? intelligentSettings.customTlsCaPem.trim() ||
+                                      undefined
+                                    : undefined,
+                                )
+                              ).map((m) => m.id);
+                            }
                             updateIntelligentSettings({
                               googleApiKey: googleKey,
                               customApiKey: customKey,
                               customBaseUrl: customBase,
                               cachedModelIds: ids,
-                              selectedModelId:
-                                intelligentSettings.selectedModelId ||
+                              intelligentSelectedModelId:
+                                intelligentSettings.intelligentSelectedModelId ||
                                 ids[0] ||
                                 "",
                             });
@@ -1629,7 +1791,7 @@ export function SettingsPanel({
                       className="btn-secondary btn-secondary--compact"
                       disabled={
                         modelTestBusy ||
-                        !intelligentSettings.selectedModelId.trim()
+                        !intelligentSettings.intelligentSelectedModelId.trim()
                       }
                       onClick={() => {
                         void (async () => {
@@ -1646,7 +1808,7 @@ export function SettingsPanel({
                               customBaseUrlInputRef.current?.value?.trim() ||
                               intelligentSettings.customBaseUrl.trim();
                             const modelId =
-                              intelligentSettings.selectedModelId.trim();
+                              intelligentSettings.intelligentSelectedModelId.trim();
                             if (!modelId) {
                               notifyAiModelAction(
                                 "Choose a model from the list or enter a model ID below.",
@@ -1660,6 +1822,12 @@ export function SettingsPanel({
                                 customBaseUrl: customBase,
                                 customApiKey: customKey,
                                 modelId,
+                                ...(intelligentSettings.aiProvider === "custom" &&
+                                intelligentSettings.customTlsCaPem.trim()
+                                  ? {
+                                      tlsCaPem: intelligentSettings.customTlsCaPem,
+                                    }
+                                  : {}),
                               },
                             );
                             notifyAiModelAction(
@@ -1695,7 +1863,7 @@ export function SettingsPanel({
                         }}
                       >
                         <span className="settings-model-dropdown__value">
-                          {intelligentSettings.selectedModelId.trim() ||
+                          {intelligentSettings.intelligentSelectedModelId.trim() ||
                             (modelIdsForPicker.length === 0
                               ? "Load models to enable picker…"
                               : "Choose model…")}
@@ -1731,7 +1899,7 @@ export function SettingsPanel({
                             ) : (
                               filteredModelIds.map((id, idx) => {
                                 const active =
-                                  id === intelligentSettings.selectedModelId;
+                                  id === intelligentSettings.intelligentSelectedModelId;
                                 return (
                                   <button
                                     key={id}
@@ -1742,7 +1910,7 @@ export function SettingsPanel({
                                     className={`settings-model-dropdown__opt${active ? " settings-model-dropdown__opt--active" : ""}`}
                                     onClick={() => {
                                       updateIntelligentSettings({
-                                        selectedModelId: id,
+                                        intelligentSelectedModelId: id,
                                       });
                                       setModelPickerOpen(false);
                                       setModelListFilter("");
@@ -1782,10 +1950,10 @@ export function SettingsPanel({
                       type="text"
                       className="settings-input settings-input--mono"
                       placeholder="e.g. gemini-2.0-flash, gpt-4o-mini"
-                      value={intelligentSettings.selectedModelId}
+                      value={intelligentSettings.intelligentSelectedModelId}
                       onChange={(e) =>
                         updateIntelligentSettings({
-                          selectedModelId: e.target.value,
+                          intelligentSelectedModelId: e.target.value,
                         })
                       }
                       spellCheck={false}
@@ -1805,54 +1973,31 @@ export function SettingsPanel({
 
               <div
                 className="settings-card settings-card--butcher-mcp settings-intelligent-section-anchor"
-                id="iw-settings-mcp-bridge"
+                id="iw-settings-mcp-browser-bridge"
               >
                 <div className="settings-card-head">
-                  <div className="settings-card-title">Butcher MCP bridge</div>
-                  <div className="settings-card-sub">
-                    Local TCP bridge (token-gated) for Claude Desktop / Cursor
-                    stdio MCP
-                  </div>
+                  <div className="settings-card-title">Browser Server MCP bridge</div>
+                  <div className="settings-card-sub">Browser Server on dedicated port/token</div>
                 </div>
                 <div className="settings-section">
-                  <p className="settings-hint settings-hint--compact">
-                    Enable the bridge in this app, then add the bundled stdio
-                    server to your MCP client config. The client must set{" "}
-                    <code className="settings-code-inline">
-                      BUTCHER_MCP_PORT
-                    </code>{" "}
-                    and{" "}
-                    <code className="settings-code-inline">
-                      BUTCHER_MCP_TOKEN
-                    </code>{" "}
-                    to match this app.
-                  </p>
                   {mcpBridge ? (
                     <>
-                      <label
-                        className="settings-label settings-label-mt"
-                        htmlFor="mcpBridgeToggle"
-                      >
-                        Bridge
+                      <label className="settings-label settings-label-mt" htmlFor="mcpBridgeToggle">
+                        Bridge runtime (both built-in servers)
                       </label>
-                      <label
-                        className="checkbox-label"
-                        htmlFor="mcpBridgeToggle"
-                      >
+                      <label className="checkbox-label" htmlFor="mcpBridgeToggle">
                         <input
                           id="mcpBridgeToggle"
                           type="checkbox"
                           checked={mcpBridge.enabled}
                           onChange={async (e) => {
                             if (!api) return;
-                            const s = await api.mcpBridgeSetEnabled(
-                              e.target.checked,
-                            );
+                            const s = await api.mcpBridgeSetEnabled(e.target.checked);
                             setMcpBridge(s);
                           }}
                         />
                         <span>
-                          Listen on 127.0.0.1 —{" "}
+                          Browser bridge on 127.0.0.1 —{" "}
                           {mcpBridge.listeningPort != null
                             ? `active (port ${mcpBridge.listeningPort})`
                             : mcpBridge.enabled
@@ -1860,20 +2005,10 @@ export function SettingsPanel({
                               : "off"}
                         </span>
                       </label>
-                      <label
-                        className="settings-label settings-label-mt"
-                        htmlFor="mcpPortDraft"
-                      >
-                        Port
+                      <label className="settings-label settings-label-mt" htmlFor="mcpPortDraft">
+                        Browser server port
                       </label>
-                      <div
-                        className="settings-ai-provider"
-                        style={{
-                          display: "flex",
-                          gap: 8,
-                          alignItems: "center",
-                        }}
-                      >
+                      <div className="settings-ai-provider" style={{ display: "flex", gap: 8, alignItems: "center" }}>
                         <input
                           id="mcpPortDraft"
                           type="number"
@@ -1884,24 +2019,14 @@ export function SettingsPanel({
                           value={mcpPortDraft}
                           onChange={(e) => setMcpPortDraft(e.target.value)}
                         />
-                        <button
-                          type="button"
-                          className="btn-secondary btn-secondary--compact"
-                          onClick={() => void applyMcpPort()}
-                        >
+                        <button type="button" className="btn-secondary btn-secondary--compact" onClick={() => void applyMcpPort()}>
                           Apply
                         </button>
                       </div>
-                      <label
-                        className="settings-label settings-label-mt"
-                        htmlFor="mcpTokenDisplay"
-                      >
-                        Token
+                      <label className="settings-label settings-label-mt" htmlFor="mcpTokenDisplay">
+                        Browser token
                       </label>
-                      <div
-                        className="settings-ai-provider"
-                        style={{ display: "flex", gap: 8, flexWrap: "wrap" }}
-                      >
+                      <div className="settings-ai-provider" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                         <input
                           id="mcpTokenDisplay"
                           type="text"
@@ -1917,19 +2042,14 @@ export function SettingsPanel({
                             if (!api) return;
                             const s = await api.mcpBridgeRegenerateToken();
                             setMcpBridge(s);
-                            bridge?.showToast?.(
-                              "New token saved — update your MCP client env",
-                            );
+                            bridge?.showToast?.("New token saved — update Browser MCP env");
                           }}
                         >
                           Regenerate
                         </button>
                       </div>
-                      <label
-                        className="settings-label settings-label-mt"
-                        htmlFor="mcpStdioPath"
-                      >
-                        Stdio script path
+                      <label className="settings-label settings-label-mt" htmlFor="mcpStdioPath">
+                        Browser stdio script path
                       </label>
                       <input
                         id="mcpStdioPath"
@@ -1939,26 +2059,112 @@ export function SettingsPanel({
                         value={mcpBridge.stdioServerPath}
                       />
                       <div className="import-actions" style={{ marginTop: 12 }}>
-                        <button
-                          type="button"
-                          className="btn-primary"
-                          onClick={() => void copyMcpClientSnippet()}
-                        >
-                          Copy MCP client JSON
+                        <button type="button" className="btn-primary" onClick={() => void copyBrowserMcpClientSnippet()}>
+                          Copy Browser MCP JSON
                         </button>
                       </div>
-                      <label className="settings-label settings-label-mt">
-                        Tools exposed to MCP
-                      </label>
-                      <p className="settings-muted" style={{ marginBottom: 8 }}>
-                        {MCP_TOOL_NAMES.length} tools (same registry as Tool Hub
-                        automation).
+                      <label className="settings-label settings-label-mt">Browser Server tools</label>
+                      <ul className="settings-mcp-tool-list" aria-label="Browser Server MCP tool names">
+                        {MCP_BROWSER_TOOL_NAMES.map((name) => (
+                          <li key={name}>
+                            <code className="settings-code-inline">{name}</code>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : (
+                    <p className="settings-muted">Loading bridge…</p>
+                  )}
+                </div>
+              </div>
+
+              <div
+                className="settings-card settings-card--butcher-mcp settings-intelligent-section-anchor"
+                id="iw-settings-mcp-intelligent-bridge"
+              >
+                <div className="settings-card-head">
+                  <div className="settings-card-title">Intelligent Server MCP bridge</div>
+                  <div className="settings-card-sub">Intelligent Server on dedicated port/token</div>
+                </div>
+                <div className="settings-section">
+                  {mcpBridge ? (
+                    <>
+                      <p className="settings-hint settings-hint--compact">
+                        Intelligent bridge on 127.0.0.1 —{" "}
+                        {mcpBridge.intelligentListeningPort != null
+                          ? `active (port ${mcpBridge.intelligentListeningPort})`
+                          : mcpBridge.enabled
+                            ? "starting…"
+                            : "off"}
                       </p>
-                      <ul
-                        className="settings-mcp-tool-list"
-                        aria-label="Butcher MCP tool names"
-                      >
-                        {MCP_TOOL_NAMES.map((name) => (
+                      <label className="settings-label settings-label-mt" htmlFor="mcpIntelligentPortDraft">
+                        Intelligent server port
+                      </label>
+                      <div className="settings-ai-provider" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <input
+                          id="mcpIntelligentPortDraft"
+                          type="number"
+                          min={1}
+                          max={65535}
+                          className="settings-input"
+                          style={{ maxWidth: 120 }}
+                          value={mcpIntelligentPortDraft}
+                          onChange={(e) => setMcpIntelligentPortDraft(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="btn-secondary btn-secondary--compact"
+                          onClick={() => void applyIntelligentMcpPort()}
+                        >
+                          Apply
+                        </button>
+                      </div>
+                      <label className="settings-label settings-label-mt" htmlFor="mcpIntelligentTokenDisplay">
+                        Intelligent token
+                      </label>
+                      <div className="settings-ai-provider" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <input
+                          id="mcpIntelligentTokenDisplay"
+                          type="text"
+                          readOnly
+                          className="settings-input settings-input--mono"
+                          value={mcpBridge.intelligentToken}
+                          style={{ flex: 1, minWidth: 200 }}
+                        />
+                        <button
+                          type="button"
+                          className="btn-secondary btn-secondary--compact"
+                          onClick={async () => {
+                            if (!api) return;
+                            const s = await api.mcpIntelligentBridgeRegenerateToken();
+                            setMcpBridge(s);
+                            bridge?.showToast?.("New intelligent token saved — update MCP env");
+                          }}
+                        >
+                          Regenerate
+                        </button>
+                      </div>
+                      <label className="settings-label settings-label-mt" htmlFor="mcpIntelligentStdioPath">
+                        Intelligent stdio script path
+                      </label>
+                      <input
+                        id="mcpIntelligentStdioPath"
+                        type="text"
+                        readOnly
+                        className="settings-input settings-input--mono"
+                        value={mcpBridge.intelligentStdioServerPath}
+                      />
+                      <div className="import-actions" style={{ marginTop: 12, gap: 8 }}>
+                        <button type="button" className="btn-primary" onClick={() => void copyIntelligentMcpClientSnippet()}>
+                          Copy Intelligent MCP JSON
+                        </button>
+                        <button type="button" className="btn-secondary btn-secondary--compact" onClick={() => void copyMcpClientSnippet()}>
+                          Copy Both MCP JSON
+                        </button>
+                      </div>
+                      <label className="settings-label settings-label-mt">Intelligent Server tools</label>
+                      <ul className="settings-mcp-tool-list" aria-label="Intelligent server tool names">
+                        {MCP_INTELLIGENT_TOOL_NAMES.map((name) => (
                           <li key={name}>
                             <code className="settings-code-inline">{name}</code>
                           </li>
@@ -2031,7 +2237,7 @@ export function SettingsPanel({
                   </p>
                   <div className="settings-butcher-builtin">
                     <div className="settings-butcher-builtin-title">
-                      Butcher (this app)
+                      Browser Server (this app)
                     </div>
                     <p className="settings-hint settings-hint--compact">
                       Built-in browser automation tools (in-process). Toggle per
@@ -2086,6 +2292,65 @@ export function SettingsPanel({
                       </label>
                     </div>
                   </div>
+                  <div className="settings-butcher-builtin">
+                    <div className="settings-butcher-builtin-title">
+                      Intelligent Server (this app)
+                    </div>
+                    <p className="settings-hint settings-hint--compact">
+                      Built-in intelligent tools (in-process). Toggle per
+                      workspace for the AI assistant.
+                    </p>
+                    <div className="settings-butcher-builtin-row">
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={
+                            intelligentSettings.mcpTogglesBrowser
+                              .connectionEnabled[INTELLIGENT_BUILTIN_MCP_ID] !==
+                            false
+                          }
+                          onChange={(e) =>
+                            updateIntelligentSettings({
+                              mcpTogglesBrowser: {
+                                ...intelligentSettings.mcpTogglesBrowser,
+                                connectionEnabled: {
+                                  ...intelligentSettings.mcpTogglesBrowser
+                                    .connectionEnabled,
+                                  [INTELLIGENT_BUILTIN_MCP_ID]:
+                                    e.target.checked,
+                                },
+                              },
+                            })
+                          }
+                        />
+                        <span>Enabled in Browser workspace</span>
+                      </label>
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={
+                            intelligentSettings.mcpTogglesIntelligent
+                              .connectionEnabled[INTELLIGENT_BUILTIN_MCP_ID] !==
+                            false
+                          }
+                          onChange={(e) =>
+                            updateIntelligentSettings({
+                              mcpTogglesIntelligent: {
+                                ...intelligentSettings.mcpTogglesIntelligent,
+                                connectionEnabled: {
+                                  ...intelligentSettings.mcpTogglesIntelligent
+                                    .connectionEnabled,
+                                  [INTELLIGENT_BUILTIN_MCP_ID]:
+                                    e.target.checked,
+                                },
+                              },
+                            })
+                          }
+                        />
+                        <span>Enabled in Intelligent workspace</span>
+                      </label>
+                    </div>
+                  </div>
                   {intelligentSettings.mcpServers.length === 0 ? (
                     <p className="settings-muted">No MCP servers configured.</p>
                   ) : (
@@ -2125,7 +2390,6 @@ export function SettingsPanel({
                                 <button
                                   type="button"
                                   className="btn-icon btn-icon-secondary"
-                                  title="Reload connection"
                                   aria-label={`Reload ${m.name || "MCP server"}`}
                                   onClick={async (e) => {
                                     e.stopPropagation();
@@ -2141,7 +2405,6 @@ export function SettingsPanel({
                                 <button
                                   type="button"
                                   className="btn-icon btn-icon-danger"
-                                  title="Delete server"
                                   aria-label={`Delete ${m.name || "MCP server"}`}
                                   onClick={(e) => {
                                     e.stopPropagation();

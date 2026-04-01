@@ -14,10 +14,10 @@ const MAX_JSON_DEPTH = 10;
 /** Must match `styles.css` `.ai-chat-tool-card { --ai-chat-tool-45 }` and clip-path chamfer. */
 const AI_CHAT_TOOL_CHAMFER_PX = 44;
 
-/** Crease path uses real card width so it matches `clip-path` (25% + fixed px), not a stretched 400px viewBox. */
+/** Crease path uses real card width and `--ai-chat-tool-header-frac` so it matches `clip-path`. */
 function AiChatToolCreaseSvg(): ReactElement {
   const svgRef = useRef<SVGSVGElement>(null);
-  const [w, setW] = useState(400);
+  const [layout, setLayout] = useState({ w: 400, headerFrac: 0.25 });
 
   useLayoutEffect(() => {
     const svg = svgRef.current;
@@ -25,16 +25,30 @@ function AiChatToolCreaseSvg(): ReactElement {
     if (!card || !(card instanceof HTMLElement)) return;
 
     const update = () => {
-      setW(Math.max(1, card.clientWidth));
+      const cs = getComputedStyle(card);
+      const raw = cs.getPropertyValue("--ai-chat-tool-header-frac").trim();
+      const parsed = parseFloat(raw);
+      const headerFrac =
+        Number.isFinite(parsed) && parsed > 0 && parsed <= 1 ? parsed : 0.25;
+      setLayout({
+        w: Math.max(1, card.clientWidth),
+        headerFrac,
+      });
     };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(card);
-    return () => ro.disconnect();
+    const mo = new MutationObserver(update);
+    mo.observe(card, { attributes: true, attributeFilter: ["open"] });
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+    };
   }, []);
 
   const h = AI_CHAT_TOOL_CHAMFER_PX;
-  const xQ = w * 0.25;
+  const { w, headerFrac } = layout;
+  const xQ = w * headerFrac;
   const xJ = xQ + h;
   const d =
     xJ <= w

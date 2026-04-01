@@ -17,6 +17,7 @@ export const QUICK_COMMAND_ENTRIES: readonly QuickCommandEntry[] = [
   { command: "title", label: "Get title" },
   { command: "click", label: "Click (picker)" },
   { command: "fill", label: "Fill form (picker)" },
+  { command: "select", label: "Select dropdown" },
   { command: "type", label: "Type text" },
   { command: "press", label: "Press & hold" },
   { command: "session", label: "Create session" },

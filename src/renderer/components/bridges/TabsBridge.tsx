@@ -201,7 +201,7 @@ export function TabsBridge(): ReactElement | null {
                 : surface === "browserSettings"
                   ? "Browser settings"
                   : surface === "toolsHub"
-                    ? "Tool Hub"
+                    ? "Browser Tool Hub"
                     : surface === "networkWorkbench"
                       ? "Network"
                       : "Workspace";
@@ -257,7 +257,6 @@ export function TabsBridge(): ReactElement | null {
             <button
               type="button"
               className="tab-close"
-              title="Close tab"
               aria-label={`Close ${tab.title}`}
               onClick={(ev) => {
                 ev.stopPropagation();
@@ -272,7 +271,7 @@ export function TabsBridge(): ReactElement | null {
       <button
         type="button"
         className="add-tab-btn flex shrink-0 items-center justify-center"
-        title="New Tab (Ctrl+T)"
+        aria-label="New tab (Ctrl+T)"
         onClick={() => {
           ensureWebviewSurface();
           bridge.newTab();

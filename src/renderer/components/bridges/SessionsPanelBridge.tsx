@@ -144,8 +144,8 @@ export function SessionsPanelBridge(): ReactElement | null {
                     bridge.killSessionById?.(s.id);
                   }}
                   disabled={s.isActive}
-                  title={
-                    s.isActive ? "Active default/current session cannot be deleted now." : "Delete session"
+                  aria-label={
+                    s.isActive ? "Active default or current session cannot be deleted now." : "Delete session"
                   }
                 >
                   Delete

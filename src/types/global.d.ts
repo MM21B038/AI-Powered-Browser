@@ -105,7 +105,7 @@ declare global {
     /** Typed automation (same engine as chat commands). */
     runAutomationCommand?: (cmd: AutomationCommand) => Promise<AutomationResult>;
     dispatchAutomationLine?: (line: string) => Promise<AutomationResult>;
-    openToolsHub?: (opts?: { toolId?: string | null }) => void;
+    openToolsHub?: (opts?: { toolId?: string | null; mode?: "browser" | "intelligent" }) => void;
     closeToolsHub?: () => void;
     toggleToolsHub?: () => void;
     runQuickCommand?: (cmd: string, opts?: { closeHub?: boolean }) => void;

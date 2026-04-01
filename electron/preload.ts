@@ -104,8 +104,13 @@ const electronApi: ElectronApi = {
   mcpBridgeSetEnabled: (enabled) =>
     ipcRenderer.invoke("mcp-bridge-set-enabled", enabled),
   mcpBridgeSetPort: (port) => ipcRenderer.invoke("mcp-bridge-set-port", port),
+  mcpIntelligentBridgeSetPort: (port) =>
+    ipcRenderer.invoke("mcp-intelligent-bridge-set-port", port),
   mcpBridgeRegenerateToken: () =>
     ipcRenderer.invoke("mcp-bridge-regenerate-token"),
+  mcpIntelligentBridgeRegenerateToken: () =>
+    ipcRenderer.invoke("mcp-intelligent-bridge-regenerate-token"),
+  ddgFetchHtml: (query) => ipcRenderer.invoke("ddg-fetch-html", query),
   mcpExternalListTools: (cfg) =>
     ipcRenderer.invoke("mcp-external-list-tools", cfg),
   mcpExternalCallTool: (cfg, toolName, args) =>
@@ -114,8 +119,8 @@ const electronApi: ElectronApi = {
     ipcRenderer.invoke("mcp-external-disconnect", serverId),
   aiListGoogleModels: (apiKey) =>
     ipcRenderer.invoke("ai-list-google-models", apiKey),
-  aiListOpenAiModels: (baseUrl, apiKey) =>
-    ipcRenderer.invoke("ai-list-openai-models", { baseUrl, apiKey }),
+  aiListOpenAiModels: (baseUrl, apiKey, tlsCaPem) =>
+    ipcRenderer.invoke("ai-list-openai-models", { baseUrl, apiKey, tlsCaPem }),
   aiTestChatHi: (payload) => ipcRenderer.invoke("ai-test-chat-hi", payload),
   aiChatProxyStream: (payload, handlers) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;

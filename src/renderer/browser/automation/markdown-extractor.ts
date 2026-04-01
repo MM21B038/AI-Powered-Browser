@@ -104,7 +104,8 @@ export function buildInteractablesScript(maxResults: number, maxIterations: numb
 (function() {
   const maxResults = ${mr};
   const maxIterations = ${mi};
-  const sel = 'a,button,input,select,textarea,label,[role=button],[role=link],[role=checkbox],[role=radio],[role=combobox],[tabindex]';
+  const sel =
+    'a,button,input,select,textarea,label,[role=button],[role=link],[role=checkbox],[role=radio],[role=combobox],[aria-haspopup=listbox],[tabindex]';
 
   function isInteractive(el) {
     if (!el || el.nodeType !== 1) return false;
@@ -125,6 +126,18 @@ export function buildInteractablesScript(maxResults: number, maxIterations: numb
       cur = cur.parentElement;
     }
     return el;
+  }
+
+  function resolveLabelControl(lab) {
+    if (!lab || lab.tagName.toLowerCase() !== 'label') return null;
+    const fid = lab.getAttribute('for');
+    if (fid) {
+      try {
+        const c = document.getElementById(fid);
+        if (c) return c;
+      } catch (e) {}
+    }
+    return lab.querySelector('select, [role=combobox], [aria-haspopup=listbox], input, textarea, button') || null;
   }
 
   function unique(sel) {
@@ -194,16 +207,81 @@ export function buildInteractablesScript(maxResults: number, maxIterations: numb
     const tag = el.tagName.toLowerCase();
     const type = (el.type || '').toLowerCase();
     const role = (el.getAttribute('role') || '').toLowerCase();
+    const popup = (el.getAttribute('aria-haspopup') || '').toLowerCase();
     if (tag === 'input' && type === 'checkbox') return 'checkbox';
     if (tag === 'input' && type === 'radio') return 'radio';
     if (tag === 'input' && type === 'date') return 'date';
     if (tag === 'select') return el.multiple ? 'multi-select' : 'select';
     if (role === 'combobox') return 'combobox';
+    if (popup === 'listbox' && tag !== 'select') return 'listbox-trigger';
     if (tag === 'textarea') return 'textarea';
     if (tag === 'input') return 'input';
     if (tag === 'a' || role === 'link') return 'link';
     if (tag === 'button' || role === 'button') return 'button';
     return tag;
+  }
+
+  function nativeSelectSampleLabel(selEl) {
+    if (!selEl || selEl.tagName.toLowerCase() !== 'select' || !selEl.options || selEl.options.length === 0) return '';
+    const idx = selEl.selectedIndex >= 0 ? selEl.selectedIndex : 0;
+    const o = selEl.options[idx];
+    const tx = (o && (o.text || '')).trim().replace(/\\s+/g, ' ');
+    return tx.slice(0, 48);
+  }
+
+  function buildHints(kind, actionEl, selector, rowLabel) {
+    const q = selector;
+    let suggestedCommand = '';
+    let suggestedMcpTool = '';
+    let toolHint = '';
+    if (kind === 'checkbox') {
+      suggestedCommand = 'toggle_checkbox ' + q;
+      toolHint = 'Chat DSL only (no butcher_* toggle).';
+    } else if (kind === 'radio') {
+      suggestedCommand = 'toggle_radio ' + q;
+      toolHint = 'Chat DSL only.';
+    } else if (kind === 'select') {
+      const samp = nativeSelectSampleLabel(actionEl);
+      const lit = samp ? JSON.stringify(samp) : '\"Option label\"';
+      suggestedCommand = 'select ' + q + ' by label ' + lit + ' in session …';
+      suggestedMcpTool = 'butcher_select';
+      toolHint =
+        'Native select: MCP by label|value|index; one path segment if by path. Ex: {"selector":' +
+        JSON.stringify(q) +
+        ',"by":"label","value":' +
+        (samp ? JSON.stringify(samp) : '\"Canada\"') +
+        '}';
+    } else if (kind === 'multi-select') {
+      const samp = nativeSelectSampleLabel(actionEl);
+      const lit = samp ? JSON.stringify(samp) : '\"Option\"';
+      suggestedCommand = 'select ' + q + ' by label ' + lit + ' in session …';
+      suggestedMcpTool = 'butcher_select';
+      toolHint =
+        'Multi-select: use butcher_select per option or by index. Ex: {"selector":' +
+        JSON.stringify(q) +
+        ',"by":"index","value":0}';
+    } else if (kind === 'combobox' || kind === 'listbox-trigger') {
+      const targetTxt = (rowLabel || '').trim().slice(0, 56);
+      const openTarget = targetTxt ? JSON.stringify(targetTxt) : JSON.stringify(q);
+      suggestedCommand = 'select ' + (targetTxt ? JSON.stringify(targetTxt) : q) + ' by path \"First > Second\" in session …';
+      suggestedMcpTool = 'butcher_select';
+      toolHint =
+        'Custom dropdown: open trigger then path. Target can be label text (like fill) or CSS selector. Ex: {"selector":' +
+        openTarget +
+        ',"by":"path","value":"Level1 > Level2"} also try by label after open for flat lists.';
+    } else if (kind === 'date') {
+      suggestedCommand = 'date ' + q + ' = 2026-03-25 in session …';
+      toolHint = 'Friendly date strings supported in chat DSL.';
+    } else if (kind === 'input' || kind === 'textarea') {
+      suggestedCommand = 'fill ' + q + ' with \"…\" in session …';
+      suggestedMcpTool = 'butcher_fill';
+      toolHint = 'Ex: {"selector":' + JSON.stringify(q) + ',"value":"text"}';
+    } else {
+      suggestedCommand = 'click ' + q + ' in session …';
+      suggestedMcpTool = 'butcher_click';
+      toolHint = 'Iframe targets: use guestProcessId and guestRoutingId from this table on MCP when present.';
+    }
+    return { suggestedCommand, suggestedMcpTool, toolHint };
   }
 
   const rootSelectors = ['main', 'article', '[role=\"main\"]', '#main', '.w3-main', '#midcontent', '#content', '[itemprop=\"articleBody\"]'];
@@ -237,8 +315,13 @@ export function buildInteractablesScript(maxResults: number, maxIterations: numb
     const r = el.getBoundingClientRect();
     if (r.width === 0 && r.height === 0) continue;
     const t = labelFor(el);
-    if (!t && el.tagName !== "INPUT") continue;
-    const actionEl = closestInteractive(el);
+    const allowEmptyLabel = ['INPUT', 'SELECT', 'TEXTAREA', 'LABEL'];
+    if (!t && allowEmptyLabel.indexOf(el.tagName) === -1) continue;
+    let actionEl = closestInteractive(el);
+    if (actionEl.tagName.toLowerCase() === 'label') {
+      const resolved = resolveLabelControl(actionEl);
+      if (resolved) actionEl = resolved;
+    }
     if (seen.has(actionEl)) continue;
     seen.add(actionEl);
     entries.push({ el, actionEl, t });
@@ -260,14 +343,8 @@ export function buildInteractablesScript(maxResults: number, maxIterations: numb
     const selector = buildSelector(actionEl);
     const role = actionEl.getAttribute('role') || '';
     const type = actionEl.type || '';
-    let suggestedCommand = '';
-    if (kind === 'checkbox') suggestedCommand = 'toggle_checkbox ' + selector;
-    else if (kind === 'radio') suggestedCommand = 'toggle_radio ' + selector;
-    else if (kind === 'select' || kind === 'multi-select') suggestedCommand = 'select ' + selector + ' by label \"...\"';
-    else if (kind === 'date') suggestedCommand = 'date ' + selector + ' = Mar 25 2026';
-    else if (kind === 'input' || kind === 'textarea' || kind === 'combobox') suggestedCommand = 'fill ' + selector + ' with \"...\"';
-    else suggestedCommand = 'click ' + selector;
-    out.push({
+    const h = buildHints(kind, actionEl, selector, t);
+    const row = {
       kind,
       label: t,
       selector,
@@ -276,8 +353,11 @@ export function buildInteractablesScript(maxResults: number, maxIterations: numb
       type,
       id: actionEl.id || "",
       name: actionEl.name || "",
-      suggestedCommand,
-    });
+      suggestedCommand: h.suggestedCommand,
+    };
+    if (h.suggestedMcpTool) row.suggestedMcpTool = h.suggestedMcpTool;
+    if (h.toolHint) row.toolHint = h.toolHint;
+    out.push(row);
   }
   return { items: out };
 })()

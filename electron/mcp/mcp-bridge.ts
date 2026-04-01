@@ -9,12 +9,19 @@ import {
 } from "../../src/shared/mcp-tool-registry";
 
 const DEFAULT_PORT = 47842;
+const DEFAULT_INTELLIGENT_PORT = 47843;
 const CONFIG_FILENAME = "mcp-bridge.json";
 
 export type McpBridgeFileConfig = {
   enabled: boolean;
   port: number;
   token: string;
+  intelligentPort: number;
+  intelligentToken: string;
+  servers?: {
+    browser?: { name?: string };
+    intelligent?: { name?: string };
+  };
 };
 
 function defaultConfig(): McpBridgeFileConfig {
@@ -22,6 +29,8 @@ function defaultConfig(): McpBridgeFileConfig {
     enabled: false,
     port: DEFAULT_PORT,
     token: randomToken(),
+    intelligentPort: DEFAULT_INTELLIGENT_PORT,
+    intelligentToken: randomToken(),
   };
 }
 
@@ -54,6 +63,35 @@ export function loadMcpBridgeConfig(userData: string): McpBridgeFileConfig {
       enabled: typeof raw.enabled === "boolean" ? raw.enabled : base.enabled,
       port: typeof raw.port === "number" && raw.port > 0 && raw.port < 65536 ? raw.port : base.port,
       token: typeof raw.token === "string" && raw.token.length >= 16 ? raw.token : base.token,
+      intelligentPort:
+        typeof raw.intelligentPort === "number" && raw.intelligentPort > 0 && raw.intelligentPort < 65536
+          ? raw.intelligentPort
+          : base.intelligentPort,
+      intelligentToken:
+        typeof raw.intelligentToken === "string" && raw.intelligentToken.length >= 16
+          ? raw.intelligentToken
+          : base.intelligentToken,
+      servers:
+        raw.servers && typeof raw.servers === "object"
+          ? {
+              browser:
+                raw.servers.browser && typeof raw.servers.browser === "object"
+                  ? { name: typeof raw.servers.browser.name === "string" ? raw.servers.browser.name : "Browser Server" }
+                  : { name: "Browser Server" },
+              intelligent:
+                raw.servers.intelligent && typeof raw.servers.intelligent === "object"
+                  ? {
+                      name:
+                        typeof raw.servers.intelligent.name === "string"
+                          ? raw.servers.intelligent.name
+                          : "Intelligent Server",
+                    }
+                  : { name: "Intelligent Server" },
+            }
+          : {
+              browser: { name: "Browser Server" },
+              intelligent: { name: "Intelligent Server" },
+            },
     };
   } catch {
     return defaultConfig();
@@ -66,48 +104,57 @@ export function saveMcpBridgeConfig(userData: string, cfg: McpBridgeFileConfig):
   fs.writeFileSync(p, JSON.stringify(cfg, null, 2), "utf8");
 }
 
-let tcpServer: net.Server | null = null;
-let queue: Promise<void> = Promise.resolve();
-
-function runSerialized<T>(fn: () => Promise<T>): Promise<T> {
-  const run = queue.then(fn, fn);
-  queue = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
-}
-
-type BridgeRequest = {
-  id?: string | number;
-  token: string;
-  method: "ping" | "tools/call";
-  params?: { name?: string; arguments?: unknown };
+const tcpServers: Record<"browser" | "intelligent", net.Server | null> = {
+  browser: null,
+  intelligent: null,
+};
+const queues: Record<"browser" | "intelligent", Promise<void>> = {
+  browser: Promise.resolve(),
+  intelligent: Promise.resolve(),
 };
 
-type BridgeResponse =
-  | { id?: string | number; result?: unknown; error?: { message: string; code?: string } };
+function runSerialized(kind: "browser" | "intelligent") {
+  return async function <T>(fn: () => Promise<T>): Promise<T> {
+    const run = queues[kind].then(fn, fn);
+    queues[kind] = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
+}
 
-export function getBridgeListeningPort(): number | null {
-  const a = tcpServer?.address();
+function toolAllowedForKind(kind: "browser" | "intelligent", name: string): boolean {
+  return kind === "browser" ? name.startsWith("butcher_") : name.startsWith("intelligent_");
+}
+
+export function getBridgeListeningPort(kind: "browser" | "intelligent" = "browser"): number | null {
+  const a = tcpServers[kind]?.address();
   if (a && typeof a === "object") return a.port;
   return null;
 }
 
-export function stopMcpBridge(): void {
-  if (tcpServer) {
-    tcpServer.close();
-    tcpServer = null;
+export function stopMcpBridge(kind: "browser" | "intelligent" = "browser"): void {
+  const srv = tcpServers[kind];
+  if (srv) {
+    srv.close();
+    tcpServers[kind] = null;
   }
 }
 
+export function stopAllMcpBridges(): void {
+  stopMcpBridge("browser");
+  stopMcpBridge("intelligent");
+}
+
 export function startMcpBridge(
+  kind: "browser" | "intelligent",
   getWindow: () => BrowserWindow | null,
   port: number,
   token: string,
   onError: (msg: string) => void,
 ): void {
-  stopMcpBridge();
+  stopMcpBridge(kind);
   const srv = net.createServer((socket) => {
     socket.setEncoding("utf8");
     let buf = "";
@@ -118,7 +165,7 @@ export function startMcpBridge(
         const line = buf.slice(0, idx).trim();
         buf = buf.slice(idx + 1);
         if (!line) continue;
-        void handleLine(socket, line, getWindow, token, onError);
+        void handleLine(socket, line, kind, getWindow, token, onError);
       }
     });
     socket.on("error", () => {
@@ -131,12 +178,24 @@ export function startMcpBridge(
   srv.listen(port, "127.0.0.1", () => {
     /* listening */
   });
-  tcpServer = srv;
+  tcpServers[kind] = srv;
 }
+
+
+type BridgeRequest = {
+  id?: string | number;
+  token: string;
+  method: "ping" | "tools/call";
+  params?: { name?: string; arguments?: unknown };
+};
+
+type BridgeResponse =
+  | { id?: string | number; result?: unknown; error?: { message: string; code?: string } };
 
 async function handleLine(
   socket: net.Socket,
   line: string,
+  kind: "browser" | "intelligent",
   getWindow: () => BrowserWindow | null,
   token: string,
   onError: (msg: string) => void,
@@ -163,6 +222,10 @@ async function handleLine(
 
   if (req.method === "tools/call" && req.params && typeof req.params.name === "string") {
     const name = req.params.name;
+    if (!toolAllowedForKind(kind, name)) {
+      writeSocket(socket, { id, error: { message: `tool not available on ${kind} bridge`, code: "TOOL_NOT_ALLOWED" } });
+      return;
+    }
     const args = req.params.arguments ?? {};
     const cmdOrErr = automationCommandFromMcpTool(name, args);
     if (cmdOrErr instanceof Error) {
@@ -171,7 +234,7 @@ async function handleLine(
     }
 
     try {
-      const result = await runSerialized(() => invokeAutomationInRenderer(getWindow, cmdOrErr));
+      const result = await runSerialized(kind)(() => invokeAutomationInRenderer(getWindow, cmdOrErr));
       writeSocket(socket, { id, result: sanitizeAutomationResultForMcp(result) });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

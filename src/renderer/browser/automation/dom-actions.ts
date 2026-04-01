@@ -412,33 +412,306 @@ export async function domTypeHuman(
   return (await wv.executeJavaScript(code)) as { success: boolean; tag?: string; error?: string };
 }
 
+function selectSleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+const SELECT_RESOLVE_AND_NATIVE = `
+  function looksLikeSelector(s) {
+    if (!s || typeof s !== 'string') return false;
+    var t = s.trim();
+    if (!t) return false;
+    if (t.charAt(0) === '#' || t.charAt(0) === '.' || t.charAt(0) === '[') return true;
+    if (t.indexOf(':nth') !== -1) return true;
+    if (t.indexOf('>') !== -1) return true;
+    if (/[.#\\[]/.test(t) && /\\s/.test(t)) return true;
+    return false;
+  }
+  function normTxt(el) {
+    return (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+  }
+  function resolveSelectControl(raw) {
+    var el = null;
+    if (looksLikeSelector(raw)) {
+      try { el = document.querySelector(raw); } catch (e) { el = null; }
+      if (el) return el;
+    }
+    var q = raw.toLowerCase().trim();
+    var labels = document.querySelectorAll('label');
+    for (var i = 0; i < labels.length; i++) {
+      var L = labels[i];
+      var t = normTxt(L);
+      if (t === q || (q && t.indexOf(q) !== -1)) {
+        var fid = L.getAttribute('for');
+        if (fid) {
+          try {
+            var c = document.getElementById(fid);
+            if (c) return c;
+          } catch (e) {}
+        }
+        var inner = L.querySelector(
+          'select, [role=\"combobox\"], button, [aria-haspopup=\"listbox\"], [aria-haspopup=\"true\"]'
+        );
+        if (inner) return inner;
+      }
+    }
+    var withL = document.querySelectorAll('[aria-labelledby]');
+    for (var a = 0; a < withL.length; a++) {
+      var n = withL[a];
+      var lid = n.getAttribute('aria-labelledby');
+      if (!lid) continue;
+      var parts = lid.split(/\\s+/);
+      for (var p = 0; p < parts.length; p++) {
+        var lb = document.getElementById(parts[p]);
+        if (lb && normTxt(lb).indexOf(q) !== -1) return n;
+      }
+    }
+    var nodes = document.querySelectorAll(
+      'select, [role=combobox], [aria-haspopup=listbox], button[aria-haspopup], [aria-expanded]'
+    );
+    for (var j = 0; j < nodes.length; j++) {
+      var n2 = nodes[j];
+      var tx = normTxt(n2);
+      var extras = (
+        (n2.getAttribute('aria-label') || '') +
+        ' ' +
+        (n2.getAttribute('title') || '') +
+        ' ' +
+        (n2.getAttribute('placeholder') || '')
+      ).toLowerCase();
+      if (tx === q || (q && tx.indexOf(q) !== -1) || (q && extras.indexOf(q) !== -1)) return n2;
+    }
+    return null;
+  }
+  function applyNativeSelect(el, by, val) {
+    el.focus();
+    var optsArr = Array.prototype.slice.call(el.options);
+    if (by === 'index') {
+      var i = Number(val);
+      if (i < 0 || i >= el.options.length) return { success: false, error: 'index out of range' };
+      el.selectedIndex = i;
+    } else if (by === 'value') {
+      var vs = String(val);
+      if (!optsArr.some(function (o) { return o.value === vs; }))
+        return { success: false, error: 'value not in options' };
+      el.value = vs;
+    } else {
+      var opt = optsArr.find(function (o) {
+        return o.text.toLowerCase().includes(String(val).toLowerCase());
+      });
+      if (!opt) return { success: false, error: 'option not found' };
+      el.value = opt.value;
+    }
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return { success: true };
+  }
+  function openCustomTrigger(el) {
+    el.scrollIntoView({ block: 'center', behavior: 'instant' });
+    el.focus();
+    var r = el.getBoundingClientRect();
+    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    var opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
+    try {
+      el.dispatchEvent(new PointerEvent('pointerdown', opts));
+      el.dispatchEvent(new MouseEvent('mousedown', opts));
+      el.dispatchEvent(new PointerEvent('pointerup', opts));
+      el.dispatchEvent(new MouseEvent('mouseup', opts));
+    } catch (e) {}
+    el.click();
+  }
+`.trim();
+
+/** Resolve target like click/date; native select or custom combobox; optional segmented path for custom menus. */
+export async function domSelectSmart(
+  wv: WebviewLike,
+  target: string,
+  by: "label" | "value" | "index" | "path",
+  value: string | number,
+): Promise<{ success: boolean; error?: string }> {
+  if (by === "index" && !Number.isFinite(Number(value))) {
+    return { success: false, error: "invalid index" };
+  }
+  if (by === "path") {
+    const pathStr = String(value ?? "");
+    const segments = pathStr
+      .split(">")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!segments.length) return { success: false, error: "empty path" };
+    const prepCode = `
+      (function(){
+        ${SELECT_RESOLVE_AND_NATIVE}
+        var targetRaw = ${JSON.stringify(target)};
+        var segments = ${JSON.stringify(segments)};
+        var el = resolveSelectControl(targetRaw);
+        if (!el) return { success: false, error: 'control not found' };
+        if (el.tagName === 'SELECT') {
+          if (segments.length > 1)
+            return {
+              success: false,
+              error:
+                'native <select> supports a single path segment; use by label for one option, or by path on a custom menu for nested choices',
+            };
+          var r = applyNativeSelect(el, 'label', segments[0]);
+          return r.success ? { success: true, done: true } : r;
+        }
+        openCustomTrigger(el);
+        return { success: true, done: false };
+      })()
+    `;
+    const prep = (await wv.executeJavaScript(prepCode)) as {
+      success: boolean;
+      done?: boolean;
+      error?: string;
+    };
+    if (!prep.success) return { success: false, error: prep.error || "failed" };
+    if (prep.done) return { success: true };
+    for (let i = 0; i < segments.length; i++) {
+      await selectSleep(i === 0 ? 100 : 90);
+      const step = await domSelectClickMenuItem(wv, segments[i], "text");
+      if (!step.success) return step;
+    }
+    return { success: true };
+  }
+
+  const prepSimple = `
+    (function(){
+      ${SELECT_RESOLVE_AND_NATIVE}
+      var targetRaw = ${JSON.stringify(target)};
+      var by = ${JSON.stringify(by)};
+      var val = ${by === "index" ? Math.floor(Number(value)) : JSON.stringify(String(value))};
+      var el = resolveSelectControl(targetRaw);
+      if (!el) return { success: false, error: 'control not found' };
+      if (el.tagName === 'SELECT') {
+        var r = applyNativeSelect(el, by, val);
+        return r.success ? { success: true, done: true } : r;
+      }
+      openCustomTrigger(el);
+      return { success: true, done: false, by: by, val: val };
+    })()
+  `;
+  const prep = (await wv.executeJavaScript(prepSimple)) as {
+    success: boolean;
+    done?: boolean;
+    error?: string;
+    val?: string | number;
+  };
+  if (!prep.success) return { success: false, error: prep.error || "failed" };
+  if (prep.done) return { success: true };
+
+  await selectSleep(100);
+  if (by === "index") {
+    return domSelectClickMenuItemByIndex(wv, Math.floor(Number(value)));
+  }
+  return domSelectClickMenuItem(wv, String(value), by === "value" ? "value" : "text");
+}
+
+async function domSelectClickMenuItem(
+  wv: WebviewLike,
+  segment: string,
+  matchMode: "text" | "value",
+): Promise<{ success: boolean; error?: string }> {
+  const code = `
+    (function(){
+      var seg = ${JSON.stringify(segment)};
+      var matchMode = ${JSON.stringify(matchMode)};
+      var q = seg.toLowerCase().trim();
+      if (!q) return { success: false, error: 'empty segment' };
+      function visible(n) {
+        var r = n.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1) return false;
+        var st = window.getComputedStyle(n);
+        if (st.visibility === 'hidden' || st.display === 'none' || st.opacity === '0') return false;
+        if (r.bottom < 0 || r.top > window.innerHeight) return false;
+        return true;
+      }
+      var candidates = document.querySelectorAll(
+        '[role=option], [role=menuitem], [role=menuitemcheckbox], [role=menuitemradio], [role=treeitem], li[role=menuitem]'
+      );
+      var best = null;
+      for (var i = 0; i < candidates.length; i++) {
+        var n = candidates[i];
+        if (!visible(n)) continue;
+        var tx = (n.innerText || n.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+        var extras = ((n.getAttribute('aria-label') || '') + ' ' + (n.getAttribute('title') || '')).toLowerCase();
+        var dv = (n.getAttribute('data-value') || n.getAttribute('value') || '').toLowerCase();
+        var ok = false;
+        if (matchMode === 'value' && dv === q) ok = true;
+        else if (tx === q || (q && tx.indexOf(q) !== -1) || (q && extras.indexOf(q) !== -1)) ok = true;
+        else if (matchMode === 'value' && tx === q) ok = true;
+        if (ok) { best = n; break; }
+      }
+      if (!best) return { success: false, error: 'option not found: ' + seg };
+      best.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+      try { best.focus(); } catch (e) {}
+      var r2 = best.getBoundingClientRect();
+      var cx = r2.left + r2.width / 2, cy = r2.top + r2.height / 2;
+      var opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
+      try {
+        best.dispatchEvent(new PointerEvent('pointerdown', opts));
+        best.dispatchEvent(new MouseEvent('mousedown', opts));
+        best.dispatchEvent(new PointerEvent('pointerup', opts));
+        best.dispatchEvent(new MouseEvent('mouseup', opts));
+        best.click();
+      } catch (e) {
+        return { success: false, error: String(e && e.message ? e.message : e) };
+      }
+      return { success: true };
+    })()
+  `;
+  return (await wv.executeJavaScript(code)) as { success: boolean; error?: string };
+}
+
+async function domSelectClickMenuItemByIndex(
+  wv: WebviewLike,
+  idx: number,
+): Promise<{ success: boolean; error?: string }> {
+  const code = `
+    (function(){
+      var idx = ${Math.max(0, Math.floor(idx))};
+      function visible(n) {
+        var r = n.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1) return false;
+        var st = window.getComputedStyle(n);
+        if (st.visibility === 'hidden' || st.display === 'none' || st.opacity === '0') return false;
+        if (r.bottom < 0 || r.top > window.innerHeight) return false;
+        return true;
+      }
+      var candidates = document.querySelectorAll('[role=option], [role=menuitem], li[role=menuitem]');
+      var list = [];
+      for (var i = 0; i < candidates.length; i++) {
+        if (visible(candidates[i])) list.push(candidates[i]);
+      }
+      if (idx < 0 || idx >= list.length)
+        return { success: false, error: 'index out of range for visible menu options' };
+      var best = list[idx];
+      best.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+      try { best.focus(); } catch (e) {}
+      var r2 = best.getBoundingClientRect();
+      var cx = r2.left + r2.width / 2, cy = r2.top + r2.height / 2;
+      var opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
+      try {
+        best.dispatchEvent(new PointerEvent('pointerdown', opts));
+        best.dispatchEvent(new MouseEvent('mousedown', opts));
+        best.dispatchEvent(new PointerEvent('pointerup', opts));
+        best.dispatchEvent(new MouseEvent('mouseup', opts));
+        best.click();
+      } catch (e) {
+        return { success: false, error: String(e && e.message ? e.message : e) };
+      }
+      return { success: true };
+    })()
+  `;
+  return (await wv.executeJavaScript(code)) as { success: boolean; error?: string };
+}
+
 export async function domSelectBy(
   wv: WebviewLike,
   selector: string,
   by: "label" | "value" | "index",
   value: string | number,
 ): Promise<{ success: boolean; error?: string }> {
-  const code = `
-    (function(){
-      var el = document.querySelector(${JSON.stringify(selector)});
-      if (!el || el.tagName !== 'SELECT') return { success: false, error: 'not a select' };
-      el.focus();
-      var by = ${JSON.stringify(by)};
-      var val = ${typeof value === "number" ? value : JSON.stringify(value)};
-      if (by === 'index') {
-        var i = Number(val);
-        if (i >= 0 && i < el.options.length) { el.selectedIndex = i; }
-      } else if (by === 'value') {
-        el.value = String(val);
-      } else {
-        var opt = [...el.options].find(o => o.text.toLowerCase().includes(String(val).toLowerCase()));
-        if (opt) el.value = opt.value;
-      }
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      return { success: true };
-    })()
-  `;
-  return (await wv.executeJavaScript(code)) as { success: boolean; error?: string };
+  return domSelectSmart(wv, selector, by, value);
 }
 
 export async function domToggleCheckbox(

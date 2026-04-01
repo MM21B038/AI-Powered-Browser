@@ -3,7 +3,10 @@
  * Model listing uses main-process IPC in Electron (Google blocks renderer CORS).
  */
 
-import type { AiProvider } from "../state/session-settings-store";
+import {
+  type AiProvider,
+  resolveOpenAiCompatibleBaseUrl,
+} from "../state/session-settings-store";
 import { getElectronApi } from "./electron-api";
 
 export type ListedModel = { id: string; displayName?: string };
@@ -42,12 +45,19 @@ export async function listGoogleModels(apiKey: string): Promise<ListedModel[]> {
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export async function listOpenAiCompatibleModels(baseUrl: string, apiKey: string): Promise<ListedModel[]> {
+export async function listOpenAiCompatibleModels(
+  baseUrl: string,
+  apiKey: string,
+  tlsCaPem?: string,
+): Promise<ListedModel[]> {
   const key = apiKey.trim();
   if (!key) throw new Error("API key required");
   const api = getElectronApi();
   if (api?.aiListOpenAiModels) {
-    return api.aiListOpenAiModels(baseUrl || "https://api.openai.com", key);
+    return api.aiListOpenAiModels(baseUrl || "https://api.openai.com", key, tlsCaPem);
+  }
+  if (tlsCaPem?.trim()) {
+    throw new Error("Custom TLS CA is only supported in the desktop app (Electron main process).");
   }
   const base = normalizeOpenAiBase(baseUrl || "https://api.openai.com");
   const url = `${base}/v1/models`;
@@ -69,7 +79,14 @@ export async function listOpenAiCompatibleModels(baseUrl: string, apiKey: string
 
 export async function testChatHi(
   provider: AiProvider,
-  opts: { googleApiKey: string; customBaseUrl: string; customApiKey: string; modelId: string },
+  opts: {
+    googleApiKey: string;
+    customBaseUrl: string;
+    customApiKey: string;
+    modelId: string;
+    /** Custom provider only: PEM CA for private TLS. */
+    tlsCaPem?: string;
+  },
 ): Promise<{ reply: string }> {
   const modelId = opts.modelId.trim();
   if (!modelId) throw new Error("Select a model first");
@@ -83,11 +100,13 @@ export async function testChatHi(
         modelId,
       });
     }
+    const resolvedBase = resolveOpenAiCompatibleBaseUrl(provider, opts.customBaseUrl);
     return api.aiTestChatHi({
       provider: "custom",
-      customBaseUrl: opts.customBaseUrl || "https://api.openai.com",
+      customBaseUrl: resolvedBase,
       customApiKey: opts.customApiKey.trim(),
       modelId,
+      ...(opts.tlsCaPem?.trim() ? { tlsCaPem: opts.tlsCaPem.trim() } : {}),
     });
   }
 
@@ -114,9 +133,12 @@ export async function testChatHi(
     return { reply: text.trim() || "(empty response)" };
   }
 
+  if (opts.tlsCaPem?.trim()) {
+    throw new Error("Custom TLS CA is only supported in the desktop app (Electron main process).");
+  }
   const key = opts.customApiKey.trim();
   if (!key) throw new Error("API key required");
-  const base = normalizeOpenAiBase(opts.customBaseUrl || "https://api.openai.com");
+  const base = normalizeOpenAiBase(resolveOpenAiCompatibleBaseUrl(provider, opts.customBaseUrl));
   const url = `${base}/v1/chat/completions`;
   const res = await fetch(url, {
     method: "POST",

@@ -94,7 +94,7 @@ export function NavChromeBridge(): ReactElement | null {
         <button
           type="button"
           className="nav-btn"
-          title="Back (Alt+Left)"
+          aria-label="Back (Alt+Left)"
           disabled={!nav.canGoBack}
           onClick={() => bridge.back()}
         >
@@ -111,7 +111,7 @@ export function NavChromeBridge(): ReactElement | null {
         <button
           type="button"
           className="nav-btn"
-          title="Forward (Alt+Right)"
+          aria-label="Forward (Alt+Right)"
           disabled={!nav.canGoForward}
           onClick={() => bridge.forward()}
         >
@@ -128,7 +128,7 @@ export function NavChromeBridge(): ReactElement | null {
         <button
           type="button"
           className="nav-btn"
-          title={nav.isLoading ? "Stop" : "Reload (F5)"}
+          aria-label={nav.isLoading ? "Stop loading" : "Reload (F5)"}
           onClick={() => bridge.reloadOrStop?.()}
         >
           {nav.isLoading ? (
@@ -192,7 +192,7 @@ export function NavChromeBridge(): ReactElement | null {
             <button
               type="button"
               className="addr-action-btn"
-              title="Clear"
+              aria-label="Clear address"
               style={{ display: "flex" }}
               onClick={() => {
                 setAddress("");
@@ -216,7 +216,7 @@ export function NavChromeBridge(): ReactElement | null {
         <button
           type="button"
           className={"nav-btn" + (nav.isBookmarked ? " nav-btn-bookmarked" : "")}
-          title="Bookmark"
+          aria-label="Bookmark this page"
           onClick={() => bridge.clickUi?.("bookmarkStarBtn")}
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -228,7 +228,7 @@ export function NavChromeBridge(): ReactElement | null {
             />
           </svg>
         </button>
-        <button type="button" className="nav-btn" title="Home" onClick={() => bridge.goHome?.()}>
+        <button type="button" className="nav-btn" aria-label="Home" onClick={() => bridge.goHome?.()}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
             <path
               d="M2 7L8 2L14 7V14H10V10H6V14H2V7Z"
@@ -242,7 +242,7 @@ export function NavChromeBridge(): ReactElement | null {
           type="button"
           id="reactScreenshotNavBtn"
           className="nav-btn"
-          title="Screenshot"
+          aria-label="Capture screenshot"
           onClick={() => bridge.openScreenshotMenu?.()}
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -251,13 +251,13 @@ export function NavChromeBridge(): ReactElement | null {
             <path d="M5 3L6 1H10L11 3" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
           </svg>
         </button>
-        <button type="button" className="nav-btn" title="Find in Page" onClick={() => bridge.toggleFind?.()}>
+        <button type="button" className="nav-btn" aria-label="Find in page" onClick={() => bridge.toggleFind?.()}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
             <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.5" />
             <path d="M10 10L14 14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
           </svg>
         </button>
-        <button type="button" className="nav-btn" title="Zoom Out" onClick={() => bridge.zoomOut?.()}>
+        <button type="button" className="nav-btn" aria-label="Zoom out" onClick={() => bridge.zoomOut?.()}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
             <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.5" />
             <path d="M4.5 6.5H8.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -265,14 +265,14 @@ export function NavChromeBridge(): ReactElement | null {
           </svg>
         </button>
         <span className="zoom-level">{nav.zoomPercent}%</span>
-        <button type="button" className="nav-btn" title="Zoom In" onClick={() => bridge.zoomIn?.()}>
+        <button type="button" className="nav-btn" aria-label="Zoom in" onClick={() => bridge.zoomIn?.()}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
             <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.5" />
             <path d="M6.5 4.5V8.5M4.5 6.5H8.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             <path d="M10 10L14 14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
           </svg>
         </button>
-        <button type="button" className="nav-btn ai-chat-toggle" title="AI Assistant" onClick={() => bridge.clickUi?.("aiChatToggleBtn")}>
+        <button type="button" className="nav-btn ai-chat-toggle" aria-label="Toggle AI assistant" onClick={() => bridge.clickUi?.("aiChatToggleBtn")}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
             <path
               d="M2 2h12a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H9l-3 3v-3H2a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1Z"
@@ -285,7 +285,7 @@ export function NavChromeBridge(): ReactElement | null {
             <circle cx="10.5" cy="6.5" r="0.9" fill="currentColor" />
           </svg>
         </button>
-        <button type="button" className="nav-btn" title="DevTools" onClick={() => bridge.openDevTools?.()}>
+        <button type="button" className="nav-btn" aria-label="Developer tools" onClick={() => bridge.openDevTools?.()}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
             <path d="M5 5L2 8L5 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             <path d="M11 5L14 8L11 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -327,13 +327,13 @@ export function NavChromeBridge(): ReactElement | null {
         >
           {nav.findMatchText}
         </span>
-        <button type="button" className="find-nav-btn" title="Previous" onClick={() => bridge.findPrev?.()}>
+        <button type="button" className="find-nav-btn" aria-label="Previous match" onClick={() => bridge.findPrev?.()}>
           ↑
         </button>
-        <button type="button" className="find-nav-btn" title="Next" onClick={() => bridge.findNext?.()}>
+        <button type="button" className="find-nav-btn" aria-label="Next match" onClick={() => bridge.findNext?.()}>
           ↓
         </button>
-        <button type="button" className="find-close-btn" onClick={() => bridge.closeFind?.()}>
+        <button type="button" className="find-close-btn" aria-label="Close find in page" onClick={() => bridge.closeFind?.()}>
           ×
         </button>
       </div>

@@ -4,13 +4,18 @@
 
 import type { AutomationCommand, AutomationResult } from "../../shared/automation-types";
 import {
-  MCP_TOOL_DEFINITIONS,
+  MCP_BROWSER_TOOL_DEFINITIONS,
+  MCP_INTELLIGENT_TOOL_DEFINITIONS,
+  type McpToolDefinition,
   automationCommandFromMcpTool,
   sanitizeAutomationResultForMcp,
 } from "../../shared/mcp-tool-registry";
 import type { McpServerConfigPayload } from "../../shared/mcp-external-types";
 import type { IntelligentSettingsState, WorkspaceMcpToggles } from "../state/session-settings-store";
-import { BUTCHER_BUILTIN_MCP_ID } from "../state/session-settings-store";
+import {
+  BUTCHER_BUILTIN_MCP_ID,
+  INTELLIGENT_BUILTIN_MCP_ID,
+} from "../state/session-settings-store";
 import type { ChatScope } from "../chat/conversation-store";
 import type { ElectronApi } from "../../shared/ipc-types";
 
@@ -39,14 +44,24 @@ function isToolEnabled(toggles: WorkspaceMcpToggles, mcpId: string, toolName: st
   return v !== false;
 }
 
-export function filterButcherTools(settings: IntelligentSettingsState, scope: ChatScope): typeof MCP_TOOL_DEFINITIONS {
+export function filterButcherTools(
+  settings: IntelligentSettingsState,
+  scope: ChatScope,
+): McpToolDefinition[] {
   const t = togglesForScope(settings, scope);
-  const butcherOn = scope === "browser" ? true : isConnectionEnabled(t, BUTCHER_BUILTIN_MCP_ID);
-  if (!butcherOn) return [];
-  return MCP_TOOL_DEFINITIONS.filter((d) => isToolEnabled(t, BUTCHER_BUILTIN_MCP_ID, d.name));
+  if (scope === "browser") {
+    return MCP_BROWSER_TOOL_DEFINITIONS;
+  }
+  const out = [];
+  if (isConnectionEnabled(t, BUTCHER_BUILTIN_MCP_ID)) {
+    out.push(...MCP_BROWSER_TOOL_DEFINITIONS.filter((d) => isToolEnabled(t, BUTCHER_BUILTIN_MCP_ID, d.name)));
+  }
+  // Intelligent built-in tools are always available in AI assistant scope.
+  out.push(...MCP_INTELLIGENT_TOOL_DEFINITIONS.filter((d) => isToolEnabled(t, INTELLIGENT_BUILTIN_MCP_ID, d.name)));
+  return out;
 }
 
-export function butcherToolsToOpenAi(defs: typeof MCP_TOOL_DEFINITIONS): OpenAiToolDef[] {
+export function butcherToolsToOpenAi(defs: McpToolDefinition[]): OpenAiToolDef[] {
   return defs.map((d) => ({
     type: "function",
     function: {
@@ -58,7 +73,7 @@ export function butcherToolsToOpenAi(defs: typeof MCP_TOOL_DEFINITIONS): OpenAiT
 }
 
 /** Gemini API function declarations shape. */
-export function butcherToolsToGemini(defs: typeof MCP_TOOL_DEFINITIONS): Array<{
+export function butcherToolsToGemini(defs: McpToolDefinition[]): Array<{
   name: string;
   description: string;
   parametersJsonSchema: Record<string, unknown>;
@@ -115,7 +130,7 @@ export function allocateExternalOpenAiFunctionName(
 
 /** Build OpenAI tool list + resolver for model function names. */
 export function buildToolDispatchMap(
-  butcherDefs: typeof MCP_TOOL_DEFINITIONS,
+  butcherDefs: McpToolDefinition[],
   external: Array<{ server: McpServerConfigPayload; tools: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }> }>,
 ): { openAiTools: OpenAiToolDef[]; dispatch: (fn: string) => ToolDispatch | null } {
   const map = new Map<string, ToolDispatch>();
@@ -159,7 +174,7 @@ export function buildToolDispatchMap(
 
 /** Stable OpenAI function names for the same inputs as `buildToolDispatchMap`. */
 export function listOpenAiToolNames(
-  butcherDefs: typeof MCP_TOOL_DEFINITIONS,
+  butcherDefs: McpToolDefinition[],
   external: Array<{ server: McpServerConfigPayload; tools: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }> }>,
 ): string[] {
   const { openAiTools } = buildToolDispatchMap(butcherDefs, external);

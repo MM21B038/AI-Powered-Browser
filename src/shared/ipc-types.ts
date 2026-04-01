@@ -110,6 +110,8 @@ export type AiTestChatHiPayload =
       customBaseUrl: string;
       customApiKey: string;
       modelId: string;
+      /** Extra PEM CA for private TLS (custom OpenAI-compatible hosts). */
+      tlsCaPem?: string;
     };
 
 export type AiChatProxyStreamHandlers = {
@@ -124,8 +126,18 @@ export interface McpBridgeState {
   port: number;
   token: string;
   listeningPort: number | null;
+  intelligentPort: number;
+  intelligentToken: string;
+  intelligentListeningPort: number | null;
   /** Absolute path to the bundled stdio MCP entry (pass to `node` in client config). */
   stdioServerPath: string;
+  /** Absolute path to the bundled Intelligent stdio MCP entry. */
+  intelligentStdioServerPath: string;
+  builtInServers: Array<{
+    id: "browser_server" | "intelligent_server";
+    name: string;
+    stdioPath: string;
+  }>;
 }
 
 export type McpExternalListedTool = {
@@ -265,7 +277,13 @@ export interface ElectronApi {
   mcpBridgeGetState: () => Promise<McpBridgeState>;
   mcpBridgeSetEnabled: (enabled: boolean) => Promise<McpBridgeState>;
   mcpBridgeSetPort: (port: number) => Promise<McpBridgeState>;
+  mcpIntelligentBridgeSetPort: (port: number) => Promise<McpBridgeState>;
   mcpBridgeRegenerateToken: () => Promise<McpBridgeState>;
+  mcpIntelligentBridgeRegenerateToken: () => Promise<McpBridgeState>;
+  /** Main-process DuckDuckGo HTML fetch (avoids renderer CORS limitations). */
+  ddgFetchHtml: (
+    query: string,
+  ) => Promise<{ success: boolean; html?: string; error?: string }>;
   /** Never rejects; use `ok` to detect failures (avoids Electron logging IPC handler errors). */
   mcpExternalListTools: (
     cfg: McpServerConfigPayload,
@@ -283,11 +301,18 @@ export interface ElectronApi {
   aiListOpenAiModels: (
     baseUrl: string,
     apiKey: string,
+    tlsCaPem?: string,
   ) => Promise<ListedAiModel[]>;
   aiTestChatHi: (payload: AiTestChatHiPayload) => Promise<{ reply: string }>;
   /** Stream POST body to OpenAI-compatible chat/completions from main. Returns unsubscribe. */
   aiChatProxyStream: (
-    payload: { url: string; headers: Record<string, string>; body: string },
+    payload: {
+      url: string;
+      headers: Record<string, string>;
+      body: string;
+      /** Optional extra PEM CA (custom provider TLS). */
+      tlsCaPem?: string;
+    },
     handlers: AiChatProxyStreamHandlers,
   ) => () => void;
 }

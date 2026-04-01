@@ -19,7 +19,6 @@ import {
 } from "../chat/conversation-store-legacy";
 import { loadShellWorkspacePreference, saveShellWorkspacePreference } from "../chat/conversation-store";
 import { escapeHtml, renderChatMarkdownToHtml } from "../chat/chat-markdown";
-import { initUiTooltips } from "../ui/ui-tooltips";
 import { applyIntelligentWorkspaceLayoutToDom } from "../state/intelligent-workspace-layout";
 import {
   appendScreenshotLibraryEntry,
@@ -492,7 +491,7 @@ type TopSurface =
   | "browserSettings"
   | "networkWorkbench";
 
-let lastToolsHubCrumbs: string[] = ["Tool Hub"];
+let lastToolsHubCrumbs: string[] = ["Browser Tool Hub"];
 let lastScreenshotCrumbs: string[] = ["Screenshot Library"];
 
 function setAddressCrumbText(text: string): void {
@@ -575,7 +574,8 @@ function syncTopChromeForSurface(): void {
     setCrumbParts(lastScreenshotCrumbs.length ? lastScreenshotCrumbs : ["Screenshot Library"]);
   else if (surface === "settings") setCrumbParts(["Settings"]);
   else if (surface === "browserSettings") setCrumbParts(["Browser settings"]);
-  else if (surface === "toolsHub") setCrumbParts(lastToolsHubCrumbs.length ? lastToolsHubCrumbs : ["Tool Hub"]);
+  else if (surface === "toolsHub")
+    setCrumbParts(lastToolsHubCrumbs.length ? lastToolsHubCrumbs : ["Browser Tool Hub"]);
   else if (surface === "networkWorkbench") setCrumbParts(["Network", "Workbench"]);
 }
 
@@ -699,8 +699,12 @@ function openIntelligentAssistantSettings() {
    * SettingsPanel's layout effect does not re-run — the overlay stays torn down and the modal
    * looks closed / will not reopen. closeSidePanels() already closes the browser settings column. */
   closeSidePanels();
-  const hub = document.getElementById("toolsHubRoot");
-  if (hub && hub.classList.contains("tools-hub--open")) {
+  const browserHub = document.getElementById("toolsHubRoot");
+  const intelligentHub = document.getElementById("intelligentToolsHubRoot");
+  if (
+    (browserHub && browserHub.classList.contains("tools-hub--open")) ||
+    (intelligentHub && intelligentHub.classList.contains("tools-hub--open"))
+  ) {
     closeToolsHub();
   }
   leaveWorkbenchSurfaceSync();
@@ -728,8 +732,19 @@ function enterSettingsWorkspace(panel) {
 
 function wireReactSettingsButtons() {
   wireBrowserChromeSettingsOverlayControls();
+  const bindClickOnce = (el, fn) => {
+    if (!el) return;
+    if (el.dataset && el.dataset.orionBoundClick === "1") return;
+    el.addEventListener("click", (e) => {
+      e.preventDefault();
+      fn();
+    });
+    if (el.dataset) el.dataset.orionBoundClick = "1";
+  };
   const s = document.getElementById("settingsBtn");
   const chatSettings = document.getElementById("settingsBtnChat");
+  const iwToolHub = document.getElementById("intelligentWorkspaceToolHubBtn");
+  const iwRailToolHub = document.getElementById("chatHistoryRailToolsHubBtn");
   if (s) {
     s.onclick = () => {
       if (shellWorkspace === "browser") {
@@ -742,6 +757,24 @@ function wireReactSettingsButtons() {
   if (chatSettings) chatSettings.onclick = () => openIntelligentAssistantSettings();
   const iwSettings = document.getElementById("intelligentWorkspaceSettingsBtn");
   if (iwSettings) iwSettings.onclick = () => openIntelligentAssistantSettings();
+  bindClickOnce(iwToolHub, () => openToolsHub({ mode: "intelligent" }));
+  bindClickOnce(iwRailToolHub, () => openToolsHub({ mode: "intelligent" }));
+
+  // Delegated fallback for dynamic/remounted Intelligent footer buttons.
+  const root = document.getElementById("appContainer") || document.body;
+  if (root && !root.hasAttribute("data-orion-iw-toolhub-delegated")) {
+    root.setAttribute("data-orion-iw-toolhub-delegated", "1");
+    root.addEventListener("click", (ev) => {
+      const target = ev.target instanceof Element ? ev.target : null;
+      if (!target) return;
+      const btn = target.closest(
+        "#intelligentWorkspaceToolHubBtn, #chatHistoryRailToolsHubBtn",
+      );
+      if (!btn) return;
+      ev.preventDefault();
+      openToolsHub({ mode: "intelligent" });
+    });
+  }
 }
 
 function showWebviewOnly() {
@@ -2555,8 +2588,12 @@ function setupKeyboardShortcuts() {
     const ctrl = e.ctrlKey || e.metaKey;
 
     if (e.key === "Escape") {
-      const hub = document.getElementById("toolsHubRoot");
-      if (hub && hub.classList.contains("tools-hub--open")) {
+      const browserHub = document.getElementById("toolsHubRoot");
+      const intelligentHub = document.getElementById("intelligentToolsHubRoot");
+      if (
+        (browserHub && browserHub.classList.contains("tools-hub--open")) ||
+        (intelligentHub && intelligentHub.classList.contains("tools-hub--open"))
+      ) {
         closeToolsHub();
         e.preventDefault();
         return;
@@ -3353,8 +3390,8 @@ function addScreenshotMessage(dataUrl, filename) {
       <div class="ss-preview-meta">
         <span class="ss-filename">${filename}</span>
         <div class="ss-actions">
-          <button class="ss-btn ss-send-btn" title="Send to chat">Send</button>
-          <button class="ss-btn ss-discard-btn" title="Discard">×</button>
+          <button type="button" class="ss-btn ss-send-btn" aria-label="Send screenshot to chat">Send</button>
+          <button type="button" class="ss-btn ss-discard-btn" aria-label="Discard screenshot">×</button>
         </div>
       </div>
     </div>`;
@@ -3849,7 +3886,7 @@ function syncToolState(id, active) {
       const tag = document.createElement("div");
       tag.className = "tool-tag";
       tag.dataset.tagId = id;
-      tag.innerHTML = `<span class="tool-tag-icon">${tool ? tool.icon : ""}</span><span>${tool ? tool.name : id}</span><button class="tool-tag-remove" title="Remove (Esc)">×</button>`;
+      tag.innerHTML = `<span class="tool-tag-icon">${tool ? tool.icon : ""}</span><span>${tool ? tool.name : id}</span><button type="button" class="tool-tag-remove" aria-label="Remove tool (Escape)">×</button>`;
       tag.querySelector(".tool-tag-remove").onclick = () => deactivateTool(id);
       tray.appendChild(tag);
     }
@@ -4681,7 +4718,7 @@ function renderBookmarks(filter) {
         <div class="side-item-url">${escapeHtml(b.url)}</div>
       </div>
       ${added ? `<span class="side-item-date">${added}</span>` : ""}
-      <button class="side-item-del" title="Remove bookmark" aria-label="Remove bookmark">✕</button>`;
+      <button type="button" class="side-item-del" aria-label="Remove bookmark">✕</button>`;
     row.querySelector(".side-item-info").onclick = () => {
       navigateTo(b.url);
       closeSidePanels();
@@ -4843,7 +4880,7 @@ function renderPasswords(filter) {
           <div class="pw-site">${escapeHtml(pw.url || "Unknown site")}</div>
           ${
             isEncrypted
-              ? `<span class="pw-badge" title="Encrypted by OS">Encrypted</span>`
+              ? `<span class="pw-badge" aria-label="Encrypted by operating system">Encrypted</span>`
               : ""
           }
         </div>
@@ -4854,9 +4891,9 @@ function renderPasswords(filter) {
         ${
           !isEncrypted
             ? `
-          <button class="pw-copy-btn" data-type="user"  title="Copy username">User</button>
-          <button class="pw-copy-btn" data-type="pass"  title="Copy password">Pass</button>
-          <button class="pw-del-btn"                    title="Delete">Delete</button>`
+          <button type="button" class="pw-copy-btn" data-type="user" aria-label="Copy username">User</button>
+          <button type="button" class="pw-copy-btn" data-type="pass" aria-label="Copy password">Pass</button>
+          <button type="button" class="pw-del-btn" aria-label="Delete password entry">Delete</button>`
             : ""
         }
       </div>`;
@@ -4890,10 +4927,23 @@ const SIDE_PANEL_OPEN_CLASS = "side-panel--open";
 /** Skip enter/exit transitions so bookmarks ↔ history ↔ passwords swaps feel instant. */
 const SIDE_PANEL_INSTANT_CLASS = "side-panel--instant";
 
+function resolveToolsHubHost(mode) {
+  if (mode === "intelligent") return document.getElementById("intelligentToolsHubRoot");
+  return document.getElementById("toolsHubRoot");
+}
+
+function isAnyToolsHubOpen() {
+  const browserHub = document.getElementById("toolsHubRoot");
+  const intelligentHub = document.getElementById("intelligentToolsHubRoot");
+  return !!(
+    (browserHub && browserHub.classList.contains("tools-hub--open")) ||
+    (intelligentHub && intelligentHub.classList.contains("tools-hub--open"))
+  );
+}
+
 function syncWebviewInteractionLayer() {
   const sideOpen = !!document.querySelector(".side-panel.side-panel--open");
-  const hub = document.getElementById("toolsHubRoot");
-  const hubOpen = !!(hub && hub.classList.contains("tools-hub--open"));
+  const hubOpen = isAnyToolsHubOpen();
   const settingsOpen =
     shellWorkspace === "settings" ||
     !!document.getElementById("appContainer")?.hasAttribute("data-settings-open");
@@ -4991,18 +5041,29 @@ function closeSidePanels() {
 }
 
 function closeToolsHub() {
-  const hub = document.getElementById("toolsHubRoot");
-  if (!hub) return;
-  hub.classList.remove("tools-hub--open");
-  hub.style.display = "none";
-  hub.setAttribute("aria-hidden", "true");
+  const browserHub = document.getElementById("toolsHubRoot");
+  const intelligentHub = document.getElementById("intelligentToolsHubRoot");
+  [browserHub, intelligentHub].forEach((hub) => {
+    if (!hub) return;
+    hub.classList.remove("tools-hub--open");
+    hub.style.display = "none";
+    hub.setAttribute("aria-hidden", "true");
+  });
   syncRailPanelActive();
   syncWebviewInteractionLayer();
+  window.dispatchEvent(new CustomEvent("tools-hub-close"));
 }
 
-function openToolsHub() {
+function openToolsHub(opts = {}) {
   closeSidePanels();
-  const hub = document.getElementById("toolsHubRoot");
+  const mode = opts && opts.mode === "intelligent" ? "intelligent" : "browser";
+  const otherHub = resolveToolsHubHost(mode === "intelligent" ? "browser" : "intelligent");
+  if (otherHub) {
+    otherHub.classList.remove("tools-hub--open");
+    otherHub.style.display = "none";
+    otherHub.setAttribute("aria-hidden", "true");
+  }
+  const hub = resolveToolsHubHost(mode);
   if (!hub) return;
   hub.classList.add("tools-hub--open");
   hub.style.display = "flex";
@@ -5011,11 +5072,11 @@ function openToolsHub() {
   leaveSettingsSurfaceSync();
   syncRailPanelActive();
   syncWebviewInteractionLayer();
-  window.dispatchEvent(new CustomEvent("tools-hub-open"));
+  window.dispatchEvent(new CustomEvent("tools-hub-open", { detail: opts }));
 }
 
 function toggleToolsHub() {
-  const hub = document.getElementById("toolsHubRoot");
+  const hub = resolveToolsHubHost("browser");
   if (!hub) return;
   if (hub.classList.contains("tools-hub--open")) closeToolsHub();
   else openToolsHub();
@@ -5040,8 +5101,7 @@ function toggleSidePanel(id) {
   const workbenchWasOpen = !!document
     .getElementById("webviewContainer")
     ?.hasAttribute("data-workbench-open");
-  const hub = document.getElementById("toolsHubRoot");
-  const hubWasOpen = !!(hub && hub.classList.contains("tools-hub--open"));
+  const hubWasOpen = isAnyToolsHubOpen();
 
   const prev = document.querySelector(".side-panel.side-panel--open");
   if (prev && prev !== panel) {
@@ -5359,9 +5419,10 @@ function setupDataPanelButtons() {
     (e) => {
       if (!document.querySelector(".side-panel.side-panel--open")) return;
       const t = e.target;
+      if (!(t instanceof Element)) return;
       if (
         t.closest(
-          "#bookmarksPanel,#historyPanel,#passwordsPanel,#screenshotsPanel,#sessionsPanel",
+          "#bookmarksPanel,#historyPanel,#passwordsPanel,#screenshotsPanel,#sessionsPanel,#browserSettingsPanel",
         )
       )
         return;
@@ -5635,7 +5696,7 @@ window.legacyBrowser = {
   setChatPanelOpen: (open) => setChatOpen(!!open),
   runAutomationCommand: async (cmd) => runAutomationCommand(cmd, getKernelAutomationContext()),
   dispatchAutomationLine: async (line) => dispatchAutomationLine(line, getKernelAutomationContext()),
-  openToolsHub: () => openToolsHub(),
+  openToolsHub: (opts) => openToolsHub(opts || {}),
   closeToolsHub: () => closeToolsHub(),
   toggleToolsHub: () => toggleToolsHub(),
   runQuickCommand: (cmd, opts) => runQuickCommand(cmd, opts),
@@ -5707,7 +5768,7 @@ window.legacyBrowser = {
       .map((p) => (typeof p === "string" ? p : String(p ?? "")).trim())
       .filter(Boolean)
       .slice(0, 6);
-    lastToolsHubCrumbs = cleaned.length ? cleaned : ["Tool Hub"];
+    lastToolsHubCrumbs = cleaned.length ? cleaned : ["Browser Tool Hub"];
     syncTopChromeForSurface();
   });
 
@@ -5739,11 +5800,6 @@ window.legacyBrowser = {
     applyShellWorkspaceUi(loadShellWorkspacePreference());
   } catch (e) {
     console.warn("[kernel] conversation / workspace bootstrap:", e);
-  }
-  try {
-    initUiTooltips();
-  } catch (e) {
-    console.warn("[kernel] initUiTooltips:", e);
   }
   traceKernel("initBrowserKernel completed");
 }

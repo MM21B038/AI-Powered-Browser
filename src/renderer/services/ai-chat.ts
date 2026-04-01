@@ -7,9 +7,15 @@ import type { McpServerConfigPayload } from "../../shared/mcp-external-types";
 import type { ChatMessageV2, ChatScope } from "../chat/conversation-store";
 import { generateMessageId } from "../chat/conversation-ids";
 import {
+  type AiProvider,
   type IntelligentSettingsState,
+  type ThinkingLevel,
   mcpServerHasConnectionParams,
   mcpServerToPayload,
+  resolveOpenAiCompatibleBaseUrl,
+  optionalCustomTlsCaPem,
+  selectedModelIdForChatScope,
+  thinkingLevelForChatScope,
 } from "../state/session-settings-store";
 import {
   buildToolDispatchMap,
@@ -42,6 +48,10 @@ export type ChatStreamEvent =
       fullResult: string;
     }
   | { type: "error"; message: string }
+  /** Start of one model SSE response (each outer agent round). Resets bridge preamble state. */
+  | { type: "stream_start" }
+  /** Fired after each tool round completes (before the next model stream). Used to persist thinking before tools per round. */
+  | { type: "round_end" }
   | { type: "done" };
 
 type OpenAiMsg =
@@ -137,6 +147,44 @@ function extractThinkingDelta(d: Record<string, unknown>): string {
     if (/reason|think|thought|chain|internal|monologue|deliberat|cognitive/i.test(k)) out += v;
   }
   return out;
+}
+
+/**
+ * User-visible assistant text from one streamed `choices[].delta` (all OpenAI-compat providers).
+ * - Most APIs (OpenAI, Groq, xAI, Mistral, Together, OpenRouter, DeepSeek): `delta.content` string.
+ * - Google Gemini OpenAI-compat and some routed models: `content` as an array of `{ type, text }` parts.
+ * - Occasional proxies: top-level `delta.text`.
+ */
+function extractVisibleDeltaText(d: Record<string, unknown>): string {
+  const c = d.content;
+  if (typeof c === "string" && c.length) return c;
+  if (Array.isArray(c)) {
+    let out = "";
+    for (const part of c) {
+      if (typeof part === "string") {
+        out += part;
+        continue;
+      }
+      if (!part || typeof part !== "object") continue;
+      const p = part as Record<string, unknown>;
+      const typ = typeof p.type === "string" ? p.type.toLowerCase() : "";
+      if (
+        typ === "reasoning" ||
+        typ === "thinking" ||
+        typ === "tool_use" ||
+        typ === "tool-call" ||
+        typ === "function"
+      ) {
+        continue;
+      }
+      if (typeof p.text === "string") out += p.text;
+      else if (typeof p.content === "string") out += p.content;
+    }
+    return out;
+  }
+  const t = d.text;
+  if (typeof t === "string" && t.length) return t;
+  return "";
 }
 
 /** Common in Qwen / DeepSeek-style streams: hide chain-of-thought from the visible reply. */
@@ -410,7 +458,7 @@ export async function runAiChatPipeline(opts: {
   toolAllowlist?: string[] | null;
 }): Promise<void> {
   const maxRounds = opts.maxToolRounds ?? 8;
-  const modelId = opts.settings.selectedModelId.trim();
+  const modelId = selectedModelIdForChatScope(opts.settings, opts.scope).trim();
   if (!modelId) {
     opts.onEvent({ type: "error", message: "Select a model in Settings." });
     opts.onEvent({ type: "done" });
@@ -432,7 +480,9 @@ export async function runAiChatPipeline(opts: {
   const baseUrl =
     provider === "google"
       ? "https://generativelanguage.googleapis.com/v1beta/openai"
-      : normalizeOpenAiBase(opts.settings.customBaseUrl || "https://api.openai.com");
+      : normalizeOpenAiBase(
+          resolveOpenAiCompatibleBaseUrl(provider, opts.settings.customBaseUrl),
+        );
   const apiKey = provider === "google" ? opts.settings.googleApiKey.trim() : opts.settings.customApiKey.trim();
   if (!apiKey) {
     opts.onEvent({ type: "error", message: provider === "google" ? "Google API key required." : "API key required." });
@@ -445,10 +495,63 @@ export async function runAiChatPipeline(opts: {
     modelId,
     baseUrl,
     apiKey,
+    thinkingLevelForChatScope(opts.settings, opts.scope),
+    opts.settings.aiProvider,
+    optionalCustomTlsCaPem(opts.settings),
     openAiTools,
     dispatch,
     maxRounds,
   );
+}
+
+/**
+ * Maps chat “thinking” level to provider-specific Chat Completions fields.
+ * OpenAI / Google Gemini compat: top-level `reasoning_effort`.
+ * OpenRouter: unified `reasoning` object (pass-through to upstream models).
+ * DeepSeek API: `thinking.type` (native); avoid mixing with `reasoning_effort` which can 400.
+ * Custom / unknown proxy: send both `reasoning_effort` and `reasoning` for compatibility.
+ */
+function applyThinkingToRequestBody(
+  body: Record<string, unknown>,
+  thinkingLevel: ThinkingLevel,
+  aiProvider: AiProvider,
+  baseUrl: string,
+): void {
+  if (thinkingLevel === "off") return;
+
+  let host = "";
+  try {
+    const u = baseUrl.trim();
+    host = new URL(u.includes("://") ? u : `https://${u}`).hostname.toLowerCase();
+  } catch {
+    host = "";
+  }
+
+  const useDeepSeekThinking =
+    aiProvider === "deepseek" || host.includes("deepseek.com");
+  if (useDeepSeekThinking) {
+    body.thinking = { type: "enabled" };
+    return;
+  }
+
+  switch (aiProvider) {
+    case "openrouter":
+      body.reasoning = { effort: thinkingLevel, exclude: false };
+      return;
+    case "google":
+    case "openai":
+    case "groq":
+    case "mistral":
+    case "together":
+    case "xai":
+      body.reasoning_effort = thinkingLevel;
+      return;
+    case "custom":
+    default:
+      body.reasoning_effort = thinkingLevel;
+      body.reasoning = { effort: thinkingLevel };
+      return;
+  }
 }
 
 async function runOpenAiCompatible(
@@ -461,6 +564,9 @@ async function runOpenAiCompatible(
   modelId: string,
   baseUrl: string,
   apiKey: string,
+  thinkingLevel: ThinkingLevel,
+  aiProvider: AiProvider,
+  tlsCaPem: string | undefined,
   openAiTools: ReturnType<typeof buildToolDispatchMap>["openAiTools"],
   dispatch: ReturnType<typeof buildToolDispatchMap>["dispatch"],
   maxRounds: number,
@@ -487,6 +593,7 @@ async function runOpenAiCompatible(
     let toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
 
     streamAttempt: while (true) {
+      opts.onEvent({ type: "stream_start" });
       let buffer = "";
       fullAssistant = "";
       toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
@@ -520,12 +627,14 @@ async function runOpenAiCompatible(
           const choice = chunk.choices?.[0];
           const d = choice?.delta;
           if (d && typeof d === "object") {
-            const content = d.content;
-            if (typeof content === "string" && content.length) {
-              feedAssistantContent(content);
-            }
+            // Emit reasoning before visible content when both appear in one delta, so the UI
+            // keeps thinking above the answer (matches provider intent and legacy layout).
             const thinkingPart = extractThinkingDelta(d);
             if (thinkingPart) opts.onEvent({ type: "thinking", text: thinkingPart });
+            const visible = extractVisibleDeltaText(d as Record<string, unknown>);
+            if (visible.length) {
+              feedAssistantContent(visible);
+            }
             const tcalls = d.tool_calls;
             if (Array.isArray(tcalls) && tcalls.length) {
               for (const tc of tcalls) {
@@ -565,13 +674,14 @@ async function runOpenAiCompatible(
         body.tools = openAiTools;
         body.tool_choice = "auto";
       }
+      applyThinkingToRequestBody(body, thinkingLevel, aiProvider, baseUrl);
       const bodyStr = JSON.stringify(body);
 
       if (proxy) {
         try {
           const outcome = await new Promise<"done" | "retry">((resolve, reject) => {
             proxy(
-              { url, headers, body: bodyStr },
+              { url, headers, body: bodyStr, ...(tlsCaPem ? { tlsCaPem } : {}) },
               {
                 onChunk: feedSseChunk,
                 onComplete: () => resolve("done"),
@@ -593,6 +703,15 @@ async function runOpenAiCompatible(
           return;
         }
       } else {
+        if (tlsCaPem) {
+          opts.onEvent({
+            type: "error",
+            message:
+              "Custom TLS CA requires the desktop app (chat is proxied through the main process). Cannot use renderer fetch with a private CA.",
+          });
+          opts.onEvent({ type: "done" });
+          return;
+        }
         const res = await fetch(url, {
           method: "POST",
           headers,
@@ -691,6 +810,7 @@ async function runOpenAiCompatible(
           content: resultText,
         });
       }
+      opts.onEvent({ type: "round_end" });
       continue;
     }
 

@@ -28,7 +28,15 @@ export type AutomationCommand =
       sessionId?: string;
     }
   | ({ kind: "action"; op: "scroll"; direction: "up" | "down"; amount?: number } & SessionScoped)
-  | ({ kind: "action"; op: "select"; selector: string; by: "label" | "value" | "index"; value: string | number } & SessionScoped)
+  | ({
+      kind: "action";
+      op: "select";
+      /** CSS selector or visible label / control text (same resolution idea as click). */
+      selector: string;
+      by: "label" | "value" | "index" | "path";
+      /** For `path`, use `"Segment1 > Segment2"` (quoted in DSL if needed). */
+      value: string | number;
+    } & SessionScoped)
   | ({ kind: "action"; op: "toggle_checkbox"; selector: string; checked?: boolean } & SessionScoped)
   | ({ kind: "action"; op: "toggle_radio"; selector: string } & SessionScoped)
   | ({ kind: "action"; op: "upload_file"; selector: string; filePath: string } & SessionScoped)
@@ -39,6 +47,7 @@ export type AutomationCommand =
   | ({ kind: "action"; op: "close_tab"; tabId?: number } & SessionScoped)
   | ({ kind: "action"; op: "new_tab"; url?: string } & SessionScoped)
   | ({ kind: "action"; op: "wait_for_selector"; selector: string; timeoutMs?: number } & SessionScoped)
+  | ({ kind: "action"; op: "run_js"; script: string; args?: unknown; timeoutMs?: number } & SessionScoped)
   | ({ kind: "action"; op: "wait_ms"; ms: number } & SessionScoped)
   | ({ kind: "action"; op: "reload" } & SessionScoped)
   | ({ kind: "action"; op: "back" } & SessionScoped)
@@ -53,6 +62,13 @@ export type AutomationCommand =
   | ({ kind: "info"; op: "get_form_schema" } & SessionScoped)
   | ({ kind: "info"; op: "list_tabs" } & SessionScoped)
   | ({ kind: "info"; op: "get_interactables"; limit?: number } & SessionScoped)
+  | ({ kind: "info"; op: "browser_search"; query: string; limit?: number } & SessionScoped)
+  | ({
+      kind: "info";
+      op: "scientific_calc";
+      expression: string;
+      precision?: number;
+    } & SessionScoped)
   | { kind: "action"; op: "session"; headless: boolean }
   | { kind: "action"; op: "kill_session"; sessionId: string };
 

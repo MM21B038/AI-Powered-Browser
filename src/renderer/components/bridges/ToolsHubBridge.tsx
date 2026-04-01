@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState, type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import {
   TOOLS_HUB_CATEGORIES,
@@ -13,7 +13,11 @@ import {
   ToolsHubFillDetail,
   ToolsHubGenericDetail,
   ToolsHubPressDetail,
+  ToolsHubRunJsDetail,
+  ToolsHubBrowserSearchDetail,
+  ToolsHubScientificCalcDetail,
   ToolsHubScrollDetail,
+  ToolsHubSelectDetail,
   ToolsHubSessionDetail,
   ToolsHubTypeDetail,
 } from "../tools-hub/ToolDetailViews";
@@ -29,6 +33,7 @@ type HubView =
   | { kind: "categories" }
   | { kind: "category"; category: ToolsHubCategory }
   | { kind: "toolDetail"; category: ToolsHubCategory; item: ToolsHubItem };
+type HubMode = "browser" | "intelligent";
 
 function findToolByIdInCatalog(id: string): { category: ToolsHubCategory; item: ToolsHubItem } | null {
   for (const cat of TOOLS_HUB_CATEGORIES) {
@@ -40,21 +45,30 @@ function findToolByIdInCatalog(id: string): { category: ToolsHubCategory; item: 
 
 export function ToolsHubBridge(): ReactElement | null {
   const bridge = typeof window !== "undefined" ? window.legacyBrowser : undefined;
-  const [host, setHost] = useState<HTMLElement | null>(null);
+  const [browserHost, setBrowserHost] = useState<HTMLElement | null>(null);
+  const [intelligentHost, setIntelligentHost] = useState<HTMLElement | null>(null);
   const [view, setView] = useState<HubView>({ kind: "categories" });
+  const [mode, setMode] = useState<HubMode>("browser");
   const [hubOpen, setHubOpen] = useState(() => {
-    const el = typeof window !== "undefined" ? document.getElementById("toolsHubRoot") : null;
-    return !!(el && el.classList.contains("tools-hub--open"));
+    if (typeof window === "undefined") return false;
+    const browserEl = document.getElementById("toolsHubRoot");
+    const intelligentEl = document.getElementById("intelligentToolsHubRoot");
+    return !!(
+      (browserEl && browserEl.classList.contains("tools-hub--open")) ||
+      (intelligentEl && intelligentEl.classList.contains("tools-hub--open"))
+    );
   });
 
-  useEffect(() => {
-    setHost(document.getElementById("toolsHubRoot"));
+  useLayoutEffect(() => {
+    setBrowserHost(document.getElementById("toolsHubRoot"));
+    setIntelligentHost(document.getElementById("intelligentToolsHubRoot"));
   }, []);
 
   useEffect(() => {
     const onOpen = (e: Event) => {
-      const d = (e as CustomEvent<{ toolId?: string | null }>).detail;
+      const d = (e as CustomEvent<{ toolId?: string | null; mode?: HubMode }>).detail;
       setHubOpen(true);
+      setMode(d?.mode === "intelligent" ? "intelligent" : "browser");
       const tid = d?.toolId;
       if (tid) {
         const found = findToolByIdInCatalog(tid);
@@ -77,20 +91,38 @@ export function ToolsHubBridge(): ReactElement | null {
   }, []);
 
   const toolId = view.kind === "toolDetail" ? view.item.id : "";
+  const intelligentSearchTool = findToolByIdInCatalog("browserSearch");
+  const intelligentCalcTool = findToolByIdInCatalog("scientificCalc");
+  const visibleCategories =
+    mode === "intelligent"
+      ? TOOLS_HUB_CATEGORIES
+          .map((cat) => ({
+            ...cat,
+            items: cat.items.filter((it) => it.id === "browserSearch" || it.id === "scientificCalc"),
+          }))
+          .filter((cat) => cat.items.length > 0)
+      : TOOLS_HUB_CATEGORIES
+          .map((cat) => ({
+            ...cat,
+            items: cat.items.filter((it) => it.id !== "browserSearch" && it.id !== "scientificCalc"),
+          }))
+          .filter((cat) => cat.items.length > 0);
   useEffect(() => {
     if (!hubOpen) return;
+    if (mode === "intelligent") return;
     const base = window.location.href.replace(/#.*$/, "");
     const hash = view.kind === "toolDetail" ? `#/tools-hub/${encodeURIComponent(toolId)}` : "#/tools-hub";
     window.history.replaceState(null, "", `${base}${hash}`);
-  }, [hubOpen, view.kind, toolId]);
+  }, [hubOpen, view.kind, toolId, mode]);
 
   useEffect(() => {
     if (!hubOpen) return;
-    let parts: string[] = ["Tool Hub"];
-    if (view.kind === "category") parts = ["Tool Hub", view.category.title];
-    else if (view.kind === "toolDetail") parts = ["Tool Hub", view.category.title, view.item.label];
+    const hubTitle = mode === "intelligent" ? "Intelligent Tool Hub" : "Browser Tool Hub";
+    let parts: string[] = [hubTitle];
+    if (view.kind === "category") parts = [hubTitle, view.category.title];
+    else if (view.kind === "toolDetail") parts = [hubTitle, view.category.title, view.item.label];
     window.dispatchEvent(new CustomEvent("tools-hub-breadcrumb", { detail: { parts } }));
-  }, [hubOpen, view]);
+  }, [hubOpen, view, mode]);
 
   const runCommand = useCallback(
     (command: string) => {
@@ -122,18 +154,114 @@ export function ToolsHubBridge(): ReactElement | null {
     setView({ kind: "category", category });
   }, []);
 
+  const host = mode === "intelligent" ? (intelligentHost ?? browserHost) : browserHost;
   if (!bridge || !host) return null;
 
   let body: ReactElement;
-  if (view.kind === "categories") {
+  if (mode === "intelligent" && intelligentSearchTool && intelligentCalcTool) {
+    const isSearchDetail = view.kind === "toolDetail" && view.item.id === "browserSearch";
+    const isCalcDetail = view.kind === "toolDetail" && view.item.id === "scientificCalc";
+    body = (
+      <div
+        className="tools-hub-intelligent-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Intelligent Tool Hub"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) bridge?.closeToolsHub?.();
+        }}
+      >
+        <div className="tools-hub-intelligent-panel">
+          <header className="tools-hub-intelligent-head">
+            <div>
+              <h1 className="tools-hub-title">Intelligent Tool Hub</h1>
+              <p className="tools-hub-subtitle">Use Web Search or Scientific calculator tools.</p>
+            </div>
+            <button
+              type="button"
+              className="browser-chrome-settings-close"
+              aria-label="Close Intelligent Tool Hub"
+              onClick={() => bridge?.closeToolsHub?.()}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+                <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
+            </button>
+          </header>
+          {isSearchDetail ? (
+            <div className="tools-hub-intelligent-body">
+              <ToolsHubBrowserSearchDetail
+                category={intelligentSearchTool.category}
+                item={intelligentSearchTool.item}
+                bridge={bridge}
+                onBack={() => setView({ kind: "categories" })}
+              />
+            </div>
+          ) : isCalcDetail ? (
+            <div className="tools-hub-intelligent-body">
+              <ToolsHubScientificCalcDetail
+                category={intelligentCalcTool.category}
+                item={intelligentCalcTool.item}
+                bridge={bridge}
+                onBack={() => setView({ kind: "categories" })}
+              />
+            </div>
+          ) : (
+            <div className="tools-hub-intelligent-body tools-hub-intelligent-body--grid">
+              <button
+                type="button"
+                className="tools-hub-card tools-hub-card--single"
+                onClick={() =>
+                  setView({
+                    kind: "toolDetail",
+                    category: intelligentSearchTool.category,
+                    item: intelligentSearchTool.item,
+                  })
+                }
+              >
+                <span
+                  className="tools-hub-card-icon"
+                  dangerouslySetInnerHTML={{ __html: intelligentSearchTool.item.iconSvg }}
+                />
+                <span className="tools-hub-card-text">
+                  <span className="tools-hub-card-title">{intelligentSearchTool.item.label}</span>
+                  <span className="tools-hub-card-desc">{intelligentSearchTool.item.description}</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                className="tools-hub-card tools-hub-card--single"
+                onClick={() =>
+                  setView({
+                    kind: "toolDetail",
+                    category: intelligentCalcTool.category,
+                    item: intelligentCalcTool.item,
+                  })
+                }
+              >
+                <span
+                  className="tools-hub-card-icon"
+                  dangerouslySetInnerHTML={{ __html: intelligentCalcTool.item.iconSvg }}
+                />
+                <span className="tools-hub-card-text">
+                  <span className="tools-hub-card-title">{intelligentCalcTool.item.label}</span>
+                  <span className="tools-hub-card-desc">{intelligentCalcTool.item.description}</span>
+                </span>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  } else if (view.kind === "categories") {
     body = (
       <div className="tools-hub-inner">
         <header className="tools-hub-header">
-          <h1 className="tools-hub-title">Tools &amp; commands</h1>
+          <h1 className="tools-hub-title">{mode === "intelligent" ? "Intelligent Tool Hub" : "Browser Tool Hub"}</h1>
           <p className="tools-hub-subtitle">Pick a category, then a command to insert or run</p>
         </header>
         <div className="tools-hub-grid" role="navigation" aria-label="Command categories">
-          {TOOLS_HUB_CATEGORIES.map((cat) => (
+          {visibleCategories.map((cat) => (
             <button
               key={cat.id}
               type="button"
@@ -169,7 +297,9 @@ export function ToolsHubBridge(): ReactElement | null {
           <h2 className="tools-hub-detail-title">{view.category.title}</h2>
         </header>
         <div className="tools-hub-grid" role="navigation" aria-label="Tools in category">
-          {view.category.items.map((item) => (
+          {view.category.items
+            .filter((item) => (mode === "browser" ? item.id !== "browserSearch" && item.id !== "scientificCalc" : true))
+            .map((item) => (
             <button
               key={item.id}
               type="button"
@@ -191,6 +321,15 @@ export function ToolsHubBridge(): ReactElement | null {
     if (td.item.detail === "scroll") {
       body = (
         <ToolsHubScrollDetail
+          category={td.category}
+          item={td.item}
+          bridge={bridge}
+          onBack={() => backFromToolDetail(td.category)}
+        />
+      );
+    } else if (td.item.detail === "select") {
+      body = (
+        <ToolsHubSelectDetail
           category={td.category}
           item={td.item}
           bridge={bridge}
@@ -227,6 +366,33 @@ export function ToolsHubBridge(): ReactElement | null {
     } else if (td.item.detail === "press") {
       body = (
         <ToolsHubPressDetail
+          category={td.category}
+          item={td.item}
+          bridge={bridge}
+          onBack={() => backFromToolDetail(td.category)}
+        />
+      );
+    } else if (td.item.detail === "runJs") {
+      body = (
+        <ToolsHubRunJsDetail
+          category={td.category}
+          item={td.item}
+          bridge={bridge}
+          onBack={() => backFromToolDetail(td.category)}
+        />
+      );
+    } else if (td.item.detail === "browserSearch") {
+      body = (
+        <ToolsHubBrowserSearchDetail
+          category={td.category}
+          item={td.item}
+          bridge={bridge}
+          onBack={() => backFromToolDetail(td.category)}
+        />
+      );
+    } else if (td.item.detail === "scientificCalc") {
+      body = (
+        <ToolsHubScientificCalcDetail
           category={td.category}
           item={td.item}
           bridge={bridge}
@@ -281,5 +447,10 @@ export function ToolsHubBridge(): ReactElement | null {
     }
   }
 
-  return createPortal(body, host);
+  return createPortal(
+    <div className="tools-hub-portal-shell">
+      <div className="tools-hub-portal-body">{body}</div>
+    </div>,
+    host,
+  );
 }

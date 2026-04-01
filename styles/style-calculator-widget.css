@@ -1,0 +1,380 @@
+.calc-widget--floating {
+  width: min(100%, 292px);
+  margin-left: auto;
+}
+
+.calc-widget--embedded {
+  width: 100%;
+  max-width: 292px;
+}
+
+.calc-widget--chat {
+  width: 100%;
+  max-width: 100%;
+  box-shadow: none;
+  border-radius: 8px;
+}
+
+/* Inside chat tool message: one panel with card chrome only on outer shell */
+.calc-widget--chat.calc-widget--in-tool-card {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.calc-widget__lcd {
+  padding: 8px 10px 6px;
+  background: color-mix(in srgb, var(--bg1) 35%, var(--bg2));
+  border-bottom: 1px solid color-mix(in srgb, var(--border2) 50%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.calc-widget__lcd-sub {
+  font-size: 9px;
+  line-height: 1.25;
+  color: color-mix(in srgb, var(--text2) 75%, var(--text3));
+  min-height: 1.1em;
+  word-break: break-all;
+  opacity: 0.92;
+}
+
+.calc-widget__lcd-main {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text3);
+  text-align: right;
+  word-break: break-all;
+  letter-spacing: 0.02em;
+}
+
+.calc-widget__body--chat {
+  padding: 6px 6px 8px;
+}
+
+.calc-widget {
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border2) 70%, transparent);
+  background: color-mix(in srgb, var(--bg1) 55%, var(--bg2));
+  box-shadow: 0 4px 16px color-mix(in srgb, #000 14%, transparent);
+  overflow: hidden;
+}
+
+.calc-widget__header {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  margin: 0;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--border2) 55%, transparent);
+  background: color-mix(in srgb, var(--bg2) 40%, transparent);
+  color: var(--text3);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.calc-widget__header:hover {
+  background: color-mix(in srgb, var(--bg2) 65%, transparent);
+}
+
+.calc-widget__header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.calc-widget__header-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text2);
+}
+
+.calc-widget__chev {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid color-mix(in srgb, var(--text2) 85%, transparent);
+  transition: transform 0.15s ease;
+}
+
+.calc-widget__header[aria-expanded="true"] .calc-widget__chev {
+  transform: rotate(180deg);
+}
+
+.calc-widget__header-display {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.calc-widget__header-expr {
+  color: var(--text3);
+  word-break: break-all;
+  min-height: 1.35em;
+  line-height: 1.35;
+}
+
+.calc-widget__header-ans {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--text2) 90%, var(--text3));
+}
+
+.calc-widget__body {
+  padding: 7px 7px 9px;
+}
+
+.calc-widget__err {
+  font-size: 11px;
+  color: #f07178;
+  margin-bottom: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, #f07178 12%, transparent);
+}
+
+.calc-widget__precision {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: var(--text2);
+}
+
+.calc-widget__precision input {
+  width: 72px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--border2) 70%, transparent);
+  background: var(--bg1);
+  color: var(--text3);
+  font-family: inherit;
+}
+
+.calc-widget__keys {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  width: 100%;
+}
+
+.calc-widget__key {
+  min-width: 0;
+  min-height: 30px;
+  padding: 4px 2px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--border2) 65%, transparent);
+  background: color-mix(in srgb, var(--bg1) 70%, transparent);
+  color: var(--text3);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.calc-widget__key:hover {
+  background: color-mix(in srgb, var(--bg2) 50%, transparent);
+}
+
+.calc-widget__key:active {
+  transform: scale(0.97);
+}
+
+.calc-widget__key--wide {
+  grid-column: 1 / -1;
+  min-height: 32px;
+  background: color-mix(in srgb, var(--accent, #6ea8ff) 22%, var(--bg1));
+  border-color: color-mix(in srgb, var(--accent, #6ea8ff) 45%, var(--border2));
+}
+
+.calc-widget__key--fn {
+  min-height: 26px;
+  padding: 3px 2px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.calc-widget__key--fn .calc-widget__key-label {
+  font-size: 10px;
+}
+
+.calc-widget__key-sub {
+  font-size: 8px;
+  opacity: 0.65;
+  margin-top: 1px;
+}
+
+/* Calculator tool message (chat): header + full keypad in one card */
+.ai-chat-calc-tool-card {
+  width: 100%;
+  max-width: min(100%, 360px);
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border2) 65%, transparent);
+  background: color-mix(in srgb, var(--bg2) 40%, var(--bg1));
+  overflow: hidden;
+}
+
+.ai-chat-calc-tool-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border2) 45%, transparent);
+  background: color-mix(in srgb, var(--bg1) 22%, transparent);
+}
+
+.ai-chat-calc-tool-card__brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Result area: fixed left column for icon so open/close does not shift it */
+.ai-chat-calc-tool-card__result-screen {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: start;
+  padding: 8px 10px 10px;
+  background: color-mix(in srgb, var(--bg1) 28%, var(--bg2));
+  border-bottom: 1px solid color-mix(in srgb, var(--border2) 40%, transparent);
+}
+
+.ai-chat-calc-tool-card__icon-toggle {
+  grid-column: 1;
+  justify-self: start;
+  align-self: start;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--border2) 55%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg1) 50%, transparent);
+  color: color-mix(in srgb, var(--text2) 85%, var(--text3));
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.ai-chat-calc-tool-card__icon-toggle:hover {
+  background: color-mix(in srgb, var(--bg2) 45%, transparent);
+  color: var(--text3);
+}
+
+.ai-chat-calc-tool-card__icon-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 2px;
+}
+
+.ai-chat-calc-tool-card__icon-toggle--expanded {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border2));
+  background: color-mix(in srgb, var(--accentGlow) 35%, transparent);
+}
+
+.ai-chat-calc-tool-card__icon-toggle--expanded:hover {
+  color: var(--accent2);
+}
+
+.ai-chat-calc-tool-card__icon-toggle-glyph {
+  display: block;
+  pointer-events: none;
+}
+
+.ai-chat-calc-tool-card__result-main {
+  grid-column: 2;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.ai-chat-calc-tool-card__result-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+  text-align: right;
+  width: 100%;
+}
+
+.ai-chat-calc-tool-card__collapsed-in,
+.ai-chat-calc-tool-card__collapsed-out {
+  width: 100%;
+}
+
+.ai-chat-calc-tool-card__collapsed-k {
+  display: block;
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: color-mix(in srgb, var(--text2) 68%, transparent);
+  margin-bottom: 2px;
+}
+
+.ai-chat-calc-tool-card__collapsed-v {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.3;
+  color: color-mix(in srgb, var(--text2) 60%, var(--text3));
+  word-break: break-all;
+}
+
+.ai-chat-calc-tool-card__collapsed-out .ai-chat-calc-tool-card__collapsed-v {
+  font-size: 13px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--accent) 48%, var(--text3));
+}
+
+.ai-chat-calc-tool-card__collapsed-v--err {
+  color: #f07178;
+  font-size: 12px;
+}
+
+.ai-chat-calc-tool-card__mcp {
+  flex-shrink: 0;
+  opacity: 0.9;
+  color: var(--text2);
+}
+
+.ai-chat-calc-tool-card__heading {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text2);
+}
+
+.ai-chat-calc-tool-card__result-main .ai-chat-calc-tool-card__calc {
+  padding: 0;
+  align-self: stretch;
+}
+
+.ai-chat-calc-tool-card__calc--hidden {
+  display: none;
+}
+
+.ai-chat-calc-tool-card .calc-widget__lcd-main {
+  color: color-mix(in srgb, var(--accent) 42%, var(--text3));
+}

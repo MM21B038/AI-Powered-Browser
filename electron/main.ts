@@ -34,6 +34,7 @@ import {
   loadMcpBridgeConfig,
   saveMcpBridgeConfig,
   startMcpBridge,
+  stopAllMcpBridges,
   stopMcpBridge,
   type McpBridgeFileConfig,
 } from "./mcp/mcp-bridge";
@@ -250,11 +251,14 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
-  stopMcpBridge();
+  stopAllMcpBridges();
 });
 
 function getStdioServerPath(): string {
   return path.join(__dirname, "mcp", "stdio-server.js");
+}
+function getIntelligentStdioServerPath(): string {
+  return path.join(__dirname, "mcp", "stdio-server-intelligent.js");
 }
 
 function getMcpBridgeStatePayload(): McpBridgeState {
@@ -263,8 +267,16 @@ function getMcpBridgeStatePayload(): McpBridgeState {
     enabled: cfg.enabled,
     port: cfg.port,
     token: cfg.token,
-    listeningPort: getBridgeListeningPort(),
+    listeningPort: getBridgeListeningPort("browser"),
+    intelligentPort: cfg.intelligentPort,
+    intelligentToken: cfg.intelligentToken,
+    intelligentListeningPort: getBridgeListeningPort("intelligent"),
     stdioServerPath: getStdioServerPath(),
+    intelligentStdioServerPath: getIntelligentStdioServerPath(),
+    builtInServers: [
+      { id: "browser_server", name: "Browser Server", stdioPath: getStdioServerPath() },
+      { id: "intelligent_server", name: "Intelligent Server", stdioPath: getIntelligentStdioServerPath() },
+    ],
   };
 }
 
@@ -272,13 +284,22 @@ function applyMcpBridgeFromConfig(): void {
   if (!mcpBridgeConfig) return;
   if (mcpBridgeConfig.enabled) {
     startMcpBridge(
+      "browser",
       () => mainWindow,
       mcpBridgeConfig.port,
       mcpBridgeConfig.token,
       (msg) => traceMain("mcp bridge tcp error", { msg }),
     );
+    startMcpBridge(
+      "intelligent",
+      () => mainWindow,
+      mcpBridgeConfig.intelligentPort,
+      mcpBridgeConfig.intelligentToken,
+      (msg) => traceMain("intelligent mcp bridge tcp error", { msg }),
+    );
   } else {
-    stopMcpBridge();
+    stopMcpBridge("browser");
+    stopMcpBridge("intelligent");
   }
 }
 
@@ -881,6 +902,22 @@ ipcMain.handle("mcp-bridge-set-port", (_: IpcMainInvokeEvent, port: number) => {
   return getMcpBridgeStatePayload();
 });
 
+ipcMain.handle("mcp-intelligent-bridge-set-port", (_: IpcMainInvokeEvent, port: number) => {
+  const ud = app.getPath("userData");
+  const p = Math.floor(Number(port));
+  const safe =
+    Number.isFinite(p) && p > 0 && p < 65536
+      ? p
+      : (mcpBridgeConfig ?? loadMcpBridgeConfig(ud)).intelligentPort;
+  mcpBridgeConfig = {
+    ...(mcpBridgeConfig ?? loadMcpBridgeConfig(ud)),
+    intelligentPort: safe,
+  };
+  saveMcpBridgeConfig(ud, mcpBridgeConfig);
+  applyMcpBridgeFromConfig();
+  return getMcpBridgeStatePayload();
+});
+
 ipcMain.handle("mcp-bridge-regenerate-token", () => {
   const ud = app.getPath("userData");
   mcpBridgeConfig = {
@@ -890,6 +927,43 @@ ipcMain.handle("mcp-bridge-regenerate-token", () => {
   saveMcpBridgeConfig(ud, mcpBridgeConfig);
   applyMcpBridgeFromConfig();
   return getMcpBridgeStatePayload();
+});
+
+ipcMain.handle("mcp-intelligent-bridge-regenerate-token", () => {
+  const ud = app.getPath("userData");
+  mcpBridgeConfig = {
+    ...(mcpBridgeConfig ?? loadMcpBridgeConfig(ud)),
+    intelligentToken: generateMcpToken(),
+  };
+  saveMcpBridgeConfig(ud, mcpBridgeConfig);
+  applyMcpBridgeFromConfig();
+  return getMcpBridgeStatePayload();
+});
+
+ipcMain.handle("ddg-fetch-html", async (_: IpcMainInvokeEvent, query: string) => {
+  const q = String(query ?? "").trim();
+  if (!q) return { success: false, error: "query_required" };
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
+    const res = await fetch(url, {
+      method: "GET",
+      signal: ctrl.signal,
+      headers: {
+        "accept-language": "en-US,en;q=0.9",
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+      },
+    });
+    if (!res.ok) return { success: false, error: `DuckDuckGo request failed (${res.status})` };
+    const html = await res.text();
+    return { success: true, html };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : String(e) };
+  } finally {
+    clearTimeout(t);
+  }
 });
 
 ipcMain.handle(
@@ -943,12 +1017,13 @@ ipcMain.handle(
   "ai-list-openai-models",
   async (
     _: IpcMainInvokeEvent,
-    payload: { baseUrl?: string; apiKey?: string },
+    payload: { baseUrl?: string; apiKey?: string; tlsCaPem?: string },
   ) => {
     try {
       return await listOpenAiCompatibleModelsMain(
         String(payload?.baseUrl ?? ""),
         String(payload?.apiKey ?? ""),
+        typeof payload?.tlsCaPem === "string" ? payload.tlsCaPem : undefined,
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -966,6 +1041,7 @@ ipcMain.handle(
       customBaseUrl?: string;
       customApiKey?: string;
       modelId?: string;
+      tlsCaPem?: string;
     };
     const modelId = String(p?.modelId ?? "");
     try {
@@ -974,6 +1050,7 @@ ipcMain.handle(
           String(p?.customBaseUrl ?? ""),
           String(p?.customApiKey ?? ""),
           modelId,
+          typeof p?.tlsCaPem === "string" ? p.tlsCaPem : undefined,
         );
       }
       return await testGoogleHiMain(String(p?.googleApiKey ?? ""), modelId);
@@ -993,6 +1070,7 @@ ipcMain.handle(
       url: string;
       headers: Record<string, string>;
       body: string;
+      tlsCaPem?: string;
     },
   ) => {
     await proxyOpenAiChatCompletionsStream(
@@ -1001,6 +1079,7 @@ ipcMain.handle(
       payload.url,
       payload.headers,
       payload.body,
+      typeof payload.tlsCaPem === "string" ? payload.tlsCaPem : undefined,
     );
   },
 );

@@ -32,7 +32,6 @@
           type="button"
           class="titlebar-intelligent-pill"
           id="titlebarIntelligentBtn"
-          title="Intelligent workspace"
           aria-pressed="false"
         >
           Intelligent
@@ -41,20 +40,19 @@
           type="button"
           class="titlebar-browser-pill"
           id="titlebarBrowserBtn"
-          title="Browser workspace"
           aria-pressed="true"
         >
           Browser
         </button>
       </div>
       <div class="titlebar-right flex items-center gap-0.5">
-        <button class="tb-btn" id="tbMinimize" title="Minimize">
+        <button class="tb-btn" id="tbMinimize" aria-label="Minimize">
           &#x2212;
         </button>
-        <button class="tb-btn" id="tbMaximize" title="Maximize">
+        <button class="tb-btn" id="tbMaximize" aria-label="Maximize">
           &#x25A1;
         </button>
-        <button class="tb-btn tb-close" id="tbClose" title="Close">
+        <button class="tb-btn tb-close" id="tbClose" aria-label="Close window">
           &#x2715;
         </button>
       </div>
@@ -84,13 +82,12 @@
           <aside
             class="left-tool-rail"
             id="leftToolRail"
-            aria-label="Page, sessions, bookmarks, history, passwords, network, tools hub, and settings"
+            aria-label="Page, sessions, bookmarks, history, passwords, network, browser tool hub, and settings"
           >
             <button
               type="button"
               class="rail-btn rail-btn-active"
               id="railWebviewBtn"
-              title="Page"
               aria-label="Show page"
             >
               <span class="rail-btn-icon" aria-hidden="true">
@@ -104,7 +101,6 @@
               type="button"
               class="rail-btn"
               id="sessionsBtn"
-              title="Sessions"
               aria-label="Sessions"
             >
               <span class="rail-btn-icon" aria-hidden="true">
@@ -119,7 +115,6 @@
               type="button"
               class="rail-btn"
               id="bookmarksBtn"
-              title="Bookmarks"
               aria-label="Bookmarks"
             >
               <span class="rail-btn-icon" aria-hidden="true">
@@ -137,7 +132,6 @@
               type="button"
               class="rail-btn"
               id="historyBtn"
-              title="History"
               aria-label="History"
             >
               <span class="rail-btn-icon" aria-hidden="true">
@@ -157,7 +151,6 @@
               type="button"
               class="rail-btn rail-btn--badge-host"
               id="screenshotsBtn"
-              title="Screenshot library"
               aria-label="Screenshot library"
             >
               <span class="rail-btn-icon" aria-hidden="true">
@@ -184,7 +177,6 @@
               type="button"
               class="rail-btn"
               id="passwordsBtn"
-              title="Saved passwords"
               aria-label="Saved passwords"
             >
               <span class="rail-btn-icon" aria-hidden="true">
@@ -212,7 +204,6 @@
               type="button"
               class="rail-btn"
               id="networkWorkbenchBtn"
-              title="Network"
               aria-label="Network workbench"
             >
               <span class="rail-btn-icon" aria-hidden="true">
@@ -231,7 +222,6 @@
               type="button"
               class="rail-btn"
               id="toolsHubBtn"
-              title="Tools &amp; commands"
               aria-label="Tools and commands hub"
             >
               <span class="rail-btn-icon" aria-hidden="true">
@@ -247,7 +237,6 @@
               type="button"
               class="rail-btn rail-btn-settings"
               id="settingsBtn"
-              title="Settings"
               aria-label="Settings"
             >
               <span class="rail-btn-icon" aria-hidden="true">
@@ -273,7 +262,7 @@
             <button
               class="nav-btn"
               id="backBtn"
-              title="Back (Alt+Left)"
+              aria-label="Back"
               disabled
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -289,7 +278,7 @@
             <button
               class="nav-btn"
               id="forwardBtn"
-              title="Forward (Alt+Right)"
+              aria-label="Forward"
               disabled
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -302,7 +291,7 @@
                 />
               </svg>
             </button>
-            <button class="nav-btn" id="reloadBtn" title="Reload (F5)">
+            <button class="nav-btn" id="reloadBtn" aria-label="Reload">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <path
                   d="M13.657 6A6 6 0 1 0 12 11.196"
@@ -343,7 +332,7 @@
               <button
                 class="addr-action-btn"
                 id="clearAddressBtn"
-                title="Clear"
+                aria-label="Clear address"
                 style="display: none"
               >
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -362,7 +351,7 @@
             <button
               class="nav-btn"
               id="bookmarkStarBtn"
-              title="Bookmark this page (Ctrl+D)"
+              aria-label="Bookmark this page"
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <path
@@ -373,7 +362,7 @@
                 />
               </svg>
             </button>
-            <button class="nav-btn" id="homeBtn" title="Home">
+            <button class="nav-btn" id="homeBtn" aria-label="Home">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <path
                   d="M2 7L8 2L14 7V14H10V10H6V14H2V7Z"
@@ -386,7 +375,7 @@
             <button
               class="nav-btn"
               id="screenshotBtn"
-              title="Screenshot (Ctrl+Shift+S)"
+              aria-label="Capture screenshot"
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <rect
@@ -413,7 +402,7 @@
                 />
               </svg>
             </button>
-            <button class="nav-btn" id="findBtn" title="Find in Page (Ctrl+F)">
+            <button class="nav-btn" id="findBtn" aria-label="Find in page">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <circle
                   cx="6.5"
@@ -430,7 +419,7 @@
                 />
               </svg>
             </button>
-            <button class="nav-btn" id="zoomOutBtn" title="Zoom Out (Ctrl+-)">
+            <button class="nav-btn" id="zoomOutBtn" aria-label="Zoom out">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <circle
                   cx="6.5"
@@ -454,7 +443,7 @@
               </svg>
             </button>
             <span class="zoom-level" id="zoomLevel">100%</span>
-            <button class="nav-btn" id="zoomInBtn" title="Zoom In (Ctrl+=)">
+            <button class="nav-btn" id="zoomInBtn" aria-label="Zoom in">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <circle
                   cx="6.5"
@@ -480,7 +469,7 @@
             <button
               class="nav-btn ai-chat-toggle"
               id="aiChatToggleBtn"
-              title="AI Assistant (Ctrl+Shift+A)"
+              aria-label="Toggle AI assistant"
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <path
@@ -494,7 +483,7 @@
                 <circle cx="10.5" cy="6.5" r="0.9" fill="currentColor" />
               </svg>
             </button>
-            <button class="nav-btn" id="devtoolsBtn" title="DevTools (F12)">
+            <button class="nav-btn" id="devtoolsBtn" aria-label="Developer tools">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <path
                   d="M5 5L2 8L5 11"
@@ -551,13 +540,13 @@
             placeholder="Find in page..."
           />
           <span class="find-count" id="findCount"></span>
-          <button class="find-nav-btn" id="findPrev" title="Previous">
+          <button class="find-nav-btn" id="findPrev" aria-label="Previous match">
             &#8593;
           </button>
-          <button class="find-nav-btn" id="findNext" title="Next">
+          <button class="find-nav-btn" id="findNext" aria-label="Next match">
             &#8595;
           </button>
-          <button class="find-close-btn" id="findClose">&#x2715;</button>
+          <button class="find-close-btn" id="findClose" aria-label="Close find in page">&#x2715;</button>
         </div>
 
         <!-- Webview Container -->
@@ -675,7 +664,7 @@
                   <span class="side-panel-sub">Workspaces for tabs and automation</span>
                 </div>
                 <div class="side-panel-actions">
-                  <button class="icon-btn" id="closeSessionsBtn" title="Close" aria-label="Close sessions">
+                  <button class="icon-btn" id="closeSessionsBtn" aria-label="Close sessions">
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                       <path
                         d="M2 2L10 10M10 2L2 10"
@@ -702,7 +691,7 @@
                   <button
                     class="icon-btn"
                     id="importBookmarksBtn"
-                    title="Import from installed browsers"
+                    aria-label="Import bookmarks from installed browsers"
                   >
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                       <path
@@ -720,7 +709,7 @@
                       />
                     </svg>
                   </button>
-                  <button class="icon-btn" id="closeBookmarksBtn" title="Close">
+                  <button class="icon-btn" id="closeBookmarksBtn" aria-label="Close bookmarks panel">
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                       <path
                         d="M2 2L10 10M10 2L2 10"
@@ -747,7 +736,7 @@
                     placeholder="Search bookmarks..."
                     autocomplete="off"
                   />
-                  <button class="side-search-clear" type="button" data-clear="bookmarkSearch" title="Clear search" aria-label="Clear search">
+                  <button class="side-search-clear" type="button" data-clear="bookmarkSearch" aria-label="Clear search">
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                       <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
                     </svg>
@@ -769,7 +758,7 @@
                 <button
                   class="icon-btn"
                   id="importHistoryBtn"
-                  title="Import from installed browsers"
+                  aria-label="Import browsing history from installed browsers"
                 >
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                     <path
@@ -790,7 +779,7 @@
                 <button
                   class="icon-btn"
                   id="clearHistoryBtn"
-                  title="Clear all history"
+                  aria-label="Clear all history"
                 >
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                     <path
@@ -802,7 +791,7 @@
                     />
                   </svg>
                 </button>
-                <button class="icon-btn" id="closeHistoryBtn" title="Close">
+                <button class="icon-btn" id="closeHistoryBtn" aria-label="Close history panel">
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                     <path
                       d="M2 2L10 10M10 2L2 10"
@@ -829,7 +818,7 @@
                     placeholder="Search history..."
                     autocomplete="off"
                   />
-                  <button class="side-search-clear" type="button" data-clear="historySearch" title="Clear search" aria-label="Clear search">
+                  <button class="side-search-clear" type="button" data-clear="historySearch" aria-label="Clear search">
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                       <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
                     </svg>
@@ -848,7 +837,7 @@
                   <span class="side-panel-sub">Captured pages and regions</span>
                 </div>
                 <div class="side-panel-actions">
-                  <button class="icon-btn" id="closeScreenshotsBtn" title="Close">
+                  <button class="icon-btn" id="closeScreenshotsBtn" aria-label="Close screenshot library">
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                       <path
                         d="M2 2L10 10M10 2L2 10"
@@ -875,7 +864,7 @@
                 <button
                   class="icon-btn"
                   id="importPasswordsBtn"
-                  title="Import from installed browsers"
+                  aria-label="Import passwords from installed browsers"
                 >
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                     <path
@@ -896,7 +885,7 @@
                 <button
                   class="icon-btn"
                   id="addPasswordBtn"
-                  title="Add password manually"
+                  aria-label="Add password manually"
                 >
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                     <path
@@ -907,7 +896,7 @@
                     />
                   </svg>
                 </button>
-                <button class="icon-btn" id="closePasswordsBtn" title="Close">
+                <button class="icon-btn" id="closePasswordsBtn" aria-label="Close passwords panel">
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                     <path
                       d="M2 2L10 10M10 2L2 10"
@@ -934,7 +923,7 @@
                     placeholder="Search passwords..."
                     autocomplete="off"
                   />
-                  <button class="side-search-clear" type="button" data-clear="passwordSearch" title="Clear search" aria-label="Clear search">
+                  <button class="side-search-clear" type="button" data-clear="passwordSearch" aria-label="Clear search">
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                       <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
                     </svg>
@@ -962,7 +951,7 @@
                   class="side-search-input"
                   placeholder="Password"
                 />
-                <button class="pw-eye-btn" id="pwEyeBtn" title="Show/hide">ðŸ‘</button>
+                <button class="pw-eye-btn" id="pwEyeBtn" type="button" aria-label="Show or hide password">ðŸ‘</button>
               </div>
               <div class="pw-form-actions">
                 <button class="modal-btn modal-btn-secondary" id="pwCancelBtn">
@@ -1098,7 +1087,6 @@
                 type="button"
                 class="icon-btn chat-history-rail-btn"
                 id="chatHistoryExpandBtn"
-                title="Expand sidebar"
                 aria-label="Expand sidebar"
               >
                 <!-- Double chevron right: expand / show panel -->
@@ -1116,7 +1104,6 @@
                 type="button"
                 class="icon-btn chat-history-rail-btn"
                 id="chatHistoryRailNewBtn"
-                title="New chat"
                 aria-label="New chat"
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -1133,9 +1120,21 @@
             <div class="chat-history-rail-section chat-history-rail-section--footer">
               <button
                 type="button"
+                class="icon-btn chat-history-rail-btn"
+                id="chatHistoryRailToolsHubBtn"
+                aria-label="Intelligent Tool Hub"
+              >
+                <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <rect x="2" y="2" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="9" y="2" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="2" y="9" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="9" y="9" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                </svg>
+              </button>
+              <button
+                type="button"
                 class="icon-btn chat-history-rail-btn chat-history-rail-btn--settings"
                 id="chatHistoryRailSettingsBtn"
-                title="Workspace settings"
                 aria-label="Workspace settings"
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -1163,7 +1162,6 @@
                 type="button"
                 class="icon-btn chat-history-collapse-btn"
                 id="chatHistoryCollapseBtn"
-                title="Collapse sidebar"
                 aria-label="Collapse sidebar"
               >
                 <!-- Double chevron left: collapse / hide panel (common IDE pattern) -->
@@ -1179,7 +1177,7 @@
               </button>
             </div>
             <div class="chat-history-new-row">
-              <button type="button" class="chat-history-new-btn" id="newChatBtn" title="New chat">
+              <button type="button" class="chat-history-new-btn" id="newChatBtn">
                 <svg
                   class="chat-history-new-btn__icon"
                   width="16"
@@ -1202,9 +1200,21 @@
             <div class="chat-history-intelligent-footer" id="intelligentWorkspaceSettingsFooter">
               <button
                 type="button"
+                class="chat-history-settings-btn chat-history-settings-btn--tool-hub"
+                id="intelligentWorkspaceToolHubBtn"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <rect x="2" y="2" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="9" y="2" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="2" y="9" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="9" y="9" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                </svg>
+                <span>Intelligent Tool Hub</span>
+              </button>
+              <button
+                type="button"
                 class="chat-history-settings-btn"
                 id="intelligentWorkspaceSettingsBtn"
-                title="Models, API keys, and MCP servers"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path
@@ -1255,7 +1265,6 @@
                 type="button"
                 class="icon-btn"
                 id="settingsBtnChat"
-                title="Assistant settings"
                 aria-label="Assistant settings"
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -1277,7 +1286,7 @@
               <button
                 class="icon-btn chat-close-btn"
                 id="closeChatBtn"
-                title="Close AI Chat"
+                aria-label="Close AI chat"
               >
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                   <path
@@ -1288,7 +1297,7 @@
                   />
                 </svg>
               </button>
-              <button class="icon-btn" id="clearChatBtn" title="Clear Chat">
+              <button class="icon-btn" id="clearChatBtn" aria-label="Clear chat">
                 <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
                   <path
                     d="M2 4H13M5 4V2.5C5 2 5.5 1.5 6 1.5H9C9.5 1.5 10 2 10 2.5V4M12 4L11.5 12.5C11.5 13 11 13.5 10.5 13.5H4.5C4 13.5 3.5 13 3.5 12.5L3 4"
@@ -1365,7 +1374,7 @@
                 autocomplete="off"
                 rows="1"
               ></textarea>
-              <button class="send-btn" id="sendBtn" title="Send (Enter)">
+              <button class="send-btn" id="sendBtn" type="button" aria-label="Send message">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                   <path d="M14 8L2 2L5 8L2 14L14 8Z" fill="currentColor" />
                 </svg>
@@ -1377,7 +1386,7 @@
           <div class="bottom-bar">
             <div class="tools-bar">
               <div class="tools-bar-wrap">
-                <button class="tools-bar-btn" id="toolsPanelBtn" title="Tools">
+                <button class="tools-bar-btn" id="toolsPanelBtn">
                   <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
                     <path
                       d="M8.5 1.5L11.5 4.5L4.5 11.5L1 12L1.5 8.5L8.5 1.5Z"
@@ -1397,7 +1406,7 @@
                 <div class="tools-panel" id="toolsPanel" style="display: none">
                   <div class="tools-panel-header">
                     <span>Browser Tools</span>
-                    <button class="tools-panel-close" id="toolsPanelClose">
+                    <button class="tools-panel-close" id="toolsPanelClose" type="button" aria-label="Close tools panel">
                       <svg
                         width="10"
                         height="10"
@@ -1420,7 +1429,6 @@
                 <button
                   class="tools-bar-btn"
                   id="quickPanelBtn"
-                  title="Quick Commands"
                 >
                   <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
                     <path
@@ -1448,6 +1456,12 @@
 
       <!-- Modal host for React settings (must stay outside #browserSection — that column is hidden in intelligent workspace) -->
       <div id="webviewOverlayHost" class="webview-overlay-host" aria-hidden="true"></div>
+      <div
+        id="intelligentToolsHubRoot"
+        class="tools-hub-root tools-hub-root--intelligent"
+        style="display: none"
+        aria-hidden="true"
+      ></div>
 
       <!-- Legacy full-column settings root (unused; kept for optional workspace layout portal target) -->
       <div class="settings-workspace" id="settingsWorkspace" aria-hidden="true">

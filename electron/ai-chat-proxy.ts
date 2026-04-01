@@ -3,6 +3,7 @@
  */
 
 import type { WebContents } from "electron";
+import { httpsRequestStream, readErrorBody } from "./ai-custom-tls";
 
 export async function proxyOpenAiChatCompletionsStream(
   sender: WebContents,
@@ -10,34 +11,27 @@ export async function proxyOpenAiChatCompletionsStream(
   url: string,
   headers: Record<string, string>,
   body: string,
+  tlsCaPem?: string,
 ): Promise<void> {
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body,
-    });
-    if (!res.ok) {
-      const t = await res.text();
+    const res = await httpsRequestStream(url, "POST", headers, body, tlsCaPem);
+    const status = res.statusCode ?? 0;
+    if (status < 200 || status >= 300) {
+      const t = await readErrorBody(res);
       sender.send(channel, {
-        error: t || `HTTP ${res.status}`,
-        httpStatus: res.status,
+        error: t || `HTTP ${status}`,
+        httpStatus: status,
       });
       return;
     }
-    if (!res.body) {
-      sender.send(channel, { error: "No response body" });
-      return;
-    }
-    const reader = res.body.getReader();
-    const dec = new TextDecoder();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value && value.length) {
-        sender.send(channel, { chunk: dec.decode(value, { stream: true }) });
-      }
-    }
+    res.setEncoding("utf8");
+    res.on("data", (chunk: string) => {
+      if (chunk.length) sender.send(channel, { chunk });
+    });
+    await new Promise<void>((resolve, reject) => {
+      res.on("end", () => resolve());
+      res.on("error", reject);
+    });
     sender.send(channel, { done: true });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

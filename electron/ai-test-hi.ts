@@ -2,6 +2,8 @@
  * Smoke-test AI chat from main process (no renderer CORS).
  */
 
+import { httpsRequestBody } from "./ai-custom-tls";
+
 function normalizeOpenAiBase(base: string): string {
   const t = base.trim().replace(/\/+$/, "");
   return t.endsWith("/v1") ? t.slice(0, -3) : t;
@@ -34,6 +36,7 @@ export async function testOpenAiHiMain(
   baseUrl: string,
   apiKey: string,
   modelId: string,
+  tlsCaPem?: string,
 ): Promise<{ reply: string }> {
   const key = apiKey.trim();
   const model = modelId.trim();
@@ -41,20 +44,22 @@ export async function testOpenAiHiMain(
   if (!model) throw new Error("Model required");
   const base = normalizeOpenAiBase(baseUrl || "https://api.openai.com");
   const url = `${base}/v1/chat/completions`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
+  const payload = JSON.stringify({
+    model,
+    messages: [{ role: "user", content: "hi" }],
+    max_tokens: 64,
+  });
+  const { statusCode, body: text } = await httpsRequestBody(
+    url,
+    "POST",
+    {
       "Content-Type": "application/json",
       Authorization: `Bearer ${key}`,
     },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: "hi" }],
-      max_tokens: 64,
-    }),
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+    payload,
+    tlsCaPem,
+  );
+  if (statusCode < 200 || statusCode >= 300) throw new Error(text || `HTTP ${statusCode}`);
   const data = JSON.parse(text) as {
     choices?: Array<{ message?: { content?: string } }>;
   };
