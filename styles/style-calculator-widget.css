@@ -241,23 +241,18 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
+  flex: 1 1 auto;
 }
 
-/* Result area: fixed left column for icon so open/close does not shift it */
+/* Icon lives in header only — result area is full width (no dead column under/beside icon) */
 .ai-chat-calc-tool-card__result-screen {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr);
-  column-gap: 8px;
-  align-items: start;
   padding: 8px 10px 10px;
   background: color-mix(in srgb, var(--bg1) 28%, var(--bg2));
   border-bottom: 1px solid color-mix(in srgb, var(--border2) 40%, transparent);
 }
 
 .ai-chat-calc-tool-card__icon-toggle {
-  grid-column: 1;
-  justify-self: start;
-  align-self: start;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -302,7 +297,6 @@
 }
 
 .ai-chat-calc-tool-card__result-main {
-  grid-column: 2;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -325,20 +319,25 @@
 
 .ai-chat-calc-tool-card__collapsed-k {
   display: block;
+  width: 100%;
   font-size: 8px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.07em;
   color: color-mix(in srgb, var(--text2) 68%, transparent);
   margin-bottom: 2px;
+  text-align: right;
 }
 
 .ai-chat-calc-tool-card__collapsed-v {
+  display: block;
+  width: 100%;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px;
   line-height: 1.3;
   color: color-mix(in srgb, var(--text2) 60%, var(--text3));
   word-break: break-all;
+  text-align: right;
 }
 
 .ai-chat-calc-tool-card__collapsed-out .ai-chat-calc-tool-card__collapsed-v {
@@ -377,4 +376,19 @@
 
 .ai-chat-calc-tool-card .calc-widget__lcd-main {
   color: color-mix(in srgb, var(--accent) 42%, var(--text3));
+}
+
+/* Symmetric padding + right-aligned readout (matches collapsed summary) */
+.ai-chat-calc-tool-card .calc-widget--in-tool-card .calc-widget__lcd {
+  padding: 8px 10px 6px;
+}
+
+.ai-chat-calc-tool-card .calc-widget--in-tool-card .calc-widget__body--chat {
+  padding: 6px 6px 8px;
+}
+
+.ai-chat-calc-tool-card .calc-widget--in-tool-card .calc-widget__lcd-main,
+.ai-chat-calc-tool-card .calc-widget--in-tool-card .calc-widget__lcd-sub {
+  width: 100%;
+  text-align: right;
 }

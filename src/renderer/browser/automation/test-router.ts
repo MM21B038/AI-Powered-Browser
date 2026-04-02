@@ -5,6 +5,10 @@ function ctx(): AutomationKernelContext {
   return {
     getBrowserFrame: () => null,
     navigateTo: () => {},
+    beginWebviewLoadWait: async () => ({ ok: true, phase: "load" }),
+    waitForWebviewAdaptiveSettle: async () => ({ ok: true, phase: "fast" }),
+    canGoBack: () => true,
+    canGoForward: () => true,
     resolveInput: (x) => x,
     reload: () => {},
     goBack: () => {},
@@ -48,6 +52,40 @@ describe("automation router", () => {
   it("returns failure for unknown command", async () => {
     const r = await dispatchAutomationLine("abracadabra", ctx());
     expect(r.success).toBe(false);
+  });
+
+  it("reload registers load wait before reload()", async () => {
+    const order: string[] = [];
+    const c = ctx();
+    c.beginWebviewLoadWait = async () => {
+      order.push("wait");
+      return { ok: true, phase: "load" };
+    };
+    c.reload = () => {
+      order.push("reload");
+    };
+    const r = await runAutomationCommand({ kind: "action", op: "reload", sessionId: "s_test" }, c);
+    expect(r.success).toBe(true);
+    expect(order).toEqual(["wait", "reload"]);
+  });
+
+  it("goto registers load wait before navigateTo", async () => {
+    const order: string[] = [];
+    const c = ctx();
+    c.beginWebviewLoadWait = async () => {
+      order.push("wait");
+      return { ok: true, phase: "load" };
+    };
+    c.navigateTo = () => {
+      order.push("nav");
+    };
+    const r = await runAutomationCommand(
+      { kind: "action", op: "goto", url: "https://example.com", sessionId: "s_test" },
+      c,
+    );
+    expect(r.success).toBe(true);
+    expect(order).toEqual(["wait", "nav"]);
+    expect(String(r.message)).toContain("Loaded");
   });
 
   it("switches tab by public id", async () => {

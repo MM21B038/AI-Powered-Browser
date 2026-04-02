@@ -34,10 +34,29 @@ function schemaWithSession(
 export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   {
     name: "butcher_navigate",
-    description: "Navigate the active tab to a URL.",
+    description:
+      "Navigate the active tab to a URL. Waits for the main document to finish loading by default; optional network-quiet wait for SPAs.",
     inputSchema: schemaWithSession(
       {
         url: { type: "string", description: "Absolute or resolvable URL" },
+        waitUntil: {
+          type: "string",
+          enum: ["commit", "domcontentloaded", "load", "networkidle"],
+          description:
+            "When to resolve: load (default) = main frame loaded; domcontentloaded = DOM ready; networkidle = after load, no navigation burst for networkIdleMs; commit = return immediately after starting navigation.",
+        },
+        timeoutMs: {
+          type: "integer",
+          minimum: 3000,
+          maximum: 120000,
+          description: "Max wait in ms for the chosen waitUntil phase (default 60000).",
+        },
+        networkIdleMs: {
+          type: "integer",
+          minimum: 100,
+          maximum: 10000,
+          description: "For networkidle: ms with no load burst before success (default 500).",
+        },
       },
       ["url"],
     ),
@@ -328,7 +347,24 @@ export function automationCommandFromMcpTool(name: string, args: unknown): Autom
       case "butcher_navigate": {
         const url = String(a.url ?? "").trim();
         if (!url) return new Error("url required");
-        return { kind: "action", op: "goto", url, ...(sid ? { sessionId: sid } : {}) };
+        const wu = a.waitUntil != null ? String(a.waitUntil).trim() : undefined;
+        const allowed = new Set(["commit", "domcontentloaded", "load", "networkidle"]);
+        if (wu && !allowed.has(wu)) return new Error("waitUntil must be commit, domcontentloaded, load, or networkidle");
+        const timeoutMs =
+          a.timeoutMs != null && Number.isFinite(Number(a.timeoutMs)) ? Math.floor(Number(a.timeoutMs)) : undefined;
+        const networkIdleMs =
+          a.networkIdleMs != null && Number.isFinite(Number(a.networkIdleMs))
+            ? Math.floor(Number(a.networkIdleMs))
+            : undefined;
+        return {
+          kind: "action",
+          op: "goto",
+          url,
+          ...(wu ? { waitUntil: wu as "commit" | "domcontentloaded" | "load" | "networkidle" } : {}),
+          ...(timeoutMs != null ? { timeoutMs } : {}),
+          ...(networkIdleMs != null ? { networkIdleMs } : {}),
+          ...(sid ? { sessionId: sid } : {}),
+        };
       }
       case "butcher_go_back":
         return { kind: "action", op: "back", ...(sid ? { sessionId: sid } : {}) };
@@ -541,6 +577,14 @@ const MAX_DATA_URL_CHARS = 120_000;
  * Shrink screenshot data URLs for JSON-RPC / MCP responses.
  */
 export function sanitizeAutomationResultForMcp(result: AutomationResult): unknown {
+  if (result.op === "get_interactables") {
+    return {
+      op: "get_interactables",
+      success: !!result.success,
+      message: String(result.message ?? ""),
+      ...(result.success ? {} : { error: String(result.error ?? "interactables_failed") }),
+    };
+  }
   if (result.op === "browser_search") {
     const d = (result.data ?? {}) as Record<string, unknown>;
     const query = typeof d.query === "string" ? d.query : "";

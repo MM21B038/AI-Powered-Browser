@@ -1,7 +1,28 @@
-import { useMemo, useState, type ReactElement } from "react";
+import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { CalculatorWidget, type CalculatorToolSeed } from "../CalculatorWidget";
 import { CalculatorIcon } from "../icons/CalculatorIcon";
 import { McpIcon } from "../icons/McpIcon";
+
+const LS_CALC_TOOL_EXPANDED = "ai-chat-calc-tool-expanded";
+
+function readCalcToolExpandedFromStorage(): boolean {
+  try {
+    const v = localStorage.getItem(LS_CALC_TOOL_EXPANDED);
+    if (v === "1") return true;
+    if (v === "0") return false;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+function writeCalcToolExpandedToStorage(expanded: boolean): void {
+  try {
+    localStorage.setItem(LS_CALC_TOOL_EXPANDED, expanded ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+}
 
 /** OpenAI / MCP function name for the built-in calculator tool. */
 export const INTELLIGENT_CALCULATOR_TOOL_NAME = "intelligent_scientific_calculate";
@@ -81,7 +102,16 @@ export function AiChatCalculatorToolRow({
       80,
     );
 
-  const [calcExpanded, setCalcExpanded] = useState(true);
+  const [calcExpanded, setCalcExpanded] = useState(readCalcToolExpandedFromStorage);
+
+  const toggleCalcExpanded = useCallback(() => {
+    setCalcExpanded((v) => {
+      const n = !v;
+      writeCalcToolExpandedToStorage(n);
+      return n;
+    });
+  }, []);
+
   const calcPanelId = `ai-chat-calc-panel-${instanceKey ?? calcKey}`
     .replace(/[^a-zA-Z0-9_-]/g, "-")
     .replace(/-+/g, "-")
@@ -90,6 +120,17 @@ export function AiChatCalculatorToolRow({
   return (
     <div className="ai-chat-calc-tool-card" role="group" aria-label="Calculator tool">
       <div className="ai-chat-calc-tool-card__head">
+        <button
+          type="button"
+          className={`ai-chat-calc-tool-card__icon-toggle${calcExpanded ? " ai-chat-calc-tool-card__icon-toggle--expanded" : ""}`}
+          aria-expanded={calcExpanded}
+          aria-controls={calcPanelId}
+          onClick={toggleCalcExpanded}
+          title={calcExpanded ? "Collapse calculator" : "Expand calculator"}
+          aria-label={calcExpanded ? "Collapse calculator" : "Expand calculator"}
+        >
+          <CalculatorIcon size={20} className="ai-chat-calc-tool-card__icon-toggle-glyph" aria-hidden />
+        </button>
         <div className="ai-chat-calc-tool-card__brand">
           <McpIcon size={14} className="ai-chat-calc-tool-card__mcp" />
           <span className="ai-chat-calc-tool-card__heading">Calculator</span>
@@ -97,18 +138,6 @@ export function AiChatCalculatorToolRow({
       </div>
 
       <div className="ai-chat-calc-tool-card__result-screen">
-        <button
-          type="button"
-          className={`ai-chat-calc-tool-card__icon-toggle${calcExpanded ? " ai-chat-calc-tool-card__icon-toggle--expanded" : ""}`}
-          aria-expanded={calcExpanded}
-          aria-controls={calcPanelId}
-          onClick={() => setCalcExpanded((v) => !v)}
-          title={calcExpanded ? "Collapse calculator" : "Expand calculator"}
-          aria-label={calcExpanded ? "Collapse calculator" : "Expand calculator"}
-        >
-          <CalculatorIcon size={20} className="ai-chat-calc-tool-card__icon-toggle-glyph" aria-hidden />
-        </button>
-
         <div className="ai-chat-calc-tool-card__result-main">
           {!calcExpanded ? (
             <div className="ai-chat-calc-tool-card__result-summary">

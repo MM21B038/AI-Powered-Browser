@@ -7,6 +7,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { renderChatMarkdownToHtml } from "../../chat/chat-markdown";
 import { McpIcon } from "../icons/McpIcon";
 
 const MAX_JSON_DEPTH = 10;
@@ -409,6 +410,19 @@ function KeyValueBlock({
   );
 }
 
+function getInteractablesMarkdownFromJson(
+  value: unknown,
+): { message: string; success?: boolean; error?: string } | null {
+  if (!isPlainObject(value)) return null;
+  if (value.op !== "get_interactables") return null;
+  if (typeof value.message !== "string") return null;
+  return {
+    message: value.message,
+    success: typeof value.success === "boolean" ? value.success : undefined,
+    error: typeof value.error === "string" ? value.error : undefined,
+  };
+}
+
 function ResultBody({ parsed }: { parsed: ParsedToolDisplay }): ReactElement {
   if (parsed.kind === "mcp") {
     return (
@@ -436,6 +450,38 @@ function ResultBody({ parsed }: { parsed: ParsedToolDisplay }): ReactElement {
     );
   }
   if (parsed.kind === "json") {
+    const ix = getInteractablesMarkdownFromJson(parsed.value);
+    if (ix) {
+      return (
+        <div className="ai-chat-tool-card__result-inner">
+          {ix.success === false ? (
+            <div
+              className="ai-chat-tool-card__banner ai-chat-tool-card__banner--err"
+              role="status"
+            >
+              Failed
+            </div>
+          ) : ix.success === true ? (
+            <div
+              className="ai-chat-tool-card__banner ai-chat-tool-card__banner--ok"
+              role="status"
+            >
+              Success
+            </div>
+          ) : null}
+          {ix.error ? (
+            <p className="ai-chat-tool-parts-note">{ix.error}</p>
+          ) : null}
+          <div
+            dangerouslySetInnerHTML={{
+              __html: renderChatMarkdownToHtml(ix.message, {
+                wrapperClass: "ai-chat-md",
+              }),
+            }}
+          />
+        </div>
+      );
+    }
     return <JsonValueView value={parsed.value} depth={0} />;
   }
   return <ToolStringValue s={parsed.text} depth={0} />;

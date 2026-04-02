@@ -57,6 +57,6 @@ describe("runScientificCalculator", () => {
   it("supports inverse trig", () => {
     const out = runScientificCalculator({ expression: "asin(1)" });
     expect(out.success).toBe(true);
-    expect(Number(out.result)).toBeCloseTo(Math.PI / 2, 10);
+    expect(Number(out.result)).toBeCloseTo(Math.PI / 2, 8);
   });
 });

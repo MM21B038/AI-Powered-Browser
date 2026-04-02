@@ -5024,6 +5024,12 @@ webview {
   pointer-events: none;
   overflow: hidden;
   isolation: isolate;
+  opacity: 0;
+  transition: opacity 0.24s ease-out;
+}
+
+.loading-overlay.loading-overlay--visible {
+  opacity: 1;
 }
 
 /* Drifting theme-colored “cloud” aurora (no extra box) */
@@ -5048,7 +5054,7 @@ webview {
       color-mix(in srgb, var(--bg0) 50%, transparent),
       transparent 52%
     );
-  animation: loadingSkyDriftA calc(8s / 3) ease-in-out infinite;
+  animation: loadingSkyDriftA calc(11s / 3) ease-in-out infinite;
 }
 
 .loading-spotlight-sky::after {
@@ -5061,7 +5067,7 @@ webview {
     transparent 62%
   );
   opacity: 0.75;
-  animation: loadingSkyDriftB calc(14s / 3) ease-in-out infinite;
+  animation: loadingSkyDriftB calc(18s / 3) ease-in-out infinite;
 }
 
 .loading-spotlight-sky::before {
@@ -5074,7 +5080,7 @@ webview {
     transparent 55%
   );
   mix-blend-mode: soft-light;
-  animation: loadingSkyMist calc(11s / 3) ease-in-out infinite;
+  animation: loadingSkyMist calc(14s / 3) ease-in-out infinite;
   opacity: 0.55;
 }
 
@@ -5096,7 +5102,7 @@ webview {
       transparent 1px
     );
   background-size: 44px 44px;
-  animation: loadingGridShift calc(22s / 3) linear infinite;
+  animation: loadingGridShift calc(28s / 3) linear infinite;
 }
 
 .loading-spotlight-grid--compact {
@@ -5230,18 +5236,18 @@ webview {
   filter: blur(22px);
   opacity: 0.85;
   pointer-events: none;
-  animation: loadingGlowPulse calc(3.2s / 3) ease-in-out infinite;
+  animation: loadingGlowPulse calc(4.2s / 3) ease-in-out infinite;
 }
 
 @keyframes loadingGlowPulse {
   0%,
   100% {
-    opacity: 0.65;
-    transform: translate(-50%, -50%) scale(0.96);
+    opacity: 0.7;
+    transform: translate(-50%, -50%) scale(0.98);
   }
   50% {
-    opacity: 0.95;
-    transform: translate(-50%, -50%) scale(1.04);
+    opacity: 0.88;
+    transform: translate(-50%, -50%) scale(1.02);
   }
 }
 
@@ -5266,8 +5272,8 @@ webview {
   align-items: center;
   justify-content: center;
   pointer-events: none;
-  animation-duration: calc(16s / 3);
-  animation-timing-function: cubic-bezier(0.33, 0.82, 0.32, 1);
+  animation-duration: calc(20s / 3);
+  animation-timing-function: cubic-bezier(0.28, 0.72, 0.32, 1);
   animation-iteration-count: infinite;
   will-change: opacity, transform;
 }
@@ -5301,7 +5307,7 @@ webview {
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: spotlightInnerFloat calc(1.15s / 3) ease-in-out infinite;
+    animation: spotlightInnerFloat calc(1.4s / 3) ease-in-out infinite;
   transform-origin: center center;
 }
 
@@ -5345,10 +5351,10 @@ webview {
     transform: translateY(0) rotate(0deg) scale(1);
   }
   35% {
-    transform: translateY(-4px) rotate(-4deg) scale(1.03);
+    transform: translateY(-2px) rotate(-2deg) scale(1.015);
   }
   70% {
-    transform: translateY(2px) rotate(3deg) scale(0.98);
+    transform: translateY(1px) rotate(1.5deg) scale(0.992);
   }
 }
 
@@ -5641,6 +5647,9 @@ webview {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .loading-overlay {
+    transition: none !important;
+  }
   .loading-spotlight-sky,
   .loading-spotlight-sky::before,
   .loading-spotlight-sky::after,

@@ -728,6 +728,10 @@ function AiChatPanel(): ReactElement {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [streamSegments, setStreamSegments] = useState<StreamSegment[]>([]);
+  /** Conversation id for the in-flight pipeline stream (UI only; keeps stream under the right thread when switching chats). */
+  const [streamingConversationId, setStreamingConversationId] = useState<
+    string | null
+  >(null);
   /** Live streaming thinking `<details>`; reset closed on each new send / regenerate. */
   const [thinkingLiveOpen, setThinkingLiveOpen] = useState(false);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
@@ -894,17 +898,35 @@ function AiChatPanel(): ReactElement {
     () => active?.messages.filter((m) => m.role !== "system") ?? [],
     [active?.messages],
   );
+  const streamVisible = useMemo(
+    () =>
+      streamSegments.length > 0 &&
+      streamingConversationId != null &&
+      streamingConversationId === active?.id,
+    [streamSegments, streamingConversationId, active?.id],
+  );
   const streamScrollSig = useMemo(
-    () => streamScrollSignature(streamSegments),
-    [streamSegments],
+    () => streamScrollSignature(streamVisible ? streamSegments : []),
+    [streamVisible, streamSegments],
   );
 
   const welcomeSpotlightMessageId = useMemo(() => {
-    if (busy || streamSegments.length > 0) return null;
+    const pipelineBlocksWelcome =
+      streamVisible ||
+      (busy &&
+        (streamingConversationId == null ||
+          streamingConversationId === active?.id));
+    if (pipelineBlocksWelcome) return null;
     if (nonSystemMessages.length !== 1) return null;
     const only = nonSystemMessages[0];
     return only && only.role === "assistant" ? only.id : null;
-  }, [busy, nonSystemMessages, streamSegments.length]);
+  }, [
+    busy,
+    nonSystemMessages,
+    streamVisible,
+    streamingConversationId,
+    active?.id,
+  ]);
 
   const queryRailUsers = useMemo(() => {
     if (!active?.messages) return [];
@@ -1067,6 +1089,7 @@ function AiChatPanel(): ReactElement {
       setThinkingLiveOpen(false);
       setBusy(true);
       setStreamSegments([]);
+      setStreamingConversationId(conv.id);
       thinkingStartRef.current = null;
 
       const stored = appendUserMessage([...conv.messages], text);
@@ -1152,6 +1175,7 @@ function AiChatPanel(): ReactElement {
       } finally {
         setBusy(false);
         setStreamSegments([]);
+        setStreamingConversationId(null);
       }
     },
     [api, active, busy, scope, scoped, settings, updateScoped],
@@ -1164,6 +1188,7 @@ function AiChatPanel(): ReactElement {
       setThinkingLiveOpen(false);
       setBusy(true);
       setStreamSegments([]);
+      setStreamingConversationId(convId);
       thinkingStartRef.current = null;
       let toolAllowlist: string[] | null = null;
       if (scope === "intelligent") {
@@ -1227,6 +1252,7 @@ function AiChatPanel(): ReactElement {
       } finally {
         setBusy(false);
         setStreamSegments([]);
+        setStreamingConversationId(null);
       }
     },
     [api, scope, settings],
@@ -2592,7 +2618,7 @@ function AiChatPanel(): ReactElement {
               </div>
             );
           })}
-          {streamSegments.length > 0 ? (
+          {streamVisible ? (
             <div
               className="ai-chat-msg ai-chat-msg--assistant ai-chat-msg--streaming"
               tabIndex={-1}

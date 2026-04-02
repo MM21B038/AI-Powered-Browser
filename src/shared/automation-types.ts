@@ -7,9 +7,22 @@ export type AutomationKind = "action" | "info";
 
 type SessionScoped = { sessionId?: string };
 
+/** When `goto` should resolve (Playwright-style names; `networkidle` is best-effort in Electron). */
+export type GotoWaitUntil = "commit" | "domcontentloaded" | "load" | "networkidle";
+
 /** Discriminated union of automation commands */
 export type AutomationCommand =
-  | ({ kind: "action"; op: "goto"; url: string } & SessionScoped)
+  | ({
+      kind: "action";
+      op: "goto";
+      url: string;
+      /** Default: `load`. Use `commit` for fire-and-forget (legacy). */
+      waitUntil?: GotoWaitUntil;
+      /** Max wait for navigation phase (ms). Default 60000. */
+      timeoutMs?: number;
+      /** Debounce for `networkidle` after main load (ms). Default 500. */
+      networkIdleMs?: number;
+    } & SessionScoped)
   | ({
       kind: "action";
       op: "click";

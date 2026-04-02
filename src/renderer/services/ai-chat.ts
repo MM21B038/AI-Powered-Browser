@@ -34,6 +34,9 @@ import {
 import type { ElectronApi } from "../../shared/ipc-types";
 import { systemPromptForWorkspace } from "./ai-system-prompts";
 
+/** Default max Chat Completions rounds (each may include tool calls). Bounded to avoid runaway loops. */
+export const DEFAULT_MAX_TOOL_ROUNDS = 32;
+
 export type ChatStreamEvent =
   | { type: "assistant_delta"; text: string }
   | { type: "thinking"; text: string }
@@ -457,7 +460,7 @@ export async function runAiChatPipeline(opts: {
   /** When set (intelligent workspace), only these OpenAI function names are exposed to the model. */
   toolAllowlist?: string[] | null;
 }): Promise<void> {
-  const maxRounds = opts.maxToolRounds ?? 8;
+  const maxRounds = opts.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
   const modelId = selectedModelIdForChatScope(opts.settings, opts.scope).trim();
   if (!modelId) {
     opts.onEvent({ type: "error", message: "Select a model in Settings." });
@@ -811,6 +814,12 @@ async function runOpenAiCompatible(
         });
       }
       opts.onEvent({ type: "round_end" });
+      if (rounds >= maxRounds) {
+        opts.onEvent({
+          type: "error",
+          message: `Maximum agent tool rounds (${maxRounds}) reached for this reply. Continue in a new message or simplify the task.`,
+        });
+      }
       continue;
     }
 

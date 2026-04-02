@@ -1,4 +1,4 @@
-import type { AutomationCommand, AutomationResult } from "../../../shared/automation-types";
+import type { AutomationCommand, AutomationResult, GotoWaitUntil } from "../../../shared/automation-types";
 import {
   domClick,
   domFill,
@@ -78,6 +78,18 @@ export interface AutomationKernelContext {
     script: string,
     maxTotal: number,
   ) => Promise<InteractableRow[]>;
+  /** Attach before navigateTo; resolves after the matching webview load phase. */
+  beginWebviewLoadWait?: (
+    sessionId: string | undefined,
+    opts: { waitUntil: GotoWaitUntil; timeoutMs: number; networkIdleMs: number },
+  ) => Promise<{ ok: true; phase?: string } | { ok: false; error: string; phase?: string }>;
+  /** After DOM actions: fast-exit if no load burst, else quiet debounce (background sessions no-op). */
+  waitForWebviewAdaptiveSettle?: (
+    sessionId: string | undefined,
+    opts?: { probeMs?: number; idleMs?: number; maxMs?: number },
+  ) => Promise<{ ok: true; phase?: string } | { ok: false; error: string; phase?: string }>;
+  canGoBack?: (sessionId?: string) => boolean;
+  canGoForward?: (sessionId?: string) => boolean;
 }
 
 function now() {
@@ -86,6 +98,65 @@ function now() {
 
 const RUN_JS_TIMEOUT_DEFAULT_MS = 8000;
 const RUN_JS_TIMEOUT_MAX_MS = 30000;
+
+const GOTO_TIMEOUT_DEFAULT_MS = 60000;
+const GOTO_TIMEOUT_MIN_MS = 3000;
+const GOTO_TIMEOUT_MAX_MS = 120000;
+const GOTO_NETWORK_IDLE_DEFAULT_MS = 500;
+const GOTO_NETWORK_IDLE_MIN_MS = 100;
+const GOTO_NETWORK_IDLE_MAX_MS = 10000;
+
+function clampGotoTimeoutMs(ms?: number): number {
+  const v = Number.isFinite(Number(ms)) ? Math.floor(Number(ms)) : GOTO_TIMEOUT_DEFAULT_MS;
+  return Math.min(GOTO_TIMEOUT_MAX_MS, Math.max(GOTO_TIMEOUT_MIN_MS, v));
+}
+
+function clampGotoNetworkIdleMs(ms?: number): number {
+  const v = Number.isFinite(Number(ms)) ? Math.floor(Number(ms)) : GOTO_NETWORK_IDLE_DEFAULT_MS;
+  return Math.min(GOTO_NETWORK_IDLE_MAX_MS, Math.max(GOTO_NETWORK_IDLE_MIN_MS, v));
+}
+
+const ADAPTIVE_PROBE_MS = 50;
+const ADAPTIVE_IDLE_MS = 400;
+const ADAPTIVE_MAX_MS = 4000;
+
+const defaultLoadWaitOpts = () => ({
+  waitUntil: "load" as GotoWaitUntil,
+  timeoutMs: clampGotoTimeoutMs(undefined),
+  networkIdleMs: clampGotoNetworkIdleMs(undefined),
+});
+
+/** Attach load listeners, run navigation, await next load (same pattern as goto). */
+async function runWithNavigationLoadWait(
+  ctx: AutomationKernelContext,
+  cmdSessionId: string | undefined,
+  runNav: () => void,
+): Promise<{ ok: true; unsupported?: boolean; phase?: string } | { ok: false; error: string }> {
+  if (!ctx.beginWebviewLoadWait) {
+    runNav();
+    return { ok: true };
+  }
+  const waitP = ctx.beginWebviewLoadWait(cmdSessionId, defaultLoadWaitOpts());
+  runNav();
+  const wr = await waitP;
+  if (!wr.ok) {
+    if (wr.error === "navigation_wait_unsupported") {
+      return { ok: true, unsupported: true, phase: wr.phase };
+    }
+    return { ok: false, error: wr.error };
+  }
+  return { ok: true, phase: wr.phase };
+}
+
+/** After a successful interaction; does not fail the outer op on timeout. */
+async function maybeAdaptiveSettle(ctx: AutomationKernelContext, cmdSessionId: string | undefined): Promise<void> {
+  if (!ctx.waitForWebviewAdaptiveSettle) return;
+  await ctx.waitForWebviewAdaptiveSettle(cmdSessionId, {
+    probeMs: ADAPTIVE_PROBE_MS,
+    idleMs: ADAPTIVE_IDLE_MS,
+    maxMs: ADAPTIVE_MAX_MS,
+  });
+}
 
 function finish(
   op: string,
@@ -312,7 +383,7 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
             }
           }
 
-          const rows = items.slice(0, 40).map((it) => [
+          const rows = items.map((it) => [
             it.kind ?? "",
             (it.label ?? "").slice(0, 72),
             it.guestFrame ? it.guestFrame.url.slice(0, 56) : "—",
@@ -332,8 +403,7 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
                   ["Kind", "Label", "Frame", "Selector", "Role/Type", "MCP", "How", "Chat command"],
                   rows,
                 ) +
-                "\n\nRows **select** / **combobox** / **listbox-trigger** → **butcher_select** (native: `by` label|value|index; custom: `by` path). Full JSON in `data`.",
-              data: { items },
+                "\n\nRows **select** / **combobox** / **listbox-trigger** → **butcher_select** (native: `by` label|value|index; custom: `by` path).",
             }),
           );
         }
@@ -426,21 +496,107 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
     }
 
     switch (cmd.op) {
-      case "goto":
+      case "goto": {
+        const resolved = ctx.resolveInput(cmd.url) || cmd.url;
+        if (!resolved?.trim()) {
+          return wrap(cmd.op, finish(cmd.op, false, { message: "Could not resolve URL.", error: "bad_url" }));
+        }
+        const waitUntil = (cmd.waitUntil ?? "load") as GotoWaitUntil;
+        const timeoutMs = clampGotoTimeoutMs(cmd.timeoutMs);
+        const networkIdleMs = clampGotoNetworkIdleMs(cmd.networkIdleMs);
+
+        if (waitUntil === "commit") {
+          ctx.navigateTo(cmd.url, cmdSessionId);
+          return wrap(cmd.op, finish(cmd.op, true, { message: `Navigating to **${resolved}** (no load wait).` }));
+        }
+
+        const waitP = ctx.beginWebviewLoadWait
+          ? ctx.beginWebviewLoadWait(cmdSessionId, { waitUntil, timeoutMs, networkIdleMs })
+          : Promise.resolve({ ok: true as const, phase: "skipped" as const });
+
         ctx.navigateTo(cmd.url, cmdSessionId);
-        return wrap(cmd.op, finish(cmd.op, true, { message: `Navigating to **${ctx.resolveInput(cmd.url) || cmd.url}**` }));
+        const wr = await waitP;
+
+        if (!wr.ok) {
+          if (wr.error === "navigation_wait_unsupported") {
+            return wrap(
+              cmd.op,
+              finish(cmd.op, true, {
+                message: `Started navigation to **${resolved}** (load wait not available for background/headless session).`,
+                data: { waitSkipped: true, phase: wr.phase },
+              }),
+            );
+          }
+          if (wr.error === "timeout") {
+            return wrap(
+              cmd.op,
+              finish(cmd.op, false, {
+                error: "timeout",
+                message: `Timed out after **${timeoutMs}ms** waiting for **${waitUntil}** on **${resolved}**.`,
+              }),
+            );
+          }
+          return wrap(
+            cmd.op,
+            finish(cmd.op, false, {
+              error: wr.error,
+              message: `Navigation wait failed (**${wr.error}**). URL: **${resolved}**.`,
+            }),
+          );
+        }
+
+        return wrap(
+          cmd.op,
+          finish(cmd.op, true, {
+            message: `Loaded **${resolved}** (wait: **${waitUntil}**).`,
+            data: { waitUntil, phase: wr.phase },
+          }),
+        );
+      }
       case "nav": {
         const d = cmd.direction;
         if (d === "back") {
-          ctx.goBack(cmdSessionId);
-          return wrap(cmd.op, finish(cmd.op, true, { message: "Going back." }));
+          if (ctx.canGoBack && !ctx.canGoBack(cmdSessionId)) {
+            return wrap(cmd.op, finish(cmd.op, false, { message: "Cannot go back." }));
+          }
+          const r = await runWithNavigationLoadWait(ctx, cmdSessionId, () => ctx.goBack(cmdSessionId));
+          if (!r.ok) {
+            return wrap(cmd.op, finish(cmd.op, false, { message: `Navigation wait failed: **${r.error}**` }));
+          }
+          return wrap(
+            cmd.op,
+            finish(cmd.op, true, {
+              message: r.unsupported ? "Went back (load wait skipped for this session)." : "Went back.",
+            }),
+          );
         }
         if (d === "forward") {
-          ctx.goForward(cmdSessionId);
-          return wrap(cmd.op, finish(cmd.op, true, { message: "Going forward." }));
+          if (ctx.canGoForward && !ctx.canGoForward(cmdSessionId)) {
+            return wrap(cmd.op, finish(cmd.op, false, { message: "Cannot go forward." }));
+          }
+          const r = await runWithNavigationLoadWait(ctx, cmdSessionId, () => ctx.goForward(cmdSessionId));
+          if (!r.ok) {
+            return wrap(cmd.op, finish(cmd.op, false, { message: `Navigation wait failed: **${r.error}**` }));
+          }
+          return wrap(
+            cmd.op,
+            finish(cmd.op, true, {
+              message: r.unsupported ? "Went forward (load wait skipped for this session)." : "Went forward.",
+            }),
+          );
         }
-        ctx.reload(cmdSessionId);
-        return wrap(cmd.op, finish(cmd.op, true, { message: "Reloading…" }));
+        {
+          const r = await runWithNavigationLoadWait(ctx, cmdSessionId, () => ctx.reload(cmdSessionId));
+          if (!r.ok) {
+            return wrap(cmd.op, finish(cmd.op, false, { message: `Navigation wait failed: **${r.error}**` }));
+          }
+          return wrap(
+            cmd.op,
+            finish(cmd.op, true, {
+              message: r.unsupported ? "Reloading… (load wait skipped for this session)." : "Reload complete.",
+            }),
+          );
+        }
       }
       case "tab": {
         if (cmd.action !== "cycle") {
@@ -466,6 +622,7 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
       case "press": {
         if (!wv) return wrap(cmd.op, finish(cmd.op, false, { error: "No webview", message: "No page to automate." }));
         const r = await domPressHold(wv, cmd.selector, cmd.holdMs);
+        if (r.success) await maybeAdaptiveSettle(ctx, cmdSessionId);
         return wrap(
           cmd.op,
           finish(cmd.op, r.success, {
@@ -489,6 +646,7 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
         ) {
           ctx.showAutomationClickFx(r.fxCx, r.fxCy, r.fxVw ?? 0, r.fxVh ?? 0, cmdSessionId);
         }
+        if (r.success) await maybeAdaptiveSettle(ctx, cmdSessionId);
         return wrap(
           cmd.op,
           finish(cmd.op, r.success, {
@@ -499,6 +657,7 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
       case "fill": {
         if (!wv) return wrap(cmd.op, finish(cmd.op, false, { error: "No webview", message: "No page to automate." }));
         const r = await domFill(wv, cmd.selector, cmd.value);
+        if (r.success) await maybeAdaptiveSettle(ctx, cmdSessionId);
         return wrap(
           cmd.op,
           finish(cmd.op, r.success, {
@@ -512,6 +671,7 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
         if (!iso) return wrap(cmd.op, finish(cmd.op, false, { message: "Invalid date. Try `Mar 25 2026` or `2026-03-25`." }));
         const r = await domSetDate(wv, cmd.target, iso);
         if (r.success) {
+          await maybeAdaptiveSettle(ctx, cmdSessionId);
           return wrap(cmd.op, finish(cmd.op, true, { message: `Date set to **${iso}** (${r.mode || "ok"}).` }));
         }
         return wrap(
@@ -539,6 +699,7 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
           maxDelayMs: 120,
           mistakeRate: 0.06,
         });
+        if (o.success) await maybeAdaptiveSettle(ctx, cmdSessionId);
         return wrap(
           cmd.op,
           finish(cmd.op, o.success, {
@@ -561,21 +722,25 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
         const dir = cmd.direction === "up" ? -1 : 1;
         const amt = cmd.amount ?? 600;
         await wv.executeJavaScript(`window.scrollBy({top:${dir * amt},behavior:'smooth'})`);
+        await maybeAdaptiveSettle(ctx, cmdSessionId);
         return wrap(cmd.op, finish(cmd.op, true, { message: `Scrolled ${cmd.direction}.` }));
       }
       case "select": {
         if (!wv) return wrap(cmd.op, finish(cmd.op, false, { error: "No webview", message: "No page to automate." }));
         const r = await domSelectSmart(wv, cmd.selector, cmd.by, cmd.value);
+        if (r.success) await maybeAdaptiveSettle(ctx, cmdSessionId);
         return wrap(cmd.op, finish(cmd.op, r.success, { message: r.success ? "Select updated." : r.error || "Failed" }));
       }
       case "toggle_checkbox": {
         if (!wv) return wrap(cmd.op, finish(cmd.op, false, { error: "No webview", message: "No page to automate." }));
         const r = await domToggleCheckbox(wv, cmd.selector, cmd.checked);
+        if (r.success) await maybeAdaptiveSettle(ctx, cmdSessionId);
         return wrap(cmd.op, finish(cmd.op, r.success, { message: r.success ? "Checkbox toggled." : "Not found" }));
       }
       case "toggle_radio": {
         if (!wv) return wrap(cmd.op, finish(cmd.op, false, { error: "No webview", message: "No page to automate." }));
         const r = await domToggleRadio(wv, cmd.selector);
+        if (r.success) await maybeAdaptiveSettle(ctx, cmdSessionId);
         return wrap(cmd.op, finish(cmd.op, r.success, { message: r.success ? "Radio selected." : "Not found" }));
       }
       case "upload_file":
@@ -594,11 +759,13 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
             if (el && el.requestSubmit) el.requestSubmit(); else if (el) el.submit();
           })()
         `);
+        await maybeAdaptiveSettle(ctx, cmdSessionId);
         return wrap(cmd.op, finish(cmd.op, true, { message: "Submit dispatched." }));
       }
       case "press_key": {
         if (!wv) return wrap(cmd.op, finish(cmd.op, false, { error: "No webview", message: "No page to automate." }));
         await domPressKey(wv, cmd.key, cmd.modifiers || []);
+        await maybeAdaptiveSettle(ctx, cmdSessionId);
         return wrap(cmd.op, finish(cmd.op, true, { message: `Key **${cmd.key}**` }));
       }
       case "switch_tab": {
@@ -660,7 +827,20 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
         return wrap(cmd.op, finish(cmd.op, false, { message: "No tab to close." }));
       }
       case "new_tab": {
-        ctx.createTab(cmd.url ? ctx.resolveInput(cmd.url) || undefined : undefined, cmdSessionId);
+        const resolvedUrl = cmd.url ? ctx.resolveInput(cmd.url) || undefined : undefined;
+        if (resolvedUrl?.trim()) {
+          const r = await runWithNavigationLoadWait(ctx, cmdSessionId, () => ctx.createTab(resolvedUrl, cmdSessionId));
+          if (!r.ok) {
+            return wrap(cmd.op, finish(cmd.op, false, { message: `Navigation wait failed: **${r.error}**` }));
+          }
+          return wrap(
+            cmd.op,
+            finish(cmd.op, true, {
+              message: r.unsupported ? "New tab opened (load wait skipped for this session)." : "New tab opened.",
+            }),
+          );
+        }
+        ctx.createTab(undefined, cmdSessionId);
         return wrap(cmd.op, finish(cmd.op, true, { message: "New tab opened." }));
       }
       case "wait_for_selector": {
@@ -710,15 +890,48 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
       case "wait_ms":
         await new Promise((r) => setTimeout(r, cmd.ms));
         return wrap(cmd.op, finish(cmd.op, true, { message: `Waited ${cmd.ms}ms.` }));
-      case "reload":
-        ctx.reload(cmdSessionId);
-        return wrap(cmd.op, finish(cmd.op, true, { message: "Reloading…" }));
-      case "back":
-        ctx.goBack(cmdSessionId);
-        return wrap(cmd.op, finish(cmd.op, true, { message: "Going back." }));
-      case "forward":
-        ctx.goForward(cmdSessionId);
-        return wrap(cmd.op, finish(cmd.op, true, { message: "Going forward." }));
+      case "reload": {
+        const r = await runWithNavigationLoadWait(ctx, cmdSessionId, () => ctx.reload(cmdSessionId));
+        if (!r.ok) {
+          return wrap(cmd.op, finish(cmd.op, false, { message: `Navigation wait failed: **${r.error}**` }));
+        }
+        return wrap(
+          cmd.op,
+          finish(cmd.op, true, {
+            message: r.unsupported ? "Reload complete (load wait skipped for this session)." : "Reload complete.",
+          }),
+        );
+      }
+      case "back": {
+        if (ctx.canGoBack && !ctx.canGoBack(cmdSessionId)) {
+          return wrap(cmd.op, finish(cmd.op, false, { message: "Cannot go back." }));
+        }
+        const rb = await runWithNavigationLoadWait(ctx, cmdSessionId, () => ctx.goBack(cmdSessionId));
+        if (!rb.ok) {
+          return wrap(cmd.op, finish(cmd.op, false, { message: `Navigation wait failed: **${rb.error}**` }));
+        }
+        return wrap(
+          cmd.op,
+          finish(cmd.op, true, {
+            message: rb.unsupported ? "Went back (load wait skipped for this session)." : "Went back.",
+          }),
+        );
+      }
+      case "forward": {
+        if (ctx.canGoForward && !ctx.canGoForward(cmdSessionId)) {
+          return wrap(cmd.op, finish(cmd.op, false, { message: "Cannot go forward." }));
+        }
+        const rf = await runWithNavigationLoadWait(ctx, cmdSessionId, () => ctx.goForward(cmdSessionId));
+        if (!rf.ok) {
+          return wrap(cmd.op, finish(cmd.op, false, { message: `Navigation wait failed: **${rf.error}**` }));
+        }
+        return wrap(
+          cmd.op,
+          finish(cmd.op, true, {
+            message: rf.unsupported ? "Went forward (load wait skipped for this session)." : "Went forward.",
+          }),
+        );
+      }
       case "screenshot":
         await ctx.takeScreenshot(cmd.mode || "viewport", cmdSessionId);
         return wrap(cmd.op, finish(cmd.op, true, { message: "" }));

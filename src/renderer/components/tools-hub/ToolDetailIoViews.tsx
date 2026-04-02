@@ -79,8 +79,7 @@ function ioExampleFor(command: string): { title: string; output: string; hint?: 
           "| button | Submit | butcher_click | iframe: guest ids on line | `click …` |",
         hint: (
           <p className="tools-hub-tool-output-hint">
-            Full results include <code>suggestedMcpTool</code>, <code>toolHint</code>, and <code>suggestedCommand</code> per row in JSON (
-            <code>data.items</code>).
+            Each row includes <code>suggestedMcpTool</code>, <code>toolHint</code>, and <code>suggestedCommand</code> in the markdown table.
           </p>
         ),
       };

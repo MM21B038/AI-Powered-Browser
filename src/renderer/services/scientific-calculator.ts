@@ -11,6 +11,9 @@ import { all, create, type MathType } from "mathjs";
 const MAX_EXPRESSION_LENGTH = 12_000;
 const DEFAULT_PRECISION = 64;
 
+/** Significant digits in formatted numeric results (avoids huge decimal strings). */
+export const CALCULATOR_DISPLAY_DIGITS = 10;
+
 export type ScientificCalcRequest = {
   expression: string;
   precision?: number;
@@ -50,7 +53,9 @@ function createMath(precision: number) {
 }
 
 function formatMathValue(math: ReturnType<typeof createMath>, value: MathType): string {
-  return String(math.format(value, { notation: "auto", precision: 48 }));
+  return String(
+    math.format(value, { notation: "auto", precision: CALCULATOR_DISPLAY_DIGITS }),
+  );
 }
 
 export function runScientificCalculator(input: ScientificCalcRequest): ScientificCalcResult {

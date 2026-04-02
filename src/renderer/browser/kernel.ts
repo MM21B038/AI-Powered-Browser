@@ -225,6 +225,10 @@ function generatePublicTabId() {
 let zoomLevel = parseFloat(localStorage.getItem("zoomLevel") ?? "-1");
 let isLoading = false;
 let loadingTimer = null;
+/** Debounce hiding the loading UI when SPA subframes toggle load state quickly. */
+let loadingOffTimer = null;
+const LOADING_OFF_DEBOUNCE_MS = 110;
+let loadingOverlayHideTimer = null;
 let findActive = false;
 
 let homePage = normalizeHomePageUrl(localStorage.getItem("homePage"));
@@ -241,9 +245,13 @@ function setProfileGateBackdrop(on) {
       const st = loadingOverlay.querySelector(".loading-spotlight-stage");
       if (st) shuffleLoadingSpotlightStage(st);
       loadingOverlay.style.display = "flex";
+      loadingOverlay.classList.add("loading-overlay--visible");
     } else {
       // If an actual navigation load is happening, keep the overlay managed by setLoading().
-      if (!isLoading) loadingOverlay.style.display = "none";
+      if (!isLoading) {
+        loadingOverlay.classList.remove("loading-overlay--visible");
+        loadingOverlay.style.display = "none";
+      }
     }
   }
 }
@@ -349,6 +357,178 @@ function hydrateLoadingSpotlightShellStages() {
   hydrateLoadingSpotlightStage(
     document.querySelector("#importOverlay .loading-spotlight-stage"),
   );
+}
+
+/**
+ * Wait for the next navigation on this webview (listeners must be attached before loadURL).
+ * @param {import("../../shared/automation-types").GotoWaitUntil} waitUntil
+ */
+function createWebviewNavigationWaitPromise(wv, opts) {
+  const { waitUntil, timeoutMs, networkIdleMs } = opts;
+  return new Promise((resolve) => {
+    let settled = false;
+    let overallTimer;
+    const cleanupFns = [];
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      try {
+        clearTimeout(overallTimer);
+      } catch {
+        /* ignore */
+      }
+      for (let i = 0; i < cleanupFns.length; i++) {
+        try {
+          cleanupFns[i]();
+        } catch {
+          /* ignore */
+        }
+      }
+      resolve(result);
+    };
+    overallTimer = setTimeout(() => finish({ ok: false, error: "timeout" }), timeoutMs);
+    const onFail = (e) => {
+      if (e.errorCode === -3) return;
+      finish({ ok: false, error: `load_failed_${e.errorCode}` });
+    };
+    wv.addEventListener("did-fail-load", onFail);
+    cleanupFns.push(() => wv.removeEventListener("did-fail-load", onFail));
+
+    if (waitUntil === "domcontentloaded") {
+      const onDom = () => finish({ ok: true, phase: "domcontentloaded" });
+      wv.addEventListener("dom-ready", onDom, { once: true });
+      cleanupFns.push(() => wv.removeEventListener("dom-ready", onDom));
+      return;
+    }
+    if (waitUntil === "load") {
+      const onLoad = () => finish({ ok: true, phase: "load" });
+      wv.addEventListener("did-finish-load", onLoad, { once: true });
+      cleanupFns.push(() => wv.removeEventListener("did-finish-load", onLoad));
+      return;
+    }
+    if (waitUntil === "networkidle") {
+      const onFirstFinish = () => {
+        let idleTimer = null;
+        const clearIdle = () => {
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = null;
+        };
+        const scheduleIdle = () => {
+          clearIdle();
+          idleTimer = setTimeout(() => finish({ ok: true, phase: "networkidle" }), networkIdleMs);
+        };
+        const onStart = () => clearIdle();
+        const onStop = () => scheduleIdle();
+        wv.addEventListener("did-start-loading", onStart);
+        wv.addEventListener("did-stop-loading", onStop);
+        cleanupFns.push(() => wv.removeEventListener("did-start-loading", onStart));
+        cleanupFns.push(() => wv.removeEventListener("did-stop-loading", onStop));
+        cleanupFns.push(clearIdle);
+        scheduleIdle();
+      };
+      wv.addEventListener("did-finish-load", onFirstFinish, { once: true });
+      cleanupFns.push(() => wv.removeEventListener("did-finish-load", onFirstFinish));
+      return;
+    }
+    finish({ ok: false, error: "unknown_waitUntil" });
+  });
+}
+
+/**
+ * After a DOM action: if no load burst within probeMs, resolve fast; else wait for quiet period (idleMs after last did-stop).
+ */
+function createWebviewAdaptiveSettlePromise(wv, opts) {
+  const probeMs = opts.probeMs ?? 50;
+  const idleMs = opts.idleMs ?? 400;
+  const maxMs = opts.maxMs ?? 4000;
+  return new Promise((resolve) => {
+    let settled = false;
+    let probeTimer;
+    let overallTimer;
+    let idleTimer = null;
+    let didStartCount = 0;
+    let didStopCount = 0;
+    const cleanupFns = [];
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      try {
+        clearTimeout(probeTimer);
+      } catch {
+        /* ignore */
+      }
+      try {
+        clearTimeout(overallTimer);
+      } catch {
+        /* ignore */
+      }
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
+      for (let i = 0; i < cleanupFns.length; i++) {
+        try {
+          cleanupFns[i]();
+        } catch {
+          /* ignore */
+        }
+      }
+      traceKernel("automationAdaptiveSettle", {
+        ...result,
+        didStartLoadingCount: didStartCount,
+        didStopLoadingCount: didStopCount,
+      });
+      resolve(result);
+    };
+
+    overallTimer = setTimeout(() => finish({ ok: false, error: "timeout" }), maxMs);
+
+    const clearIdle = () => {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
+    };
+    const scheduleIdle = () => {
+      clearIdle();
+      idleTimer = setTimeout(() => finish({ ok: true, phase: "quiet" }), idleMs);
+    };
+
+    const enterQuietMode = () => {
+      const onStartLoading = () => {
+        didStartCount++;
+        clearIdle();
+      };
+      const onStopLoading = () => {
+        didStopCount++;
+        scheduleIdle();
+      };
+      wv.addEventListener("did-start-loading", onStartLoading);
+      wv.addEventListener("did-stop-loading", onStopLoading);
+      cleanupFns.push(() => wv.removeEventListener("did-start-loading", onStartLoading));
+      cleanupFns.push(() => wv.removeEventListener("did-stop-loading", onStopLoading));
+      cleanupFns.push(clearIdle);
+    };
+
+    const onEarlyStart = () => {
+      didStartCount++;
+      try {
+        clearTimeout(probeTimer);
+      } catch {
+        /* ignore */
+      }
+      wv.removeEventListener("did-start-loading", onEarlyStart);
+      enterQuietMode();
+    };
+
+    wv.addEventListener("did-start-loading", onEarlyStart);
+    cleanupFns.push(() => wv.removeEventListener("did-start-loading", onEarlyStart));
+
+    probeTimer = setTimeout(() => {
+      wv.removeEventListener("did-start-loading", onEarlyStart);
+      finish({ ok: true, phase: "fast" });
+    }, probeMs);
+  });
 }
 
 function refreshDomRefsFromDocument() {
@@ -1413,7 +1593,19 @@ function updateNavButtons() {
   }
 }
 
+function scheduleLoadingOff() {
+  if (loadingOffTimer) clearTimeout(loadingOffTimer);
+  loadingOffTimer = setTimeout(() => {
+    loadingOffTimer = null;
+    setLoading(false);
+  }, LOADING_OFF_DEBOUNCE_MS);
+}
+
 function setLoading(on) {
+  if (loadingOffTimer) {
+    clearTimeout(loadingOffTimer);
+    loadingOffTimer = null;
+  }
   isLoading = on;
   const tab = getTab(activeTabId);
   if (tab) {
@@ -1421,10 +1613,30 @@ function setLoading(on) {
     renderTabs();
   }
   if (on) {
+    if (loadingOverlayHideTimer) {
+      clearTimeout(loadingOverlayHideTimer);
+      loadingOverlayHideTimer = null;
+    }
     if (loadingOverlay) {
-      const st = loadingOverlay.querySelector(".loading-spotlight-stage");
-      if (st) shuffleLoadingSpotlightStage(st);
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const wasHidden = loadingOverlay.style.display === "none" || loadingOverlay.style.display === "";
       loadingOverlay.style.display = "flex";
+      const st = loadingOverlay.querySelector(".loading-spotlight-stage");
+      if (wasHidden && st && !reduceMotion) shuffleLoadingSpotlightStage(st);
+      if (wasHidden) {
+        loadingOverlay.classList.remove("loading-overlay--visible");
+        if (reduceMotion) {
+          loadingOverlay.classList.add("loading-overlay--visible");
+        } else {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              if (loadingOverlay && isLoading) loadingOverlay.classList.add("loading-overlay--visible");
+            });
+          });
+        }
+      } else if (!loadingOverlay.classList.contains("loading-overlay--visible")) {
+        loadingOverlay.classList.add("loading-overlay--visible");
+      }
     }
     if (!USE_REACT_NAV_UI && reloadBtn) {
       reloadBtn.classList.add("stop-mode");
@@ -1432,7 +1644,16 @@ function setLoading(on) {
       reloadBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
     }
   } else {
-    if (loadingOverlay) loadingOverlay.style.display = "none";
+    if (loadingOverlay) {
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      loadingOverlay.classList.remove("loading-overlay--visible");
+      if (loadingOverlayHideTimer) clearTimeout(loadingOverlayHideTimer);
+      const hideMs = reduceMotion ? 0 : 220;
+      loadingOverlayHideTimer = setTimeout(() => {
+        loadingOverlayHideTimer = null;
+        if (!isLoading && loadingOverlay) loadingOverlay.style.display = "none";
+      }, hideMs);
+    }
     if (!USE_REACT_NAV_UI && reloadBtn) {
       reloadBtn.classList.remove("stop-mode");
       reloadBtn.title = "Reload (F5)";
@@ -1597,14 +1818,14 @@ function setupWebviewEvents(wv) {
 
   wv.addEventListener("did-stop-loading", () => {
     if (!isActiveWebview(wv)) return;
-    setLoading(false);
+    scheduleLoadingOff();
     updateNavButtons();
   });
 
   wv.addEventListener("did-finish-load", () => {
     webviewDidFinishLoad.add(wv);
     if (isActiveWebview(wv)) {
-      setLoading(false);
+      scheduleLoadingOff();
       updateNavButtons();
     }
     wv
@@ -2975,6 +3196,64 @@ function getKernelAutomationContext() {
         persistActiveSessionState();
       });
     },
+    beginWebviewLoadWait: (sessionId, opts) => {
+      const waitUntil = opts.waitUntil;
+      const timeoutMs = opts.timeoutMs;
+      const networkIdleMs = opts.networkIdleMs;
+      const sid = sessionId || activeSessionId;
+      const logLoadWait = (r) => {
+        traceKernel("automationLoadWait", { sessionId: sid, waitUntil, ...r });
+        return r;
+      };
+      if (waitUntil === "commit") {
+        return Promise.resolve(logLoadWait({ ok: true, phase: "commit" }));
+      }
+      if (sessionId && shouldUseBackground(sessionId)) {
+        return Promise.resolve(
+          logLoadWait({ ok: false, error: "navigation_wait_unsupported", phase: "background_session" }),
+        );
+      }
+      ensureSessionCommandReady(sessionId);
+      return withSessionState(sessionId, () => {
+        const wv = browserFrame;
+        if (!wv) {
+          return Promise.resolve(logLoadWait({ ok: false, error: "no_webview" }));
+        }
+        return createWebviewNavigationWaitPromise(wv, { waitUntil, timeoutMs, networkIdleMs }).then(logLoadWait);
+      });
+    },
+    waitForWebviewAdaptiveSettle: (sessionId, opts) => {
+      const sid = sessionId || activeSessionId;
+      if (sessionId && shouldUseBackground(sessionId)) {
+        traceKernel("automationAdaptiveSettle", {
+          sessionId: sid,
+          ok: true,
+          phase: "background_skipped",
+          didStartLoadingCount: 0,
+          didStopLoadingCount: 0,
+        });
+        return Promise.resolve({ ok: true, phase: "background_skipped" });
+      }
+      ensureSessionCommandReady(sessionId);
+      return withSessionState(sessionId, () => {
+        const wv = browserFrame;
+        if (!wv) {
+          traceKernel("automationAdaptiveSettle", {
+            sessionId: sid,
+            ok: false,
+            error: "no_webview",
+            didStartLoadingCount: 0,
+            didStopLoadingCount: 0,
+          });
+          return Promise.resolve({ ok: false, error: "no_webview" });
+        }
+        return createWebviewAdaptiveSettlePromise(wv, opts || {});
+      });
+    },
+    canGoBack: (sessionId) =>
+      withSessionState(sessionId, () => !!(browserFrame && browserFrame.canGoBack && browserFrame.canGoBack())),
+    canGoForward: (sessionId) =>
+      withSessionState(sessionId, () => !!(browserFrame && browserFrame.canGoForward && browserFrame.canGoForward())),
     resolveInput,
     reload: (sessionId) => {
       const uiSessionId = activeSessionId;
