@@ -1,8 +1,8 @@
 import { useLayoutEffect, useRef, useState, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { initBrowserKernel } from "./browser/kernel";
 import App from "./App";
 import shellBody from "./browser/shell-body.html?raw";
-import { initBrowserKernel } from "./browser/kernel";
 
 let reactAppRoot: Root | null = null;
 

@@ -1,0 +1,22 @@
+/**
+ * Orion theme tokens → Tailwind utilities (body.theme-* sets --bg0, --text, etc.).
+ * Use: bg-orion-0, text-orion-text, border-orion-border, text-orion-accent, …
+ */
+@theme inline {
+  --color-orion-0: var(--bg0);
+  --color-orion-1: var(--bg1);
+  --color-orion-2: var(--bg2);
+  --color-orion-3: var(--bg3);
+  --color-orion-4: var(--bg4);
+  --color-orion-border: var(--border);
+  --color-orion-border-strong: var(--border2);
+  --color-orion-text: var(--text);
+  --color-orion-muted: var(--text2);
+  --color-orion-faint: var(--text3);
+  --color-orion-accent: var(--accent);
+  --color-orion-accent-bright: var(--accent2);
+  --color-orion-accent-glow: var(--accentGlow);
+  --color-orion-success: var(--success);
+  --color-orion-danger: var(--danger);
+  --color-orion-tab-active: var(--tabActive);
+}

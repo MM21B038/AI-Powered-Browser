@@ -8,11 +8,13 @@ import {
   type ReactNode,
 } from "react";
 import { renderChatMarkdownToHtml } from "../../chat/chat-markdown";
+import { parseMarkdownPipeTables } from "../../chat/parse-markdown-pipe-table";
+import type { MarkdownPipeSegment } from "../../chat/parse-markdown-pipe-table";
 import { McpIcon } from "../icons/McpIcon";
 
 const MAX_JSON_DEPTH = 10;
 
-/** Must match `styles.css` `.ai-chat-tool-card { --ai-chat-tool-45 }` and clip-path chamfer. */
+/** Must match `app.css` `.ai-chat-tool-card { --ai-chat-tool-45 }` and clip-path chamfer. */
 const AI_CHAT_TOOL_CHAMFER_PX = 44;
 
 /** Crease path uses real card width and `--ai-chat-tool-header-frac` so it matches `clip-path`. */
@@ -348,6 +350,60 @@ function ArrayBlock({
   );
 }
 
+function MarkdownPipeTableBlock({
+  segments,
+}: {
+  segments: MarkdownPipeSegment[];
+}): ReactElement {
+  return (
+    <div className="ai-chat-tool-md-mixed">
+      {segments.map((seg, idx) => {
+        if (seg.type === "text") {
+          return (
+            <div
+              key={idx}
+              className="ai-chat-tool-md-preamble"
+              dangerouslySetInnerHTML={{
+                __html: renderChatMarkdownToHtml(seg.content.trim(), {
+                  wrapperClass: "ai-chat-md",
+                }),
+              }}
+            />
+          );
+        }
+        const n = seg.rows.length;
+        const m = seg.headers.length;
+        return (
+          <NestedFold key={idx} summary={`Table · ${n} × ${m}`}>
+            <div className="ai-chat-tool-table-wrap">
+              <table className="ai-chat-tool-table">
+                <thead>
+                  <tr>
+                    {seg.headers.map((h, hi) => (
+                      <th key={hi}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {seg.rows.map((row, ri) => (
+                    <tr key={ri}>
+                      {row.map((cell, ci) => (
+                        <td key={ci}>
+                          <div className="ai-chat-tool-kv__val-inner">{cell}</div>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </NestedFold>
+        );
+      })}
+    </div>
+  );
+}
+
 function ToolStringValue({
   s,
   depth,
@@ -366,6 +422,10 @@ function ToolStringValue({
         <JsonValueView value={embedded} depth={depth + 1} />
       </div>
     );
+  }
+  const mdTables = useMemo(() => parseMarkdownPipeTables(s), [s]);
+  if (mdTables !== null) {
+    return <MarkdownPipeTableBlock segments={mdTables} />;
   }
   return (
     <div className="ai-chat-tool-val-scroll">
@@ -410,19 +470,6 @@ function KeyValueBlock({
   );
 }
 
-function getInteractablesMarkdownFromJson(
-  value: unknown,
-): { message: string; success?: boolean; error?: string } | null {
-  if (!isPlainObject(value)) return null;
-  if (value.op !== "get_interactables") return null;
-  if (typeof value.message !== "string") return null;
-  return {
-    message: value.message,
-    success: typeof value.success === "boolean" ? value.success : undefined,
-    error: typeof value.error === "string" ? value.error : undefined,
-  };
-}
-
 function ResultBody({ parsed }: { parsed: ParsedToolDisplay }): ReactElement {
   if (parsed.kind === "mcp") {
     return (
@@ -450,38 +497,6 @@ function ResultBody({ parsed }: { parsed: ParsedToolDisplay }): ReactElement {
     );
   }
   if (parsed.kind === "json") {
-    const ix = getInteractablesMarkdownFromJson(parsed.value);
-    if (ix) {
-      return (
-        <div className="ai-chat-tool-card__result-inner">
-          {ix.success === false ? (
-            <div
-              className="ai-chat-tool-card__banner ai-chat-tool-card__banner--err"
-              role="status"
-            >
-              Failed
-            </div>
-          ) : ix.success === true ? (
-            <div
-              className="ai-chat-tool-card__banner ai-chat-tool-card__banner--ok"
-              role="status"
-            >
-              Success
-            </div>
-          ) : null}
-          {ix.error ? (
-            <p className="ai-chat-tool-parts-note">{ix.error}</p>
-          ) : null}
-          <div
-            dangerouslySetInnerHTML={{
-              __html: renderChatMarkdownToHtml(ix.message, {
-                wrapperClass: "ai-chat-md",
-              }),
-            }}
-          />
-        </div>
-      );
-    }
     return <JsonValueView value={parsed.value} depth={0} />;
   }
   return <ToolStringValue s={parsed.text} depth={0} />;

@@ -9823,6 +9823,30 @@ kbd {
     visibility 0s linear 0s;
 }
 
+/* Full-window translucent veil (same treatment as `.tools-hub-intelligent-overlay`).
+   The interactive `.settings-overlay` stays inset so history + splitter keep working; this
+   layer is non-interactive and only provides the overall dim/blur behind the modal. */
+#appContainer[data-shell-workspace="intelligent"][data-settings-open]
+  .webview-overlay-host::before {
+  content: "";
+  position: fixed;
+  top: var(--titlebar-stack-h);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--bg0) 42%, rgba(0, 0, 0, 0.55)) 0%,
+    color-mix(in srgb, #000 48%, transparent) 45%,
+    color-mix(in srgb, var(--bg0) 38%, rgba(0, 0, 0, 0.58)) 100%
+  );
+  backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  animation: webviewSettingsBackdropIn 0.28s ease both;
+}
+
 /* Intelligent workspace: the overlay host is full-screen; without this it steals
    all hits even where the backdrop is inset, so the history splitter cannot be dragged. */
 #appContainer[data-shell-workspace="intelligent"][data-settings-open]
@@ -11920,7 +11944,6 @@ kbd {
 .ai-chat-tool-card {
   --ai-chat-tool-45: 44px;
   --ai-chat-tool-ease: cubic-bezier(0.33, 1, 0.32, 1);
-  --ai-chat-tool-width-dur: 0.34s;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -11936,28 +11959,29 @@ kbd {
   transition:
     border-color 0.22s var(--ai-chat-tool-ease),
     box-shadow 0.28s var(--ai-chat-tool-ease),
-    width var(--ai-chat-tool-width-dur) var(--ai-chat-tool-ease),
-    max-width var(--ai-chat-tool-width-dur) var(--ai-chat-tool-ease),
     filter 0.32s var(--ai-chat-tool-ease),
     transform 0.22s var(--ai-chat-tool-ease);
 }
 
-/* Browser agent: slower width ease so ¾ → full feels like an intentional “expand workspace” */
-.ai-chat-panel:not(.ai-chat-panel--intelligent-shell) .ai-chat-tool-card {
-  --ai-chat-tool-width-dur: 0.42s;
+/* Collapsed: default full width (fallback if not inside a scoped panel). */
+.ai-chat-tool-card:not([open]) {
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
-/* Collapsed: compact strip (~¼ chat width); open: full width with header strip + slanted body top.
-   Browser agent uses ¾ header when open so it matches the collapsed strip (does not jump to ¼). */
-.ai-chat-tool-card:not([open]) {
+/* Intelligent assistant / workspace: collapsed tool block is ¼ of the chat column. */
+.ai-chat-panel--intelligent-shell .ai-chat-tool-card:not([open]) {
   align-self: flex-start;
   width: 25%;
   max-width: 25%;
   min-width: 0;
 }
 
-/* Browser workspace agent chat only — collapsed preview ~¾ width; opens to full below */
+/* Browser agent: collapsed tool block uses ¾ of the chat column (matches open header strip). */
 .ai-chat-panel:not(.ai-chat-panel--intelligent-shell) .ai-chat-tool-card:not([open]) {
+  align-self: flex-start;
   width: 75%;
   max-width: 75%;
 }
@@ -12447,6 +12471,27 @@ kbd {
 
 .ai-chat-tool-card__pre--tall {
   max-height: min(360px, 52vh);
+}
+
+.ai-chat-tool-md-mixed {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ai-chat-tool-md-preamble {
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--text2);
+}
+
+.ai-chat-tool-md-preamble .ai-chat-md > *:first-child {
+  margin-top: 0;
+}
+
+.ai-chat-tool-md-preamble .ai-chat-md > *:last-child {
+  margin-bottom: 0;
 }
 
 .ai-chat-tool-table-wrap {
@@ -12971,6 +13016,27 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Running tool strip: default full width; scoped below for intelligent (¼) and browser (¾). */
+.ai-chat-msg .ai-chat-tool-running {
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.ai-chat-panel--intelligent-shell .ai-chat-msg .ai-chat-tool-running {
+  align-self: flex-start;
+  width: 25%;
+  max-width: 25%;
+}
+
+.ai-chat-panel:not(.ai-chat-panel--intelligent-shell) .ai-chat-msg .ai-chat-tool-running {
+  align-self: flex-start;
+  width: 75%;
+  max-width: 75%;
 }
 
 @keyframes ai-chat-tool-running-spin {

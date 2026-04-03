@@ -1,1 +1,0 @@
-export { initBrowserKernel } from "./kernel";

@@ -132,6 +132,28 @@ function getRendererEntry(): string {
   return path.join(__dirname, "../../renderer/index.html");
 }
 
+/** Möbius strip app icon (build/icon.png); copied to resources when packaged. */
+function getAppIcon(): Electron.NativeImage | undefined {
+  const candidates: string[] = [];
+  if (app.isPackaged) {
+    candidates.push(path.join(process.resourcesPath, "icon.png"));
+  }
+  candidates.push(path.join(__dirname, "../../../build/icon.png"));
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) {
+        const img = nativeImage.createFromPath(p);
+        if (!img.isEmpty()) {
+          return img;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return undefined;
+}
+
 function createWindow(): BrowserWindow {
   if (mainWindow && !mainWindow.isDestroyed()) {
     traceMain("createWindow reused existing window");
@@ -145,6 +167,7 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     frame: false,
     backgroundColor: "#0a0a0f",
+    icon: getAppIcon(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: false,

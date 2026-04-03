@@ -404,6 +404,7 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
                   rows,
                 ) +
                 "\n\nRows **select** / **combobox** / **listbox-trigger** → **butcher_select** (native: `by` label|value|index; custom: `by` path).",
+              data: { interactables: items },
             }),
           );
         }

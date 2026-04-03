@@ -8,11 +8,6 @@ import "@fontsource/orbitron/latin-500.css";
 import "@fontsource/orbitron/latin-600.css";
 import "@fontsource/orbitron/latin-700.css";
 import "./index.css";
-import "../../styles.css";
-import "../../style-chat-code-syntax.css";
-import "../../styles/style-screenshot-library.css";
-import "../../styles/style-ai-chat-tool-mentions.css";
-import "../../styles/style-calculator-widget.css";
 import { ShellInjector } from "./ShellInjector";
 
 function traceRenderer(message: string, data?: unknown): void {

@@ -1,4 +1,4 @@
-import { all, create, type MathType } from "mathjs";
+import { all, create, type MathType } from "mathjs/number";
 
 /**
  * Expression evaluator (mathjs, radians for trig):
@@ -35,11 +35,11 @@ function normalizedPrecision(v: unknown): number {
 
 function createMath(precision: number) {
   const math = create(all, {
-    number: "BigNumber",
+    number: "number",
     precision,
     predictable: true,
   });
-  math.config({ number: "BigNumber", precision });
+  math.config({ number: "number", precision });
   const m = math as unknown as { log: (x: unknown, base?: unknown) => unknown; nthRoot: (v: unknown, r: unknown) => unknown };
   math.import(
     {

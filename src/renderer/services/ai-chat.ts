@@ -2,6 +2,7 @@
  * Multi-turn chat with tool execution via OpenAI-compatible Chat Completions (incl. Gemini compat endpoint).
  */
 
+/// <reference path="../../types/global.d.ts" />
 import type { AutomationCommand, AutomationResult } from "../../shared/automation-types";
 import type { McpServerConfigPayload } from "../../shared/mcp-external-types";
 import type { ChatMessageV2, ChatScope } from "../chat/conversation-store";
