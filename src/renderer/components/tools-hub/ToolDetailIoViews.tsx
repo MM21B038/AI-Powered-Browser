@@ -3,6 +3,17 @@ import type { ToolsHubCategory, ToolsHubItem } from "../../shared/tools-catalog"
 import { getToolTemplateLine, toolUsesQuickCommand } from "../../shared/tools-hub-templates";
 import { delay, ToolHero, toastResult, type ToolsHubBridge } from "./ToolDetailViews";
 
+function useActiveSessionId(bridge: ToolsHubBridge): string {
+  const [sid, setSid] = useState(() => bridge.getActiveSessionId?.() || "s_ab12cd");
+  useEffect(() => {
+    const sync = () => setSid(bridge.getActiveSessionId?.() || "s_ab12cd");
+    sync();
+    const id = window.setInterval(sync, 250);
+    return () => window.clearInterval(id);
+  }, [bridge]);
+  return sid;
+}
+
 function ioExampleFor(command: string): { title: string; output: string; hint?: ReactElement } {
   switch (command) {
     case "url":
@@ -60,9 +71,17 @@ function ioExampleFor(command: string): { title: string; output: string; hint?: 
       return {
         title: "Example output",
         output:
-          "- button: \"Submit\" (selector: button[type=submit])\n" +
-          "- input: \"Work email\" (selector: #email)\n" +
-          "- a: \"Pricing\" (selector: a[href*=\"pricing\"])",
+          "| Kind | Label | MCP | How | Chat command |\n" +
+          "|---|---|---|---|---|\n" +
+          '| select | Country | butcher_select | `{"by":"label","value":"Canada"}…` | `select #country by label Canada…` |\n' +
+          '| combobox | Region | butcher_select | `{"by":"path","value":"EU > DE"}…` | `select "Region" by path…` |\n' +
+          "| input | Work email | butcher_fill | … | `fill #email with …` |\n" +
+          "| button | Submit | butcher_click | iframe: guest ids on line | `click …` |",
+        hint: (
+          <p className="tools-hub-tool-output-hint">
+            Each row includes <code>suggestedMcpTool</code>, <code>toolHint</code>, and <code>suggestedCommand</code> in the markdown table.
+          </p>
+        ),
       };
     default:
       return {
@@ -98,8 +117,9 @@ export function ToolsHubIoDetail({
   bridge: ToolsHubBridge;
   onBack: () => void;
 }): ReactElement {
+  const sid = useActiveSessionId(bridge);
   const cmd = item.command;
-  const line = useMemo(() => getToolTemplateLine(cmd) || cmd, [cmd]);
+  const line = useMemo(() => getToolTemplateLine(cmd, sid) || cmd, [cmd, sid]);
   const ex = useMemo(() => ioExampleFor(cmd), [cmd]);
   const simpleDemoClass = useMemo(() => ioSimpleDemoClassFor(cmd), [cmd]);
 
@@ -169,8 +189,9 @@ export function ToolsHubPickerDemoDetail({
   bridge: ToolsHubBridge;
   onBack: () => void;
 }): ReactElement {
+  const sid = useActiveSessionId(bridge);
   const cmd = item.command;
-  const line = useMemo(() => getToolTemplateLine(cmd) || cmd, [cmd]);
+  const line = useMemo(() => getToolTemplateLine(cmd, sid) || cmd, [cmd, sid]);
   const [phase, setPhase] = useState<1 | 2 | 3 | 4>(1);
   const [rm, setRm] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
@@ -220,12 +241,17 @@ export function ToolsHubPickerDemoDetail({
         ? ["Toggle picker", "Snap to nearest", "Pick + run", "Done"]
         : ["Toggle picker", "Hover highlight", "Copy selector", "Ready"];
 
+  const whatId = `tools-hub-picker-what-${item.id}`;
+  const cmdId = `tools-hub-picker-cmd-${item.id}`;
+
   return (
     <div className="tools-hub-inner tools-hub-inner--tool">
       <ToolHero category={category} item={item} onBack={onBack} />
 
-      <section className="tools-hub-tool-section">
-        <h3 className="tools-hub-tool-h3">What it does</h3>
+      <section className="tools-hub-tool-section" aria-labelledby={whatId}>
+        <h3 id={whatId} className="tools-hub-tool-h3">
+          What it does
+        </h3>
         <p className="tools-hub-tool-lead">{item.description}</p>
         <ol className="tools-hub-fill-story-steps tools-hub-picker-steps" aria-hidden>
           <li className={phase >= 1 ? "tools-hub-fill-story-step--on" : ""}>{steps[0]}</li>
@@ -271,8 +297,10 @@ export function ToolsHubPickerDemoDetail({
         </div>
       </section>
 
-      <section className="tools-hub-tool-section">
-        <h3 className="tools-hub-tool-h3">Command format</h3>
+      <section className="tools-hub-tool-section" aria-labelledby={cmdId}>
+        <h3 id={cmdId} className="tools-hub-tool-h3">
+          Command format
+        </h3>
         <pre className="tools-hub-tool-pre" tabIndex={0}>
           {toolUsesQuickCommand(cmd) ? `Quick / Tools: ${cmd}` : line}
         </pre>

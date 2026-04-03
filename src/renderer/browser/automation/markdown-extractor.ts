@@ -84,9 +84,28 @@ export const FORM_SCHEMA_SCRIPT = `
 })()
 `;
 
-export const INTERACTABLES_SCRIPT = `
+/** Safety cap for DOM walk when collecting interactables (performance fuse). */
+export function interactablesMaxIterations(maxResults: number): number {
+  return Math.min(25000, Math.max(2000, Math.floor(maxResults) * 60));
+}
+
+/** Router / MCP clamp for interactables row cap (content-first ordering uses this as output limit). */
+export const INTERACTABLES_MAX_LIMIT = 400;
+
+/**
+ * Guest-page script: collect up to `maxResults` unique action elements, scanning at most
+ * `maxIterations` matching nodes. Primary content (`main`, article, etc.) is listed before chrome
+ * so article buttons are not buried under huge nav bars (e.g. W3Schools).
+ */
+export function buildInteractablesScript(maxResults: number, maxIterations: number): string {
+  const mr = Math.max(1, Math.min(INTERACTABLES_MAX_LIMIT, Math.floor(maxResults)));
+  const mi = Math.max(500, Math.min(25000, Math.floor(maxIterations)));
+  return `
 (function() {
-  const sel = 'a,button,input,select,textarea,label,[role=button],[role=link],[role=checkbox],[role=radio],[role=combobox],[tabindex]';
+  const maxResults = ${mr};
+  const maxIterations = ${mi};
+  const sel =
+    'a,button,input,select,textarea,label,[role=button],[role=link],[role=checkbox],[role=radio],[role=combobox],[aria-haspopup=listbox],[tabindex]';
 
   function isInteractive(el) {
     if (!el || el.nodeType !== 1) return false;
@@ -107,6 +126,18 @@ export const INTERACTABLES_SCRIPT = `
       cur = cur.parentElement;
     }
     return el;
+  }
+
+  function resolveLabelControl(lab) {
+    if (!lab || lab.tagName.toLowerCase() !== 'label') return null;
+    const fid = lab.getAttribute('for');
+    if (fid) {
+      try {
+        const c = document.getElementById(fid);
+        if (c) return c;
+      } catch (e) {}
+    }
+    return lab.querySelector('select, [role=combobox], [aria-haspopup=listbox], input, textarea, button') || null;
   }
 
   function unique(sel) {
@@ -142,7 +173,7 @@ export const INTERACTABLES_SCRIPT = `
     }
     let cur = el;
     const parts = [];
-    for (let depth = 0; cur && cur !== document.body && depth < 4; depth++) {
+    for (let depth = 0; cur && cur !== document.body && depth < 10; depth++) {
       const t = cur.tagName.toLowerCase();
       let part = t;
       const pid = cur.id && !/^\\d/.test(cur.id) ? '#' + CSS.escape(cur.id) : '';
@@ -176,11 +207,13 @@ export const INTERACTABLES_SCRIPT = `
     const tag = el.tagName.toLowerCase();
     const type = (el.type || '').toLowerCase();
     const role = (el.getAttribute('role') || '').toLowerCase();
+    const popup = (el.getAttribute('aria-haspopup') || '').toLowerCase();
     if (tag === 'input' && type === 'checkbox') return 'checkbox';
     if (tag === 'input' && type === 'radio') return 'radio';
     if (tag === 'input' && type === 'date') return 'date';
     if (tag === 'select') return el.multiple ? 'multi-select' : 'select';
     if (role === 'combobox') return 'combobox';
+    if (popup === 'listbox' && tag !== 'select') return 'listbox-trigger';
     if (tag === 'textarea') return 'textarea';
     if (tag === 'input') return 'input';
     if (tag === 'a' || role === 'link') return 'link';
@@ -188,26 +221,130 @@ export const INTERACTABLES_SCRIPT = `
     return tag;
   }
 
-  const out = [];
-  document.querySelectorAll(sel).forEach((el, i) => {
-    if (i > 80) return;
+  function nativeSelectSampleLabel(selEl) {
+    if (!selEl || selEl.tagName.toLowerCase() !== 'select' || !selEl.options || selEl.options.length === 0) return '';
+    const idx = selEl.selectedIndex >= 0 ? selEl.selectedIndex : 0;
+    const o = selEl.options[idx];
+    const tx = (o && (o.text || '')).trim().replace(/\\s+/g, ' ');
+    return tx.slice(0, 48);
+  }
+
+  function buildHints(kind, actionEl, selector, rowLabel) {
+    const q = selector;
+    let suggestedCommand = '';
+    let suggestedMcpTool = '';
+    let toolHint = '';
+    if (kind === 'checkbox') {
+      suggestedCommand = 'toggle_checkbox ' + q;
+      toolHint = 'Chat DSL only (no butcher_* toggle).';
+    } else if (kind === 'radio') {
+      suggestedCommand = 'toggle_radio ' + q;
+      toolHint = 'Chat DSL only.';
+    } else if (kind === 'select') {
+      const samp = nativeSelectSampleLabel(actionEl);
+      const lit = samp ? JSON.stringify(samp) : '\"Option label\"';
+      suggestedCommand = 'select ' + q + ' by label ' + lit + ' in session …';
+      suggestedMcpTool = 'butcher_select';
+      toolHint =
+        'Native select: MCP by label|value|index; one path segment if by path. Ex: {"selector":' +
+        JSON.stringify(q) +
+        ',"by":"label","value":' +
+        (samp ? JSON.stringify(samp) : '\"Canada\"') +
+        '}';
+    } else if (kind === 'multi-select') {
+      const samp = nativeSelectSampleLabel(actionEl);
+      const lit = samp ? JSON.stringify(samp) : '\"Option\"';
+      suggestedCommand = 'select ' + q + ' by label ' + lit + ' in session …';
+      suggestedMcpTool = 'butcher_select';
+      toolHint =
+        'Multi-select: use butcher_select per option or by index. Ex: {"selector":' +
+        JSON.stringify(q) +
+        ',"by":"index","value":0}';
+    } else if (kind === 'combobox' || kind === 'listbox-trigger') {
+      const targetTxt = (rowLabel || '').trim().slice(0, 56);
+      const openTarget = targetTxt ? JSON.stringify(targetTxt) : JSON.stringify(q);
+      suggestedCommand = 'select ' + (targetTxt ? JSON.stringify(targetTxt) : q) + ' by path \"First > Second\" in session …';
+      suggestedMcpTool = 'butcher_select';
+      toolHint =
+        'Custom dropdown: open trigger then path. Target can be label text (like fill) or CSS selector. Ex: {"selector":' +
+        openTarget +
+        ',"by":"path","value":"Level1 > Level2"} also try by label after open for flat lists.';
+    } else if (kind === 'date') {
+      suggestedCommand = 'date ' + q + ' = 2026-03-25 in session …';
+      toolHint = 'Friendly date strings supported in chat DSL.';
+    } else if (kind === 'input' || kind === 'textarea') {
+      suggestedCommand = 'fill ' + q + ' with \"…\" in session …';
+      suggestedMcpTool = 'butcher_fill';
+      toolHint = 'Ex: {"selector":' + JSON.stringify(q) + ',"value":"text"}';
+    } else {
+      suggestedCommand = 'click ' + q + ' in session …';
+      suggestedMcpTool = 'butcher_click';
+      toolHint = 'Iframe targets: use guestProcessId and guestRoutingId from this table on MCP when present.';
+    }
+    return { suggestedCommand, suggestedMcpTool, toolHint };
+  }
+
+  const rootSelectors = ['main', 'article', '[role=\"main\"]', '#main', '.w3-main', '#midcontent', '#content', '[itemprop=\"articleBody\"]'];
+  const contentRoots = [];
+  for (let ri = 0; ri < rootSelectors.length; ri++) {
+    let nl;
+    try { nl = document.querySelectorAll(rootSelectors[ri]); } catch (e) { continue; }
+    for (let j = 0; j < nl.length; j++) {
+      const n = nl[j];
+      if (!n || n.nodeType !== 1) continue;
+      const br = n.getBoundingClientRect();
+      if (br.height < 24 && br.width < 24) continue;
+      contentRoots.push(n);
+    }
+  }
+  function inContent(actionEl) {
+    for (let k = 0; k < contentRoots.length; k++) {
+      if (contentRoots[k].contains(actionEl)) return true;
+    }
+    return false;
+  }
+
+  const entries = [];
+  const seen = new WeakSet();
+  const nodes = document.querySelectorAll(sel);
+  let iter = 0;
+  for (let i = 0; i < nodes.length; i++) {
+    if (iter >= maxIterations) break;
+    iter++;
+    const el = nodes[i];
     const r = el.getBoundingClientRect();
-    if (r.width === 0 && r.height === 0) return;
+    if (r.width === 0 && r.height === 0) continue;
     const t = labelFor(el);
-    if (!t && el.tagName !== "INPUT") return;
-    const actionEl = closestInteractive(el);
+    const allowEmptyLabel = ['INPUT', 'SELECT', 'TEXTAREA', 'LABEL'];
+    if (!t && allowEmptyLabel.indexOf(el.tagName) === -1) continue;
+    let actionEl = closestInteractive(el);
+    if (actionEl.tagName.toLowerCase() === 'label') {
+      const resolved = resolveLabelControl(actionEl);
+      if (resolved) actionEl = resolved;
+    }
+    if (seen.has(actionEl)) continue;
+    seen.add(actionEl);
+    entries.push({ el, actionEl, t });
+  }
+
+  const primary = [];
+  const secondary = [];
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (inContent(e.actionEl)) primary.push(e);
+    else secondary.push(e);
+  }
+  const merged = primary.concat(secondary);
+
+  const out = [];
+  for (let i = 0; i < merged.length && out.length < maxResults; i++) {
+    const { actionEl, t } = merged[i];
     const kind = kindFor(actionEl);
     const selector = buildSelector(actionEl);
     const role = actionEl.getAttribute('role') || '';
     const type = actionEl.type || '';
-    let suggestedCommand = '';
-    if (kind === 'checkbox') suggestedCommand = 'toggle_checkbox ' + selector;
-    else if (kind === 'radio') suggestedCommand = 'toggle_radio ' + selector;
-    else if (kind === 'select' || kind === 'multi-select') suggestedCommand = 'select ' + selector + ' by label \"...\"';
-    else if (kind === 'date') suggestedCommand = 'date ' + selector + ' = Mar 25 2026';
-    else if (kind === 'input' || kind === 'textarea' || kind === 'combobox') suggestedCommand = 'fill ' + selector + ' with \"...\"';
-    else suggestedCommand = 'click ' + selector;
-    out.push({
+    const h = buildHints(kind, actionEl, selector, t);
+    const row = {
       kind,
       label: t,
       selector,
@@ -216,9 +353,16 @@ export const INTERACTABLES_SCRIPT = `
       type,
       id: actionEl.id || "",
       name: actionEl.name || "",
-      suggestedCommand,
-    });
-  });
+      suggestedCommand: h.suggestedCommand,
+    };
+    if (h.suggestedMcpTool) row.suggestedMcpTool = h.suggestedMcpTool;
+    if (h.toolHint) row.toolHint = h.toolHint;
+    out.push(row);
+  }
   return { items: out };
 })()
 `;
+}
+
+/** Default guest script; prefer `buildInteractablesScript` from router with command limit. */
+export const INTERACTABLES_SCRIPT = buildInteractablesScript(200, interactablesMaxIterations(200));

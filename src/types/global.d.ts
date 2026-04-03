@@ -13,6 +13,7 @@ declare global {
 
   interface LegacyBrowserState {
     activeTabId: number | null;
+    activeSessionId?: string;
     tabCount: number;
     activeUrl: string;
     canGoBack: boolean;
@@ -73,6 +74,11 @@ declare global {
     zoomReset?: () => void;
     getState: () => LegacyBrowserState;
     getTabs: () => LegacyTabSnapshot[];
+    getSessions?: () => Array<{ id: string; headless: boolean; tabCount?: number; activeTabId?: number | null; isActive?: boolean; createdAt?: number; activeForMs?: number }>;
+    getActiveSessionId?: () => string;
+    switchSessionById?: (sessionId: string) => boolean;
+    createSession?: (headless: boolean) => { id: string; headless: boolean };
+    killSessionById?: (sessionId: string) => boolean;
     switchTabById: (id: number) => void;
     closeTabById: (id: number) => void;
     /** @param side drop edge relative to `targetId` */
@@ -99,14 +105,38 @@ declare global {
     /** Typed automation (same engine as chat commands). */
     runAutomationCommand?: (cmd: AutomationCommand) => Promise<AutomationResult>;
     dispatchAutomationLine?: (line: string) => Promise<AutomationResult>;
-    openToolsHub?: (opts?: { toolId?: string | null }) => void;
+    openToolsHub?: (opts?: { toolId?: string | null; mode?: "browser" | "intelligent" }) => void;
     closeToolsHub?: () => void;
     toggleToolsHub?: () => void;
     runQuickCommand?: (cmd: string, opts?: { closeHub?: boolean }) => void;
+    /** Title bar / shell workspace switching (browser vs intelligent). */
+    enterBrowserWorkspace?: () => void;
+    enterIntelligentWorkspace?: () => void;
+    /** @deprecated Prefer `openIntelligentAssistantSettings`. Browser: side panel; intelligent: same modal. */
+    enterSettingsWorkspace?: (panel?: "browser" | "intelligent") => void;
+    /** Switches to intelligent workspace if needed and opens the assistant settings modal. */
+    openIntelligentAssistantSettings?: () => void;
+    /** Toggles browser settings side panel (browser workspace rail Settings). */
+    openBrowserChromeSettingsOverlay?: () => void;
+    closeBrowserSettingsSidePanel?: () => void;
+    /** Append picked element / snapshot context into the React composer (browser agent). */
+    startBrowserPagePickerAny?: () => void;
+    startBrowserPagePickerInteractive?: () => void;
+    startBrowserPageElementScreenshot?: () => void;
   }
 
   interface Window {
     electronAPI: ElectronApi;
+    /** MCP localhost bridge: main calls this via executeJavaScript (set by kernel). */
+    __mcpInvokeAutomation?: (cmd: AutomationCommand) => Promise<AutomationResult>;
+    /** React AI chat (when AiChatBridge mounted). */
+    __aiChatSubmit?: (text: string) => void;
+    __aiChatNewConversation?: () => void;
+    __aiChatClearConversation?: () => void;
+    /** When true, kernel must not overwrite `#chatHistoryList` (React v2 store drives it). */
+    __reactAiChatOwnsHistoryList?: boolean;
+    /** Repaint `#chatHistoryList` from legacy kernel store (after React releases ownership). */
+    __kernelRefreshChatHistoryList?: () => void;
     legacyBrowser?: LegacyBrowserBridge;
     __FEATURE_FLAGS__?: {
       USE_REACT_MODALS: boolean;

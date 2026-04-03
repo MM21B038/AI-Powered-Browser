@@ -6,43 +6,80 @@
       <div class="titlebar-drag-region"></div>
       <div class="titlebar-left flex items-center gap-2">
         <div class="app-logo">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <circle
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="var(--accent)"
-              stroke-width="1.5"
-            />
-            <path
-              d="M12 2C12 2 8 7 8 12C8 17 12 22 12 22"
-              stroke="var(--accent)"
-              stroke-width="1.5"
-            />
-            <path
-              d="M12 2C12 2 16 7 16 12C16 17 12 22 12 22"
-              stroke="var(--accent)"
-              stroke-width="1.5"
-            />
-            <path d="M2 12H22" stroke="var(--accent)" stroke-width="1.5" />
+          <!-- Same lemniscate as build/app-icon.svg (app packaging icon) -->
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 260 260"
+            fill="none"
+            aria-hidden="true"
+          >
+            <defs>
+              <linearGradient
+                id="titlebarButcherLogoGrad"
+                x1="0%"
+                y1="0%"
+                x2="100%"
+                y2="100%"
+              >
+                <stop offset="0%" stop-color="#38bdf8" />
+                <stop offset="50%" stop-color="#6366f1" />
+                <stop offset="100%" stop-color="#a78bfa" />
+              </linearGradient>
+            </defs>
+            <g transform="translate(0 50)">
+              <path
+                fill="none"
+                stroke="url(#titlebarButcherLogoGrad)"
+                stroke-width="14"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M 30 80 C 30 50 50 30 80 30 C 110 30 130 50 130 80 C 130 110 110 130 80 130 C 50 130 30 110 30 80 M 130 80 C 130 50 150 30 180 30 C 210 30 230 50 230 80 C 230 110 210 130 180 130 C 150 130 130 110 130 80"
+              />
+            </g>
           </svg>
         </div>
         <span class="app-name">Butcher</span>
+        <button
+          type="button"
+          class="titlebar-intelligent-pill"
+          id="titlebarIntelligentBtn"
+          aria-pressed="false"
+        >
+          Intelligent
+        </button>
+        <button
+          type="button"
+          class="titlebar-browser-pill"
+          id="titlebarBrowserBtn"
+          aria-pressed="true"
+        >
+          Browser
+        </button>
       </div>
       <div class="titlebar-right flex items-center gap-0.5">
-        <button class="tb-btn" id="tbMinimize" title="Minimize">
+        <button class="tb-btn" id="tbMinimize" aria-label="Minimize">
           &#x2212;
         </button>
-        <button class="tb-btn" id="tbMaximize" title="Maximize">
+        <button class="tb-btn" id="tbMaximize" aria-label="Maximize">
           &#x25A1;
         </button>
-        <button class="tb-btn tb-close" id="tbClose" title="Close">
+        <button class="tb-btn tb-close" id="tbClose" aria-label="Close window">
           &#x2715;
         </button>
       </div>
     </div>
 
-    <div class="app-container flex min-h-0 flex-1 gap-1.5 overflow-hidden p-1.5">
+    <div
+      class="browser-workspace flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      id="browserWorkspace"
+      aria-labelledby="titlebarBrowserBtn"
+    >
+    <div
+      class="app-container flex min-h-0 flex-1 gap-1.5 overflow-hidden p-1.5"
+      id="appContainer"
+      data-shell-workspace="browser"
+    >
       <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• BROWSER SECTION â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
       <div class="browser-section flex min-h-0 min-w-0 flex-1 flex-col" id="browserSection">
         <!-- Tab Bar -->
@@ -57,13 +94,12 @@
           <aside
             class="left-tool-rail"
             id="leftToolRail"
-            aria-label="Page, bookmarks, history, passwords, tools hub, and settings"
+            aria-label="Page, sessions, bookmarks, history, passwords, network, browser tool hub, and settings"
           >
             <button
               type="button"
               class="rail-btn rail-btn-active"
               id="railWebviewBtn"
-              title="Page"
               aria-label="Show page"
             >
               <span class="rail-btn-icon" aria-hidden="true">
@@ -76,8 +112,21 @@
             <button
               type="button"
               class="rail-btn"
+              id="sessionsBtn"
+              aria-label="Sessions"
+            >
+              <span class="rail-btn-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
+                  <rect x="2" y="2" width="10" height="8" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="4" y="4" width="10" height="8" rx="1.2" stroke="currentColor" stroke-width="1.35" opacity="0.9" />
+                  <rect x="6" y="6" width="10" height="8" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                </svg>
+              </span>
+            </button>
+            <button
+              type="button"
+              class="rail-btn"
               id="bookmarksBtn"
-              title="Bookmarks"
               aria-label="Bookmarks"
             >
               <span class="rail-btn-icon" aria-hidden="true">
@@ -95,7 +144,6 @@
               type="button"
               class="rail-btn"
               id="historyBtn"
-              title="History"
               aria-label="History"
             >
               <span class="rail-btn-icon" aria-hidden="true">
@@ -113,9 +161,34 @@
             </button>
             <button
               type="button"
+              class="rail-btn rail-btn--badge-host"
+              id="screenshotsBtn"
+              aria-label="Screenshot library"
+            >
+              <span class="rail-btn-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
+                  <rect x="2.5" y="3.5" width="11" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5" />
+                  <circle cx="6" cy="6.5" r="1.2" fill="currentColor" />
+                  <path
+                    d="M3 12l3-3 2 2 3.5-3.5"
+                    stroke="currentColor"
+                    stroke-width="1.3"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </span>
+              <span
+                class="rail-btn__badge"
+                id="screenshotsBtnBadge"
+                hidden
+                aria-hidden="true"
+              ></span>
+            </button>
+            <button
+              type="button"
               class="rail-btn"
               id="passwordsBtn"
-              title="Saved passwords"
               aria-label="Saved passwords"
             >
               <span class="rail-btn-icon" aria-hidden="true">
@@ -143,7 +216,6 @@
               type="button"
               class="rail-btn"
               id="networkWorkbenchBtn"
-              title="Network"
               aria-label="Network workbench"
             >
               <span class="rail-btn-icon" aria-hidden="true">
@@ -162,7 +234,6 @@
               type="button"
               class="rail-btn"
               id="toolsHubBtn"
-              title="Tools &amp; commands"
               aria-label="Tools and commands hub"
             >
               <span class="rail-btn-icon" aria-hidden="true">
@@ -178,7 +249,6 @@
               type="button"
               class="rail-btn rail-btn-settings"
               id="settingsBtn"
-              title="Settings"
               aria-label="Settings"
             >
               <span class="rail-btn-icon" aria-hidden="true">
@@ -204,7 +274,7 @@
             <button
               class="nav-btn"
               id="backBtn"
-              title="Back (Alt+Left)"
+              aria-label="Back"
               disabled
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -220,7 +290,7 @@
             <button
               class="nav-btn"
               id="forwardBtn"
-              title="Forward (Alt+Right)"
+              aria-label="Forward"
               disabled
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -233,7 +303,7 @@
                 />
               </svg>
             </button>
-            <button class="nav-btn" id="reloadBtn" title="Reload (F5)">
+            <button class="nav-btn" id="reloadBtn" aria-label="Reload">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <path
                   d="M13.657 6A6 6 0 1 0 12 11.196"
@@ -274,7 +344,7 @@
               <button
                 class="addr-action-btn"
                 id="clearAddressBtn"
-                title="Clear"
+                aria-label="Clear address"
                 style="display: none"
               >
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -293,7 +363,7 @@
             <button
               class="nav-btn"
               id="bookmarkStarBtn"
-              title="Bookmark this page (Ctrl+D)"
+              aria-label="Bookmark this page"
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <path
@@ -304,7 +374,7 @@
                 />
               </svg>
             </button>
-            <button class="nav-btn" id="homeBtn" title="Home">
+            <button class="nav-btn" id="homeBtn" aria-label="Home">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <path
                   d="M2 7L8 2L14 7V14H10V10H6V14H2V7Z"
@@ -317,7 +387,7 @@
             <button
               class="nav-btn"
               id="screenshotBtn"
-              title="Screenshot (Ctrl+Shift+S)"
+              aria-label="Capture screenshot"
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <rect
@@ -344,7 +414,7 @@
                 />
               </svg>
             </button>
-            <button class="nav-btn" id="findBtn" title="Find in Page (Ctrl+F)">
+            <button class="nav-btn" id="findBtn" aria-label="Find in page">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <circle
                   cx="6.5"
@@ -361,7 +431,7 @@
                 />
               </svg>
             </button>
-            <button class="nav-btn" id="zoomOutBtn" title="Zoom Out (Ctrl+-)">
+            <button class="nav-btn" id="zoomOutBtn" aria-label="Zoom out">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <circle
                   cx="6.5"
@@ -385,7 +455,7 @@
               </svg>
             </button>
             <span class="zoom-level" id="zoomLevel">100%</span>
-            <button class="nav-btn" id="zoomInBtn" title="Zoom In (Ctrl+=)">
+            <button class="nav-btn" id="zoomInBtn" aria-label="Zoom in">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <circle
                   cx="6.5"
@@ -411,7 +481,7 @@
             <button
               class="nav-btn ai-chat-toggle"
               id="aiChatToggleBtn"
-              title="AI Assistant (Ctrl+Shift+A)"
+              aria-label="Toggle AI assistant"
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <path
@@ -425,7 +495,7 @@
                 <circle cx="10.5" cy="6.5" r="0.9" fill="currentColor" />
               </svg>
             </button>
-            <button class="nav-btn" id="devtoolsBtn" title="DevTools (F12)">
+            <button class="nav-btn" id="devtoolsBtn" aria-label="Developer tools">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <path
                   d="M5 5L2 8L5 11"
@@ -482,13 +552,13 @@
             placeholder="Find in page..."
           />
           <span class="find-count" id="findCount"></span>
-          <button class="find-nav-btn" id="findPrev" title="Previous">
+          <button class="find-nav-btn" id="findPrev" aria-label="Previous match">
             &#8593;
           </button>
-          <button class="find-nav-btn" id="findNext" title="Next">
+          <button class="find-nav-btn" id="findNext" aria-label="Next match">
             &#8595;
           </button>
-          <button class="find-close-btn" id="findClose">&#x2715;</button>
+          <button class="find-close-btn" id="findClose" aria-label="Close find in page">&#x2715;</button>
         </div>
 
         <!-- Webview Container -->
@@ -554,6 +624,38 @@
             allowpopups
           ></webview>
           <div
+            id="browserClickFxHost"
+            class="browser-click-fx-host"
+            aria-hidden="true"
+          ></div>
+          <div
+            id="browserAgentLlmOverlay"
+            class="browser-agent-llm-overlay"
+            style="display: none"
+            aria-hidden="true"
+            role="status"
+            aria-live="polite"
+            aria-label="Assistant is working with the page"
+          >
+            <div class="browser-agent-llm-overlay__veil" aria-hidden="true"></div>
+            <div class="browser-agent-llm-overlay__core" aria-hidden="true"></div>
+            <div class="browser-agent-llm-overlay__mesh" aria-hidden="true"></div>
+            <div class="browser-agent-llm-overlay__grid" aria-hidden="true"></div>
+            <div class="browser-agent-llm-overlay__orbit" aria-hidden="true"></div>
+            <div class="browser-agent-llm-overlay__sweep" aria-hidden="true"></div>
+            <div
+              class="browser-agent-llm-overlay__sweep browser-agent-llm-overlay__sweep--reverse"
+              aria-hidden="true"
+            ></div>
+            <div class="browser-agent-llm-overlay__scan" aria-hidden="true"></div>
+            <div class="browser-agent-llm-overlay__datastream" aria-hidden="true"></div>
+            <div class="browser-agent-llm-overlay__holo" aria-hidden="true"></div>
+            <div class="browser-agent-llm-overlay__hud" aria-hidden="true"></div>
+            <div class="browser-agent-llm-overlay__rim" aria-hidden="true"></div>
+            <div class="browser-agent-llm-overlay__chrom" aria-hidden="true"></div>
+            <div class="browser-agent-llm-overlay__glitch" aria-hidden="true"></div>
+          </div>
+          <div
             id="toolsHubRoot"
             class="tools-hub-root"
             style="display: none"
@@ -566,6 +668,30 @@
             aria-hidden="true"
           ></div>
           <!-- Side panels (full webview overlay; open state = .side-panel--open) -->
+          <div class="side-panel" id="sessionsPanel" aria-hidden="true">
+            <div class="side-panel-header">
+              <div class="side-panel-header-top">
+                <div class="side-panel-heading">
+                  <span class="side-panel-title">Sessions</span>
+                  <span class="side-panel-sub">Workspaces for tabs and automation</span>
+                </div>
+                <div class="side-panel-actions">
+                  <button class="icon-btn" id="closeSessionsBtn" aria-label="Close sessions">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <path
+                        d="M2 2L10 10M10 2L2 10"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="side-panel-list side-panel-list--sessions" id="sessionsPanelRoot"></div>
+          </div>
+
           <div class="side-panel" id="bookmarksPanel" aria-hidden="true">
             <div class="side-panel-header">
               <div class="side-panel-header-top">
@@ -577,7 +703,7 @@
                   <button
                     class="icon-btn"
                     id="importBookmarksBtn"
-                    title="Import from installed browsers"
+                    aria-label="Import bookmarks from installed browsers"
                   >
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                       <path
@@ -595,7 +721,7 @@
                       />
                     </svg>
                   </button>
-                  <button class="icon-btn" id="closeBookmarksBtn" title="Close">
+                  <button class="icon-btn" id="closeBookmarksBtn" aria-label="Close bookmarks panel">
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                       <path
                         d="M2 2L10 10M10 2L2 10"
@@ -622,7 +748,7 @@
                     placeholder="Search bookmarks..."
                     autocomplete="off"
                   />
-                  <button class="side-search-clear" type="button" data-clear="bookmarkSearch" title="Clear search" aria-label="Clear search">
+                  <button class="side-search-clear" type="button" data-clear="bookmarkSearch" aria-label="Clear search">
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                       <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
                     </svg>
@@ -644,7 +770,7 @@
                 <button
                   class="icon-btn"
                   id="importHistoryBtn"
-                  title="Import from installed browsers"
+                  aria-label="Import browsing history from installed browsers"
                 >
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                     <path
@@ -665,7 +791,7 @@
                 <button
                   class="icon-btn"
                   id="clearHistoryBtn"
-                  title="Clear all history"
+                  aria-label="Clear all history"
                 >
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                     <path
@@ -677,7 +803,7 @@
                     />
                   </svg>
                 </button>
-                <button class="icon-btn" id="closeHistoryBtn" title="Close">
+                <button class="icon-btn" id="closeHistoryBtn" aria-label="Close history panel">
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                     <path
                       d="M2 2L10 10M10 2L2 10"
@@ -704,7 +830,7 @@
                     placeholder="Search history..."
                     autocomplete="off"
                   />
-                  <button class="side-search-clear" type="button" data-clear="historySearch" title="Clear search" aria-label="Clear search">
+                  <button class="side-search-clear" type="button" data-clear="historySearch" aria-label="Clear search">
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                       <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
                     </svg>
@@ -713,6 +839,30 @@
               </div>
             </div>
             <div class="side-panel-list" id="historyList"></div>
+          </div>
+
+          <div class="side-panel" id="screenshotsPanel" aria-hidden="true">
+            <div class="side-panel-header">
+              <div class="side-panel-header-top">
+                <div class="side-panel-heading">
+                  <span class="side-panel-title">Screenshot Library</span>
+                  <span class="side-panel-sub">Captured pages and regions</span>
+                </div>
+                <div class="side-panel-actions">
+                  <button class="icon-btn" id="closeScreenshotsBtn" aria-label="Close screenshot library">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <path
+                        d="M2 2L10 10M10 2L2 10"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="side-panel-list side-panel-list--screenshots" id="screenshotsListHost"></div>
           </div>
 
           <div class="side-panel" id="passwordsPanel" aria-hidden="true">
@@ -726,7 +876,7 @@
                 <button
                   class="icon-btn"
                   id="importPasswordsBtn"
-                  title="Import from installed browsers"
+                  aria-label="Import passwords from installed browsers"
                 >
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                     <path
@@ -747,7 +897,7 @@
                 <button
                   class="icon-btn"
                   id="addPasswordBtn"
-                  title="Add password manually"
+                  aria-label="Add password manually"
                 >
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                     <path
@@ -758,7 +908,7 @@
                     />
                   </svg>
                 </button>
-                <button class="icon-btn" id="closePasswordsBtn" title="Close">
+                <button class="icon-btn" id="closePasswordsBtn" aria-label="Close passwords panel">
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                     <path
                       d="M2 2L10 10M10 2L2 10"
@@ -785,7 +935,7 @@
                     placeholder="Search passwords..."
                     autocomplete="off"
                   />
-                  <button class="side-search-clear" type="button" data-clear="passwordSearch" title="Clear search" aria-label="Clear search">
+                  <button class="side-search-clear" type="button" data-clear="passwordSearch" aria-label="Clear search">
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                       <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
                     </svg>
@@ -813,7 +963,7 @@
                   class="side-search-input"
                   placeholder="Password"
                 />
-                <button class="pw-eye-btn" id="pwEyeBtn" title="Show/hide">ðŸ‘</button>
+                <button class="pw-eye-btn" id="pwEyeBtn" type="button" aria-label="Show or hide password">ðŸ‘</button>
               </div>
               <div class="pw-form-actions">
                 <button class="modal-btn modal-btn-secondary" id="pwCancelBtn">
@@ -825,6 +975,13 @@
               </div>
             </div>
             <div class="side-panel-list" id="passwordsList"></div>
+          </div>
+
+          <div class="side-panel" id="browserSettingsPanel" aria-hidden="true">
+            <div
+              class="side-panel-list side-panel-list--settings"
+              id="browserSettingsPanelRoot"
+            ></div>
           </div>
 
           <!-- Error Page -->
@@ -864,7 +1021,6 @@
             class="side-panel-webview-shield"
             aria-hidden="true"
           ></div>
-          <div id="webviewOverlayHost" class="webview-overlay-host" aria-hidden="true"></div>
         </div>
 
         <!-- Status Bar -->
@@ -926,6 +1082,181 @@
 
       <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• CHAT SECTION â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
       <div class="chat-wrapper" id="chatWrapper">
+        <aside
+          class="chat-history-panel"
+          id="chatHistoryPanel"
+          aria-label="Butcher"
+          aria-expanded="true"
+        >
+          <div
+            class="chat-history-collapsed-rail"
+            id="chatHistoryCollapsedRail"
+            hidden
+            aria-hidden="true"
+          >
+            <div class="chat-history-rail-section chat-history-rail-section--top">
+              <button
+                type="button"
+                class="icon-btn chat-history-rail-btn"
+                id="chatHistoryExpandBtn"
+                aria-label="Expand sidebar"
+              >
+                <!-- Double chevron right: expand / show panel -->
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M13 7l5 5-5 5M6 7l5 5-5 5"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="icon-btn chat-history-rail-btn"
+                id="chatHistoryRailNewBtn"
+                aria-label="New chat"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M12 5v14M5 12h14"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div class="chat-history-rail-spacer" aria-hidden="true"></div>
+            <div class="chat-history-rail-section chat-history-rail-section--footer">
+              <button
+                type="button"
+                class="icon-btn chat-history-rail-btn"
+                id="chatHistoryRailToolsHubBtn"
+                aria-label="Intelligent Tool Hub"
+              >
+                <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <rect x="2" y="2" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="9" y="2" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="2" y="9" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="9" y="9" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="icon-btn chat-history-rail-btn chat-history-rail-btn--settings"
+                id="chatHistoryRailSettingsBtn"
+                aria-label="Workspace settings"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                  />
+                  <path
+                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"
+                    stroke="currentColor"
+                    stroke-width="1.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="chat-history-expanded-stack" id="chatHistoryExpandedStack">
+            <div class="chat-history-header">
+              <span class="chat-history-title">Butcher</span>
+              <button
+                type="button"
+                class="icon-btn chat-history-collapse-btn"
+                id="chatHistoryCollapseBtn"
+                aria-label="Collapse sidebar"
+              >
+                <!-- Double chevron left: collapse / hide panel (common IDE pattern) -->
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M11 7l-5 5 5 5M18 7l-5 5 5 5"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div class="chat-history-new-row">
+              <button type="button" class="chat-history-new-btn" id="newChatBtn">
+                <svg
+                  class="chat-history-new-btn__icon"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M12 5v14M5 12h14"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                <span>New chat</span>
+              </button>
+            </div>
+            <div class="chat-history-list hide-scrollbar" id="chatHistoryList"></div>
+            <div class="chat-history-intelligent-footer" id="intelligentWorkspaceSettingsFooter">
+              <button
+                type="button"
+                class="chat-history-settings-btn chat-history-settings-btn--tool-hub"
+                id="intelligentWorkspaceToolHubBtn"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <rect x="2" y="2" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="9" y="2" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="2" y="9" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                  <rect x="9" y="9" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.35" />
+                </svg>
+                <span>Intelligent Tool Hub</span>
+              </button>
+              <button
+                type="button"
+                class="chat-history-settings-btn"
+                id="intelligentWorkspaceSettingsBtn"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                  />
+                  <path
+                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"
+                    stroke="currentColor"
+                    stroke-width="1.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                <span>Workspace settings</span>
+              </button>
+            </div>
+          </div>
+        </aside>
+        <div
+          class="resize-handle resize-handle--history"
+          id="chatHistoryResizeHandle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize chat history and assistant width"
+        >
+          <span class="resize-handle__grip" aria-hidden="true"></span>
+        </div>
         <div class="chat-section" id="chatSection">
           <!-- Resize Handle -->
           <div class="resize-handle" id="resizeHandle"></div>
@@ -938,14 +1269,36 @@
               </div>
               <div>
                 <h2 class="chat-title">AI Assistant</h2>
-                <span class="chat-subtitle">Browser Automation</span>
+                <span class="chat-subtitle" id="chatSubtitle">Browser Automation</span>
               </div>
             </div>
             <div class="chat-header-actions">
               <button
+                type="button"
+                class="icon-btn"
+                id="settingsBtnChat"
+                aria-label="Assistant settings"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                  />
+                  <path
+                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"
+                    stroke="currentColor"
+                    stroke-width="1.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+              <button
                 class="icon-btn chat-close-btn"
                 id="closeChatBtn"
-                title="Close AI Chat"
+                aria-label="Close AI chat"
               >
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                   <path
@@ -956,7 +1309,7 @@
                   />
                 </svg>
               </button>
-              <button class="icon-btn" id="clearChatBtn" title="Clear Chat">
+              <button class="icon-btn" id="clearChatBtn" aria-label="Clear chat">
                 <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
                   <path
                     d="M2 4H13M5 4V2.5C5 2 5.5 1.5 6 1.5H9C9.5 1.5 10 2 10 2.5V4M12 4L11.5 12.5C11.5 13 11 13.5 10.5 13.5H4.5C4 13.5 3.5 13 3.5 12.5L3 4"
@@ -969,6 +1322,12 @@
               </button>
             </div>
           </div>
+
+          <div
+            id="aiChatReactHost"
+            class="ai-chat-react-host"
+            style="display: none; flex: 1; flex-direction: column; min-height: 0; overflow: hidden"
+          ></div>
 
           <!-- Chat Messages -->
           <div class="chat-messages" id="chatMessages">
@@ -1027,7 +1386,7 @@
                 autocomplete="off"
                 rows="1"
               ></textarea>
-              <button class="send-btn" id="sendBtn" title="Send (Enter)">
+              <button class="send-btn" id="sendBtn" type="button" aria-label="Send message">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                   <path d="M14 8L2 2L5 8L2 14L14 8Z" fill="currentColor" />
                 </svg>
@@ -1039,7 +1398,7 @@
           <div class="bottom-bar">
             <div class="tools-bar">
               <div class="tools-bar-wrap">
-                <button class="tools-bar-btn" id="toolsPanelBtn" title="Tools">
+                <button class="tools-bar-btn" id="toolsPanelBtn">
                   <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
                     <path
                       d="M8.5 1.5L11.5 4.5L4.5 11.5L1 12L1.5 8.5L8.5 1.5Z"
@@ -1059,7 +1418,7 @@
                 <div class="tools-panel" id="toolsPanel" style="display: none">
                   <div class="tools-panel-header">
                     <span>Browser Tools</span>
-                    <button class="tools-panel-close" id="toolsPanelClose">
+                    <button class="tools-panel-close" id="toolsPanelClose" type="button" aria-label="Close tools panel">
                       <svg
                         width="10"
                         height="10"
@@ -1082,7 +1441,6 @@
                 <button
                   class="tools-bar-btn"
                   id="quickPanelBtn"
-                  title="Quick Commands"
                 >
                   <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
                     <path
@@ -1107,6 +1465,20 @@
         <!-- /chat-section -->
       </div>
       <!-- /chat-wrapper -->
+
+      <!-- Modal host for React settings (must stay outside #browserSection — that column is hidden in intelligent workspace) -->
+      <div id="webviewOverlayHost" class="webview-overlay-host" aria-hidden="true"></div>
+      <div
+        id="intelligentToolsHubRoot"
+        class="tools-hub-root tools-hub-root--intelligent"
+        style="display: none"
+        aria-hidden="true"
+      ></div>
+
+      <!-- Legacy full-column settings root (unused; kept for optional workspace layout portal target) -->
+      <div class="settings-workspace" id="settingsWorkspace" aria-hidden="true">
+        <div id="settingsWorkspaceRoot" class="settings-workspace-root"></div>
+      </div>
 
       <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• IMPORT WIZARD â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
       <div class="import-wizard" id="importWizard" style="display: none">
@@ -1133,181 +1505,10 @@
 
 
     </div>
-    <div
-      class="settings-overlay"
-      id="settingsOverlay"
-      style="display: none"
-    ></div>
-    <div class="settings-panel" id="settingsPanel" style="display: none">
-      <div class="settings-header">
-        <h3>Settings</h3>
-        <button class="icon-btn" id="closeSettingsBtn">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path
-              d="M2 2L12 12M12 2L2 12"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linecap="round"
-            />
-          </svg>
-        </button>
-      </div>
-      <div class="settings-body">
-        <div class="settings-section">
-          <label class="settings-label">Theme</label>
-          <div class="theme-grid">
-            <button class="theme-card active" data-theme="dark">
-              <div class="theme-preview dark-preview"></div>
-              <span>Void</span>
-            </button>
-            <button class="theme-card" data-theme="aurora">
-              <div class="theme-preview aurora-preview"></div>
-              <span>Aurora</span>
-            </button>
-            <button class="theme-card" data-theme="ocean">
-              <div class="theme-preview ocean-preview"></div>
-              <span>Ocean</span>
-            </button>
-            <button class="theme-card" data-theme="ember">
-              <div class="theme-preview ember-preview"></div>
-              <span>Ember</span>
-            </button>
-          </div>
-        </div>
-        <div class="settings-section">
-          <label class="settings-label">Import Browser Data</label>
-          <div class="import-section">
-            <div class="browser-selector">
-              <select id="browserSelect" class="settings-select">
-                <option value="">Select Browser</option>
-                <option value="chrome">Google Chrome</option>
-                <option value="firefox">Mozilla Firefox</option>
-              </select>
-            </div>
-            <div class="import-options">
-              <label class="checkbox-label">
-                <input type="checkbox" id="importBookmarks" checked />
-                <span>Bookmarks</span>
-              </label>
-              <label class="checkbox-label">
-                <input type="checkbox" id="importHistory" checked />
-                <span>Browsing History</span>
-              </label>
-              <label class="checkbox-label">
-                <input type="checkbox" id="importCookies" />
-                <span>Cookies</span>
-              </label>
-            </div>
-            <div class="import-stats" id="importStats" style="display: none">
-              <div class="stats-grid">
-                <div class="stat-item">
-                  <span class="stat-label">Chrome:</span>
-                  <span class="stat-value" id="chromeStats">Checking...</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">Firefox:</span>
-                  <span class="stat-value" id="firefoxStats">Checking...</span>
-                </div>
-              </div>
-            </div>
-            <div class="import-actions">
-              <button class="btn-secondary" id="checkImportBtn">
-                Check Available Data
-              </button>
-              <button class="btn-primary" id="startImportBtn" disabled>
-                Import Data
-              </button>
-            </div>
-            <div
-              class="import-progress"
-              id="importProgress"
-              style="display: none"
-            >
-              <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
-              </div>
-              <div class="progress-text" id="progressText">
-                Preparing import...
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="settings-section">
-          <label class="settings-label">Home Page</label>
-          <input
-            type="text"
-            id="homePageInput"
-            class="settings-input"
-            placeholder="https://duckduckgo.com"
-          />
-        </div>
-        <div class="settings-section">
-          <label class="settings-label">System Info</label>
-          <div class="sysinfo-grid" id="sysinfoGrid">
-            <div class="sysinfo-item">
-              <span class="si-label">Electron</span
-              ><span class="si-val" id="siElectron">â€”</span>
-            </div>
-            <div class="sysinfo-item">
-              <span class="si-label">Chrome</span
-              ><span class="si-val" id="siChrome">â€”</span>
-            </div>
-            <div class="sysinfo-item">
-              <span class="si-label">Node</span
-              ><span class="si-val" id="siNode">â€”</span>
-            </div>
-            <div class="sysinfo-item">
-              <span class="si-label">Memory</span
-              ><span class="si-val" id="siMemory">â€”</span>
-            </div>
-            <div class="sysinfo-item">
-              <span class="si-label">Platform</span
-              ><span class="si-val" id="siPlatform">â€”</span>
-            </div>
-            <div class="sysinfo-item">
-              <span class="si-label">CPUs</span
-              ><span class="si-val" id="siCpus">â€”</span>
-            </div>
-          </div>
-        </div>
-        <div class="settings-section">
-          <label class="settings-label">Keyboard Shortcuts</label>
-          <div class="shortcuts-list">
-            <div class="shortcut-row">
-              <kbd>Ctrl+T</kbd><span>New Tab</span>
-            </div>
-            <div class="shortcut-row">
-              <kbd>Ctrl+W</kbd><span>Close Tab</span>
-            </div>
-            <div class="shortcut-row">
-              <kbd>Ctrl+L</kbd><span>Focus Address Bar</span>
-            </div>
-            <div class="shortcut-row">
-              <kbd>Ctrl+F</kbd><span>Find in Page</span>
-            </div>
-            <div class="shortcut-row">
-              <kbd>Ctrl+R / F5</kbd><span>Reload</span>
-            </div>
-            <div class="shortcut-row">
-              <kbd>Ctrl+Shift+S</kbd><span>Screenshot</span>
-            </div>
-            <div class="shortcut-row">
-              <kbd>Ctrl+= / Ctrl+-</kbd><span>Zoom In/Out</span>
-            </div>
-            <div class="shortcut-row">
-              <kbd>Ctrl+0</kbd><span>Reset Zoom</span>
-            </div>
-            <div class="shortcut-row"><kbd>F12</kbd><span>DevTools</span></div>
-            <div class="shortcut-row">
-              <kbd>Alt+Left / Alt+Right</kbd><span>Back / Forward</span>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
 
-    <!-- Toast Notification -->
-    <div class="toast" id="toast"></div>
+    <!-- Toast portal host: must not use .toast (opacity:hidden would hide portaled content). -->
+    <div id="toast" class="toast-host" aria-live="polite" aria-atomic="true"></div>
 
     <!-- First Run Import Wizard -->
     <div class="modal-overlay" id="firstRunOverlay" style="display: none">

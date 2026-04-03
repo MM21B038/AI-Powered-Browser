@@ -1,0 +1,54 @@
+{
+  "name": "autonomous-browser-installer-ui",
+  "version": "1.0.0",
+  "private": true,
+  "author": "Autonomous Browser",
+  "description": "Animated Windows bootstrapper; bundles silent NSIS payload from parent build.",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently \"vite --port 5174\" \"wait-on tcp:5174 && cross-env NODE_ENV=development electron electron/main.cjs\"",
+    "build:ui": "vite build",
+    "dist": "npm run build:ui && electron-builder --win portable",
+    "pack": "npm run build:ui && electron-builder --dir"
+  },
+  "build": {
+    "appId": "com.autonomousbrowser.installer",
+    "productName": "Autonomous Browser Setup",
+    "directories": {
+      "output": "release",
+      "buildResources": "build-resources"
+    },
+    "icon": "build-resources/icon.png",
+    "files": [
+      "electron/**/*.cjs",
+      "dist/ui/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/nsis-setup.exe",
+        "to": "nsis-setup.exe"
+      }
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "artifactName": "Autonomous-Browser-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Autonomous-Browser-Setup-${version}.${ext}"
+    },
+    "compression": "maximum",
+    "asar": true
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.0.0",
+    "electron": "41.0.3",
+    "electron-builder": "^26.8.1",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.7",
+    "wait-on": "^8.0.5"
+  }
+}

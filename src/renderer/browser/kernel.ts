@@ -1,10 +1,29 @@
 // @ts-nocheck
 /* eslint-disable -- legacy kernel port from renderer.js; refactor into modules incrementally */
-import { dispatchAutomationLine, runAutomationCommand } from "./automation/router";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
-import { SPOTLIGHT_ICON_SVGS } from "../shared/spotlightIconSvgs";
+import {
+  dispatchAutomationLine,
+  runAutomationCommand,
+  type InteractableRow,
+} from "./automation/router";
+import { SPOTLIGHT_ICON_SVGS } from "../shared/spotlight-icon-svgs";
 import { QUICK_COMMAND_ENTRIES } from "../shared/quick-command-entries";
+import { getToolTemplateLine } from "../shared/tools-hub-templates";
+import { normalizeHomePageUrl, urlsMatchForTabSwitch } from "./kernel-utils";
+import {
+  loadConversationState,
+  saveConversationState,
+  createDebouncedSave,
+  createNewConversation,
+  generateMessageId,
+  titleFromFirstLine,
+} from "../chat/conversation-store-legacy";
+import { loadShellWorkspacePreference, saveShellWorkspacePreference } from "../chat/conversation-store";
+import { escapeHtml, renderChatMarkdownToHtml } from "../chat/chat-markdown";
+import { applyIntelligentWorkspaceLayoutToDom } from "../state/intelligent-workspace-layout";
+import {
+  appendScreenshotLibraryEntry,
+  type ScreenshotCaptureMode,
+} from "../services/screenshot-library-store";
 
 /**
  * Browser kernel: tab/webview/profile/chat/tools. Call initBrowserKernel() after the shell DOM
@@ -36,8 +55,13 @@ const USE_REACT_TOAST = true;
 /** Chat panel resize drag handled in ChatShellBridge (single listener set). */
 const USE_REACT_CHAT_RESIZE = true;
 
+
 /** Per-<webview> lifecycle listeners (one Electron <webview> per tab). */
 const webviewsWithListeners = new WeakSet();
+/** Tracks which webviews have already fired `dom-ready` (for automation screenshot timing). */
+const webviewDomReady = new WeakSet();
+/** Tracks which webviews have completed at least one load. */
+const webviewDidFinishLoad = new WeakSet();
 
 window.__FEATURE_FLAGS__ = {
   USE_REACT_MODALS,
@@ -54,6 +78,138 @@ let lastFindQuery = "";
 let tabs = [];
 let activeTabId = null;
 let tabCounter = 0;
+const DEFAULT_SESSION_ID = `s_${Math.random().toString(36).slice(2, 8)}`;
+let activeSessionId = DEFAULT_SESSION_ID;
+const sessions = new Map();
+
+function traceKernel(message, data) {
+  try {
+    void window.electronAPI?.debugLog?.({
+      source: "kernel",
+      message,
+      data,
+    });
+  } catch {
+    // no-op
+  }
+}
+
+function snapshotKernelState() {
+  return {
+    activeSessionId,
+    activeTabId,
+    tabCount: tabs.length,
+    hasBrowserFrame: !!browserFrame,
+    browserFrameId: browserFrame?.id || null,
+    browserFrameSession: browserFrame?.dataset?.orionSessionId || null,
+    browserFrameTab: browserFrame?.dataset?.orionTabId || null,
+    sessions: Array.from(sessions.values()).map((s) => ({
+      id: s.id,
+      headless: !!s.headless,
+      tabCount: s.tabs.length,
+      activeTabId: s.activeTabId,
+      webviews: s.tabs.map((t) => ({
+        id: t.id,
+        url: t.url,
+        hasWebview: !!t.webview,
+        isBrowserFrameId: !!t.webview && t.webview.id === "browserFrame",
+        webviewSession: t.webview?.dataset?.orionSessionId || null,
+        webviewTab: t.webview?.dataset?.orionTabId || null,
+      })),
+    })),
+  };
+}
+
+function makeSession(id, headless) {
+  return {
+    id,
+    headless: !!headless,
+    tabs: [],
+    activeTabId: null,
+    tabCounter: 0,
+    createdAt: Date.now(),
+    lastActiveAt: Date.now(),
+  };
+}
+
+function getSession(id = activeSessionId) {
+  return sessions.get(id) || null;
+}
+
+function getTabInSession(sessionId, id) {
+  const s = getSession(sessionId);
+  if (!s) return null;
+  return s.tabs.find((t) => t.id === id) || null;
+}
+
+function isWebviewOwnedByAnySession(wv) {
+  if (!wv) return false;
+  for (const s of sessions.values()) {
+    if (s?.tabs?.some((t) => t.webview === wv)) return true;
+  }
+  return false;
+}
+
+function persistActiveSessionState() {
+  const s = getSession(activeSessionId);
+  if (!s) return;
+  s.tabs = tabs;
+  s.activeTabId = activeTabId;
+  s.tabCounter = tabCounter;
+  s.lastActiveAt = Date.now();
+}
+
+function syncFromActiveSession() {
+  let s = getSession(activeSessionId);
+  if (!s) {
+    s = makeSession(activeSessionId, false);
+    sessions.set(activeSessionId, s);
+  }
+  tabs = s.tabs;
+  activeTabId = s.activeTabId;
+  tabCounter = s.tabCounter;
+  const t = activeTabId != null ? s.tabs.find((x) => x.id === activeTabId) : null;
+  browserFrame = t?.webview && t.webview.isConnected ? t.webview : null;
+}
+
+function withSessionState(sessionId, fn) {
+  const targetId = sessionId || activeSessionId;
+  if (!sessions.has(targetId)) return fn();
+  const prev = activeSessionId;
+  const same = prev === targetId;
+  const restore = () => {
+    persistActiveSessionState();
+    activeSessionId = prev;
+    syncFromActiveSession();
+  };
+
+  if (!same) {
+    persistActiveSessionState();
+    activeSessionId = targetId;
+    syncFromActiveSession();
+  }
+
+  let result;
+  try {
+    result = fn();
+  } catch (e) {
+    if (!same) restore();
+    throw e;
+  }
+
+  // Important: if `fn` is async, restore must happen after the Promise settles.
+  if (!same && result && typeof (result as { then?: unknown }).then === "function") {
+    return (result as Promise<unknown>).finally(() => restore());
+  }
+
+  if (!same) restore();
+  return result;
+}
+
+function generateSessionId() {
+  return `s_${Math.random().toString(36).slice(2, 8)}`;
+}
+sessions.set(DEFAULT_SESSION_ID, makeSession(DEFAULT_SESSION_ID, false));
 
 function generatePublicTabId() {
   // 5-digit, human-friendly, no leading zeros.
@@ -69,19 +225,11 @@ function generatePublicTabId() {
 let zoomLevel = parseFloat(localStorage.getItem("zoomLevel") ?? "-1");
 let isLoading = false;
 let loadingTimer = null;
+/** Debounce hiding the loading UI when SPA subframes toggle load state quickly. */
+let loadingOffTimer = null;
+const LOADING_OFF_DEBOUNCE_MS = 110;
+let loadingOverlayHideTimer = null;
 let findActive = false;
-function normalizeHomePageUrl(stored) {
-  const fallback = "https://duckduckgo.com";
-  const s = (stored || "").trim();
-  if (!s) return fallback;
-  try {
-    const u = new URL(s);
-    if (u.protocol !== "http:" && u.protocol !== "https:") return fallback;
-    return u.href;
-  } catch {
-    return fallback;
-  }
-}
 
 let homePage = normalizeHomePageUrl(localStorage.getItem("homePage"));
 
@@ -97,9 +245,13 @@ function setProfileGateBackdrop(on) {
       const st = loadingOverlay.querySelector(".loading-spotlight-stage");
       if (st) shuffleLoadingSpotlightStage(st);
       loadingOverlay.style.display = "flex";
+      loadingOverlay.classList.add("loading-overlay--visible");
     } else {
       // If an actual navigation load is happening, keep the overlay managed by setLoading().
-      if (!isLoading) loadingOverlay.style.display = "none";
+      if (!isLoading) {
+        loadingOverlay.classList.remove("loading-overlay--visible");
+        loadingOverlay.style.display = "none";
+      }
     }
   }
 }
@@ -163,6 +315,11 @@ let toast;
 let tbMinimize;
 let tbMaximize;
 let tbClose;
+let titlebarBrowserBtn;
+let titlebarIntelligentBtn;
+let appContainer;
+let chatSubtitle;
+let newChatBtn;
 let homePageInput;
 let chatSection;
 let chatWrapper;
@@ -200,6 +357,178 @@ function hydrateLoadingSpotlightShellStages() {
   hydrateLoadingSpotlightStage(
     document.querySelector("#importOverlay .loading-spotlight-stage"),
   );
+}
+
+/**
+ * Wait for the next navigation on this webview (listeners must be attached before loadURL).
+ * @param {import("../../shared/automation-types").GotoWaitUntil} waitUntil
+ */
+function createWebviewNavigationWaitPromise(wv, opts) {
+  const { waitUntil, timeoutMs, networkIdleMs } = opts;
+  return new Promise((resolve) => {
+    let settled = false;
+    let overallTimer;
+    const cleanupFns = [];
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      try {
+        clearTimeout(overallTimer);
+      } catch {
+        /* ignore */
+      }
+      for (let i = 0; i < cleanupFns.length; i++) {
+        try {
+          cleanupFns[i]();
+        } catch {
+          /* ignore */
+        }
+      }
+      resolve(result);
+    };
+    overallTimer = setTimeout(() => finish({ ok: false, error: "timeout" }), timeoutMs);
+    const onFail = (e) => {
+      if (e.errorCode === -3) return;
+      finish({ ok: false, error: `load_failed_${e.errorCode}` });
+    };
+    wv.addEventListener("did-fail-load", onFail);
+    cleanupFns.push(() => wv.removeEventListener("did-fail-load", onFail));
+
+    if (waitUntil === "domcontentloaded") {
+      const onDom = () => finish({ ok: true, phase: "domcontentloaded" });
+      wv.addEventListener("dom-ready", onDom, { once: true });
+      cleanupFns.push(() => wv.removeEventListener("dom-ready", onDom));
+      return;
+    }
+    if (waitUntil === "load") {
+      const onLoad = () => finish({ ok: true, phase: "load" });
+      wv.addEventListener("did-finish-load", onLoad, { once: true });
+      cleanupFns.push(() => wv.removeEventListener("did-finish-load", onLoad));
+      return;
+    }
+    if (waitUntil === "networkidle") {
+      const onFirstFinish = () => {
+        let idleTimer = null;
+        const clearIdle = () => {
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = null;
+        };
+        const scheduleIdle = () => {
+          clearIdle();
+          idleTimer = setTimeout(() => finish({ ok: true, phase: "networkidle" }), networkIdleMs);
+        };
+        const onStart = () => clearIdle();
+        const onStop = () => scheduleIdle();
+        wv.addEventListener("did-start-loading", onStart);
+        wv.addEventListener("did-stop-loading", onStop);
+        cleanupFns.push(() => wv.removeEventListener("did-start-loading", onStart));
+        cleanupFns.push(() => wv.removeEventListener("did-stop-loading", onStop));
+        cleanupFns.push(clearIdle);
+        scheduleIdle();
+      };
+      wv.addEventListener("did-finish-load", onFirstFinish, { once: true });
+      cleanupFns.push(() => wv.removeEventListener("did-finish-load", onFirstFinish));
+      return;
+    }
+    finish({ ok: false, error: "unknown_waitUntil" });
+  });
+}
+
+/**
+ * After a DOM action: if no load burst within probeMs, resolve fast; else wait for quiet period (idleMs after last did-stop).
+ */
+function createWebviewAdaptiveSettlePromise(wv, opts) {
+  const probeMs = opts.probeMs ?? 50;
+  const idleMs = opts.idleMs ?? 400;
+  const maxMs = opts.maxMs ?? 4000;
+  return new Promise((resolve) => {
+    let settled = false;
+    let probeTimer;
+    let overallTimer;
+    let idleTimer = null;
+    let didStartCount = 0;
+    let didStopCount = 0;
+    const cleanupFns = [];
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      try {
+        clearTimeout(probeTimer);
+      } catch {
+        /* ignore */
+      }
+      try {
+        clearTimeout(overallTimer);
+      } catch {
+        /* ignore */
+      }
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
+      for (let i = 0; i < cleanupFns.length; i++) {
+        try {
+          cleanupFns[i]();
+        } catch {
+          /* ignore */
+        }
+      }
+      traceKernel("automationAdaptiveSettle", {
+        ...result,
+        didStartLoadingCount: didStartCount,
+        didStopLoadingCount: didStopCount,
+      });
+      resolve(result);
+    };
+
+    overallTimer = setTimeout(() => finish({ ok: false, error: "timeout" }), maxMs);
+
+    const clearIdle = () => {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
+    };
+    const scheduleIdle = () => {
+      clearIdle();
+      idleTimer = setTimeout(() => finish({ ok: true, phase: "quiet" }), idleMs);
+    };
+
+    const enterQuietMode = () => {
+      const onStartLoading = () => {
+        didStartCount++;
+        clearIdle();
+      };
+      const onStopLoading = () => {
+        didStopCount++;
+        scheduleIdle();
+      };
+      wv.addEventListener("did-start-loading", onStartLoading);
+      wv.addEventListener("did-stop-loading", onStopLoading);
+      cleanupFns.push(() => wv.removeEventListener("did-start-loading", onStartLoading));
+      cleanupFns.push(() => wv.removeEventListener("did-stop-loading", onStopLoading));
+      cleanupFns.push(clearIdle);
+    };
+
+    const onEarlyStart = () => {
+      didStartCount++;
+      try {
+        clearTimeout(probeTimer);
+      } catch {
+        /* ignore */
+      }
+      wv.removeEventListener("did-start-loading", onEarlyStart);
+      enterQuietMode();
+    };
+
+    wv.addEventListener("did-start-loading", onEarlyStart);
+    cleanupFns.push(() => wv.removeEventListener("did-start-loading", onEarlyStart));
+
+    probeTimer = setTimeout(() => {
+      wv.removeEventListener("did-start-loading", onEarlyStart);
+      finish({ ok: true, phase: "fast" });
+    }, probeMs);
+  });
 }
 
 function refreshDomRefsFromDocument() {
@@ -261,6 +590,11 @@ function refreshDomRefsFromDocument() {
   tbMinimize = document.getElementById("tbMinimize");
   tbMaximize = document.getElementById("tbMaximize");
   tbClose = document.getElementById("tbClose");
+  titlebarBrowserBtn = document.getElementById("titlebarBrowserBtn");
+  titlebarIntelligentBtn = document.getElementById("titlebarIntelligentBtn");
+  appContainer = document.getElementById("appContainer");
+  chatSubtitle = document.getElementById("chatSubtitle");
+  newChatBtn = document.getElementById("newChatBtn");
   homePageInput = document.getElementById("homePageInput");
   chatSection = document.getElementById("chatSection");
   chatWrapper = document.getElementById("chatWrapper");
@@ -330,11 +664,15 @@ type TopSurface =
   | "bookmarks"
   | "history"
   | "passwords"
+  | "sessions"
+  | "screenshots"
   | "toolsHub"
   | "settings"
+  | "browserSettings"
   | "networkWorkbench";
 
-let lastToolsHubCrumbs: string[] = ["Tool Hub"];
+let lastToolsHubCrumbs: string[] = ["Browser Tool Hub"];
+let lastScreenshotCrumbs: string[] = ["Screenshot Library"];
 
 function setAddressCrumbText(text: string): void {
   const t = (text || "").trim();
@@ -376,9 +714,9 @@ function syncTopChromeForSurface(): void {
 
   const hub = document.getElementById("toolsHubRoot");
   const hubOpen = !!(hub && hub.classList.contains("tools-hub--open"));
-  const settingsOpen = !!document
-    .getElementById("webviewContainer")
-    ?.hasAttribute("data-settings-open");
+  const settingsOpen =
+    shellWorkspace === "settings" ||
+    !!document.getElementById("appContainer")?.hasAttribute("data-settings-open");
   const workbenchOpen = !!document
     .getElementById("webviewContainer")
     ?.hasAttribute("data-workbench-open");
@@ -386,14 +724,24 @@ function syncTopChromeForSurface(): void {
   const bookmarksOpen = !!document.getElementById("bookmarksPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
   const historyOpen = !!document.getElementById("historyPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
   const passwordsOpen = !!document.getElementById("passwordsPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
+  const screenshotsOpen = !!document
+    .getElementById("screenshotsPanel")
+    ?.classList.contains(SIDE_PANEL_OPEN_CLASS);
+  const sessionsOpen = !!document.getElementById("sessionsPanel")?.classList.contains(SIDE_PANEL_OPEN_CLASS);
+  const browserChromeSettingsOpen = !!document
+    .getElementById("browserSettingsPanel")
+    ?.classList.contains(SIDE_PANEL_OPEN_CLASS);
 
   let surface: TopSurface = "webview";
   if (hubOpen) surface = "toolsHub";
   else if (workbenchOpen) surface = "networkWorkbench";
   else if (settingsOpen) surface = "settings";
+  else if (browserChromeSettingsOpen) surface = "browserSettings";
   else if (historyOpen) surface = "history";
   else if (bookmarksOpen) surface = "bookmarks";
   else if (passwordsOpen) surface = "passwords";
+  else if (screenshotsOpen) surface = "screenshots";
+  else if (sessionsOpen) surface = "sessions";
 
   bsec.setAttribute("data-surface", surface);
 
@@ -401,8 +749,13 @@ function syncTopChromeForSurface(): void {
   else if (surface === "history") setCrumbParts(["History"]);
   else if (surface === "bookmarks") setCrumbParts(["Bookmarks"]);
   else if (surface === "passwords") setCrumbParts(["Saved passwords"]);
+  else if (surface === "sessions") setCrumbParts(["Sessions"]);
+  else if (surface === "screenshots")
+    setCrumbParts(lastScreenshotCrumbs.length ? lastScreenshotCrumbs : ["Screenshot Library"]);
   else if (surface === "settings") setCrumbParts(["Settings"]);
-  else if (surface === "toolsHub") setCrumbParts(lastToolsHubCrumbs.length ? lastToolsHubCrumbs : ["Tool Hub"]);
+  else if (surface === "browserSettings") setCrumbParts(["Browser settings"]);
+  else if (surface === "toolsHub")
+    setCrumbParts(lastToolsHubCrumbs.length ? lastToolsHubCrumbs : ["Browser Tool Hub"]);
   else if (surface === "networkWorkbench") setCrumbParts(["Network", "Workbench"]);
 }
 
@@ -413,14 +766,22 @@ function ensureReactPortalHostsAfterShellChange() {
   setupReactPortalHosts();
   refreshDomRefsFromDocument();
   if (USE_REACT_MODALS) wireReactSettingsButtons();
-  if (!browserFrame) return;
-  if (prevFrame !== browserFrame || (prevFrame && !prevFrame.isConnected)) {
-    webviewReady = false;
-    if (browserFrame) setupWebviewEvents(browserFrame);
-    const t = getTab(activeTabId);
-    if (t) {
-      t.initialized = false;
-      switchTab(activeTabId);
+  try {
+    if (!browserFrame) return;
+    if (prevFrame !== browserFrame || (prevFrame && !prevFrame.isConnected)) {
+      webviewReady = false;
+      if (browserFrame) setupWebviewEvents(browserFrame);
+      const t = getTab(activeTabId);
+      if (t) {
+        t.initialized = false;
+        switchTab(activeTabId);
+      }
+    }
+  } finally {
+    try {
+      restoreUnseenScreenshotRailBadgeFromStorage();
+    } catch {
+      /* ignore */
     }
   }
 }
@@ -428,6 +789,8 @@ function ensureReactPortalHostsAfterShellChange() {
 refreshDomRefsFromDocument();
 hydrateLoadingSpotlightShellStages();
 setupReactPortalHosts();
+// IMPORTANT: run after DOM refs (`browserFrame`) declarations are initialized.
+syncFromActiveSession();
 // addTabBtn is rendered dynamically inside renderTabs()
 
 // If the app is waiting on profile selection, keep the loading spotlight behind modals
@@ -436,58 +799,169 @@ setProfileGateBackdrop(USE_REACT_MODALS && tabs.length === 0);
 
 let chatOpen = true;
 
+let convState = loadConversationState();
+const scheduleConvSave = createDebouncedSave(400);
+let shellWorkspace = "browser";
+
 // ── Init ─────────────────────────────────────────────────────
 function hideLegacyModalContainers() {
   [
-    "settingsOverlay",
-    "settingsPanel",
     "firstRunOverlay",
     "profileOverlay",
     "importWizard",
     "importOverlay",
   ].forEach((id) => {
     const el = document.getElementById(id);
-    if (el) el.style.display = "none";
+    if (el) {
+      el.style.display = "none";
+      el.setAttribute("aria-hidden", "true");
+    }
   });
+  document.getElementById("webviewOverlayHost")?.setAttribute("aria-hidden", "true");
 }
 
-/** Clears settings DOM state and notifies React — call after the next surface is visible when possible. */
+/** Clears intelligent-settings modal flag over webview and notifies embedded UIs. */
 function leaveSettingsSurfaceSync() {
-  document.getElementById("webviewContainer")?.removeAttribute("data-settings-open");
+  document.getElementById("appContainer")?.removeAttribute("data-settings-open");
+  const host = document.getElementById("webviewOverlayHost");
+  if (host) host.setAttribute("aria-hidden", "true");
   window.dispatchEvent(new CustomEvent("react-close-settings"));
 }
 
+function notifyBrowserChromeSettingsSide(open) {
+  try {
+    window.dispatchEvent(new CustomEvent("browser-chrome-settings-side", { detail: { open } }));
+  } catch {
+    /* ignore */
+  }
+}
+
+function closeBrowserSettingsSidePanel() {
+  const p = document.getElementById("browserSettingsPanel");
+  if (!p?.classList.contains(SIDE_PANEL_OPEN_CLASS)) return;
+  p.classList.remove(SIDE_PANEL_OPEN_CLASS);
+  p.setAttribute("aria-hidden", "true");
+  notifyBrowserChromeSettingsSide(false);
+  syncRailPanelActive();
+  syncWebviewInteractionLayer();
+}
+
+/** Close browser settings column + clear modal overlay flag (intelligent settings modal). */
+function closeBrowserChromeSettingsOverlay() {
+  closeBrowserSettingsSidePanel();
+  document.getElementById("appContainer")?.removeAttribute("data-settings-open");
+  const host = document.getElementById("webviewOverlayHost");
+  if (host) host.setAttribute("aria-hidden", "true");
+}
+
+/** @deprecated Use rail Settings (toggles side panel). Kept for API compatibility. */
+function openBrowserChromeSettingsOverlay() {
+  toggleSidePanel("browserSettingsPanel");
+}
+
+let browserChromeSettingsOverlayControlsWired = false;
+function wireBrowserChromeSettingsOverlayControls() {
+  if (browserChromeSettingsOverlayControlsWired) return;
+  browserChromeSettingsOverlayControlsWired = true;
+}
+
+/** Clears workbench DOM state and notifies React — call after the next surface is visible when possible. */
+function leaveWorkbenchSurfaceSync() {
+  document.getElementById("webviewContainer")?.removeAttribute("data-workbench-open");
+  window.dispatchEvent(new CustomEvent("react-close-workbench"));
+}
+
+/** Intelligent assistant: large modal (intelligent workspace). Browser: side panel. */
+function openIntelligentAssistantSettings() {
+  /* Do not call closeBrowserChromeSettingsOverlay() here: it clears data-settings-open and
+   * webviewOverlayHost aria-hidden. openIntelligentAssistantSettings runs on every workspace
+   * settings click; when the React modal is already open, setState(true) is a no-op so
+   * SettingsPanel's layout effect does not re-run — the overlay stays torn down and the modal
+   * looks closed / will not reopen. closeSidePanels() already closes the browser settings column. */
+  closeSidePanels();
+  const browserHub = document.getElementById("toolsHubRoot");
+  const intelligentHub = document.getElementById("intelligentToolsHubRoot");
+  if (
+    (browserHub && browserHub.classList.contains("tools-hub--open")) ||
+    (intelligentHub && intelligentHub.classList.contains("tools-hub--open"))
+  ) {
+    closeToolsHub();
+  }
+  leaveWorkbenchSurfaceSync();
+  /* React SettingsPanel sets data-settings-open when the modal is open. Clearing it here on
+   * every call broke sync: reopening while already on intelligent removed the attribute but
+   * React did not re-run the layout effect (open stayed true), leaving overlay/CSS out of sync
+   * until the modal broke (e.g. settings would not open again). Only clear when switching
+   * into intelligent workspace from elsewhere. */
+  if (shellWorkspace !== "intelligent") {
+    document.getElementById("appContainer")?.removeAttribute("data-settings-open");
+    enterIntelligentWorkspace();
+  }
+  window.dispatchEvent(new CustomEvent("intelligent-assistant-settings-open"));
+  syncRailPanelActive();
+  syncWebviewInteractionLayer();
+}
+
+function enterSettingsWorkspace(panel) {
+  if (panel === "browser") {
+    toggleSidePanel("browserSettingsPanel");
+    return;
+  }
+  openIntelligentAssistantSettings();
+}
+
 function wireReactSettingsButtons() {
-  const s = document.getElementById("settingsBtn");
-  const open = () => {
-    closeSidePanels();
-    const hub = document.getElementById("toolsHubRoot");
-    const hubWasOpen = !!(hub && hub.classList.contains("tools-hub--open"));
-    document.getElementById("webviewContainer")?.setAttribute("data-settings-open", "");
-    window.dispatchEvent(new CustomEvent("react-open-settings"));
-    syncRailPanelActive();
-    syncWebviewInteractionLayer();
-    if (hubWasOpen) {
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        window.removeEventListener("react-settings-mounted", onMounted);
-        closeToolsHub();
-      };
-      const onMounted = () => finish();
-      window.addEventListener("react-settings-mounted", onMounted);
-      window.setTimeout(finish, 250);
-    }
+  wireBrowserChromeSettingsOverlayControls();
+  const bindClickOnce = (el, fn) => {
+    if (!el) return;
+    if (el.dataset && el.dataset.orionBoundClick === "1") return;
+    el.addEventListener("click", (e) => {
+      e.preventDefault();
+      fn();
+    });
+    if (el.dataset) el.dataset.orionBoundClick = "1";
   };
-  if (s) s.onclick = open;
+  const s = document.getElementById("settingsBtn");
+  const chatSettings = document.getElementById("settingsBtnChat");
+  const iwToolHub = document.getElementById("intelligentWorkspaceToolHubBtn");
+  const iwRailToolHub = document.getElementById("chatHistoryRailToolsHubBtn");
+  if (s) {
+    s.onclick = () => {
+      if (shellWorkspace === "browser") {
+        toggleSidePanel("browserSettingsPanel");
+      } else {
+        openIntelligentAssistantSettings();
+      }
+    };
+  }
+  if (chatSettings) chatSettings.onclick = () => openIntelligentAssistantSettings();
+  const iwSettings = document.getElementById("intelligentWorkspaceSettingsBtn");
+  if (iwSettings) iwSettings.onclick = () => openIntelligentAssistantSettings();
+  bindClickOnce(iwToolHub, () => openToolsHub({ mode: "intelligent" }));
+  bindClickOnce(iwRailToolHub, () => openToolsHub({ mode: "intelligent" }));
+
+  // Delegated fallback for dynamic/remounted Intelligent footer buttons.
+  const root = document.getElementById("appContainer") || document.body;
+  if (root && !root.hasAttribute("data-orion-iw-toolhub-delegated")) {
+    root.setAttribute("data-orion-iw-toolhub-delegated", "1");
+    root.addEventListener("click", (ev) => {
+      const target = ev.target instanceof Element ? ev.target : null;
+      if (!target) return;
+      const btn = target.closest(
+        "#intelligentWorkspaceToolHubBtn, #chatHistoryRailToolsHubBtn",
+      );
+      if (!btn) return;
+      ev.preventDefault();
+      openToolsHub({ mode: "intelligent" });
+    });
+  }
 }
 
 function showWebviewOnly() {
+  closeBrowserChromeSettingsOverlay();
   closeSidePanels();
   closeToolsHub();
-  document.getElementById("webviewContainer")?.removeAttribute("data-workbench-open");
-  window.dispatchEvent(new CustomEvent("react-close-workbench"));
+  leaveWorkbenchSurfaceSync();
   leaveSettingsSurfaceSync();
   syncRailPanelActive();
   syncWebviewInteractionLayer();
@@ -496,6 +970,167 @@ function showWebviewOnly() {
 // -----------------------------------------------------------
 //  TAB MANAGEMENT
 // ═══════════════════════════════════════════════════════════
+
+function createSessionState(headless) {
+  const id = generateSessionId();
+  const s = makeSession(id, !!headless);
+  sessions.set(id, s);
+  return s;
+}
+
+function listSessions() {
+  const now = Date.now();
+  return Array.from(sessions.values()).map((s) => ({
+    id: s.id,
+    headless: !!s.headless,
+    tabCount: s.tabs.length,
+    activeTabId: s.activeTabId,
+    isActive: s.id === activeSessionId,
+    createdAt: typeof s.createdAt === "number" ? s.createdAt : now,
+    activeForMs: Math.max(0, now - (s.createdAt || now)),
+  }));
+}
+
+function ensureActiveShellReady() {
+  if (!getSession(activeSessionId)) {
+    sessions.set(DEFAULT_SESSION_ID, makeSession(DEFAULT_SESSION_ID, false));
+    activeSessionId = DEFAULT_SESSION_ID;
+    syncFromActiveSession();
+  }
+  if (tabs.length === 0) createTab(homePage);
+  if (activeTabId == null && tabs.length > 0) activeTabId = tabs[0].id;
+  const active = activeTabId != null ? getTab(activeTabId) : null;
+  if (active && !active.webview) ensureWebviewForTab(active);
+  // If shell is now bootstrapped, never keep the startup backdrop blocking UI.
+  if (tabs.length > 0) setProfileGateBackdrop(false);
+  traceKernel("ensureActiveShellReady", {
+    tabs: tabs.length,
+    activeTabId,
+    activeSessionId,
+    hasBrowserFrame: !!browserFrame,
+    hasActiveWebview: !!active?.webview,
+  });
+}
+
+function setWebviewVisibilityForSession(sessionId, visible) {
+  const s = getSession(sessionId);
+  if (!s) return;
+  s.tabs.forEach((t) => {
+    if (!t.webview) return;
+    if (!visible) t.webview.removeAttribute("id");
+    t.webview.style.visibility = visible ? "visible" : "hidden";
+    t.webview.style.pointerEvents = visible ? "auto" : "none";
+    t.webview.style.zIndex = visible ? "1" : "0";
+  });
+}
+
+function rebindActiveSessionViewport() {
+  traceKernel("rebindActiveSessionViewport:start", snapshotKernelState());
+  const s = getSession(activeSessionId);
+  let active = activeTabId != null ? getTab(activeTabId) : null;
+  if (!active && tabs.length > 0) {
+    activeTabId = tabs[0].id;
+    active = tabs[0];
+  }
+  if (active && !active.webview) ensureWebviewForTab(active);
+  if (active) {
+    // Re-run full switch path to restore nav/address/find bindings and webview visibility.
+    traceKernel("rebindActiveSessionViewport:switching_active_tab", { activeTabId: active.id });
+    switchTab(active.id);
+    traceKernel("rebindActiveSessionViewport:after_switchTab", snapshotKernelState());
+    return;
+  }
+  document.querySelectorAll("webview#browserFrame").forEach((wv) => {
+    try {
+      wv.removeAttribute("id");
+    } catch {
+      /* ignore */
+    }
+  });
+  if (active && active.webview) {
+    active.webview.id = "browserFrame";
+    active.webview.style.visibility = s?.headless ? "hidden" : "visible";
+    active.webview.style.pointerEvents = s?.headless ? "none" : "auto";
+    active.webview.style.zIndex = "1";
+    browserFrame = active.webview;
+  } else {
+    browserFrame = null;
+  }
+  if (addressBar) addressBar.value = active?.url === "about:blank" ? "" : active?.url || "";
+  updateNavButtons();
+  syncWebviewInteractionLayer();
+  traceKernel("rebindActiveSessionViewport:end", snapshotKernelState());
+}
+
+function switchSession(sessionId) {
+  traceKernel("switchSession:start", { targetSessionId: sessionId, state: snapshotKernelState() });
+  const next = getSession(sessionId);
+  if (!next) {
+    traceKernel("switchSession:target_missing", { targetSessionId: sessionId });
+    return false;
+  }
+  if (browserFrame) browserFrame.removeAttribute("id");
+  persistActiveSessionState();
+  setWebviewVisibilityForSession(activeSessionId, false);
+  activeSessionId = sessionId;
+  syncFromActiveSession();
+  if (!next.headless && tabs.length === 0) createTab(homePage);
+  next.lastActiveAt = Date.now();
+  if (activeTabId == null && tabs.length > 0) activeTabId = tabs[0].id;
+  const active = activeTabId != null ? getTab(activeTabId) : null;
+  browserFrame = active?.webview || null;
+  if (active && active.webview) {
+    active.webview.id = "browserFrame";
+    active.webview.style.visibility = next.headless ? "hidden" : "visible";
+    active.webview.style.pointerEvents = next.headless ? "none" : "auto";
+  }
+  if (addressBar) addressBar.value = active?.url === "about:blank" ? "" : active?.url || "";
+  renderTabs();
+  updateNavButtons();
+  syncWebviewInteractionLayer();
+  traceKernel("switchSession:end", { targetSessionId: sessionId, state: snapshotKernelState() });
+  return true;
+}
+
+function killSessionById(sessionId) {
+  traceKernel("killSessionById:start", { sessionId, state: snapshotKernelState() });
+  if (!sessionId || sessionId === DEFAULT_SESSION_ID) return false;
+  persistActiveSessionState();
+  const s = getSession(sessionId);
+  if (!s) {
+    traceKernel("killSessionById:session_missing", { sessionId });
+    return false;
+  }
+  try {
+    void window.electronAPI?.bgKillSession?.(sessionId);
+  } catch {
+    /* ignore */
+  }
+  s.tabs.forEach((t) => {
+    if (!t.webview) return;
+    try {
+      t.webview.remove();
+    } catch {
+      /* ignore */
+    }
+    t.webview = null;
+  });
+  sessions.delete(sessionId);
+  if (activeSessionId === sessionId) {
+    traceKernel("killSessionById:deleted_active_session_switching_default", { sessionId });
+    switchSession(DEFAULT_SESSION_ID);
+  } else {
+    // Deleting a non-active session can still disturb DOM ids/visibility; restore active viewport invariants.
+    traceKernel("killSessionById:deleted_non_active_session_rebind", {
+      deletedSessionId: sessionId,
+      currentActiveSessionId: activeSessionId,
+    });
+    rebindActiveSessionViewport();
+    renderTabs();
+  }
+  traceKernel("killSessionById:end", { sessionId, state: snapshotKernelState() });
+  return true;
+}
 
 function createTab(url = homePage) {
   const id = ++tabCounter;
@@ -534,36 +1169,41 @@ function spawnTab(triggerEl) {
 
 let webviewReady = false;
 
-function urlsMatchForTabSwitch(a, b) {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  try {
-    return new URL(a).href === new URL(b).href;
-  } catch {
-    return false;
-  }
-}
-
 function isActiveWebview(wv) {
   const t = getTab(activeTabId);
   return !!(t && t.webview === wv);
 }
 
 function ensureWebviewForTab(tab) {
-  if (tab.webview) return tab.webview;
+  if (tab.webview) {
+    // A tab may keep a stale webview reference after session switching/deletion.
+    // If it's disconnected, recreate it so session-scoped commands (nav/screenshot) work.
+    if (tab.webview.isConnected) return tab.webview;
+    try {
+      tab.webview.remove();
+    } catch {
+      /* ignore */
+    }
+    tab.webview = null;
+  }
   const container = document.getElementById("webviewContainer");
   if (!container) return null;
+  const s = getSession(activeSessionId);
+  const isHeadless = !!s?.headless;
 
   const unowned = document.getElementById("browserFrame");
   if (
     unowned &&
     unowned.parentNode === container &&
-    !tabs.some((t) => t.webview === unowned)
+    !isWebviewOwnedByAnySession(unowned)
   ) {
     tab.webview = unowned;
     unowned.dataset.orionTabId = String(tab.id);
+    unowned.dataset.orionSessionId = activeSessionId;
     unowned.style.position = "absolute";
     unowned.style.inset = "0";
+    unowned.style.visibility = isHeadless ? "hidden" : "visible";
+    unowned.style.pointerEvents = isHeadless ? "none" : "auto";
     setupWebviewEvents(unowned);
     return unowned;
   }
@@ -571,9 +1211,11 @@ function ensureWebviewForTab(tab) {
   const wv = document.createElement("webview");
   wv.className = "browser-frame";
   wv.setAttribute("allowpopups", "");
+  wv.setAttribute("partition", `persist:orion_${activeSessionId}`);
   wv.dataset.orionTabId = String(tab.id);
+  wv.dataset.orionSessionId = activeSessionId;
   wv.style.cssText =
-    "position:absolute;inset:0;visibility:hidden;pointer-events:none;z-index:0;";
+    `position:absolute;inset:0;visibility:${isHeadless ? "hidden" : "visible"};pointer-events:none;z-index:0;`;
   container.appendChild(wv);
   tab.webview = wv;
   setupWebviewEvents(wv);
@@ -581,11 +1223,17 @@ function ensureWebviewForTab(tab) {
 }
 
 function switchTab(id) {
+  traceKernel("switchTab:start", { tabId: id, state: snapshotKernelState() });
   const prevActiveId = activeTabId;
   const prevTab = prevActiveId != null ? getTab(prevActiveId) : null;
   activeTabId = id;
   const tab = getTab(id);
-  if (!tab) return;
+  if (!tab) {
+    traceKernel("switchTab:tab_missing", { tabId: id, state: snapshotKernelState() });
+    return;
+  }
+  const session = getSession(activeSessionId);
+  const isHeadless = !!session?.headless;
 
   if (prevTab && prevTab.webview) {
     prevTab.webview.style.visibility = "hidden";
@@ -598,13 +1246,14 @@ function switchTab(id) {
   if (!wv) {
     if (addressBar) addressBar.value = tab.url === "about:blank" ? "" : tab.url;
     renderTabs();
+    traceKernel("switchTab:no_webview", { tabId: id, state: snapshotKernelState() });
     return;
   }
 
   browserFrame = wv;
   wv.id = "browserFrame";
-  wv.style.visibility = "visible";
-  wv.style.pointerEvents = "auto";
+  wv.style.visibility = isHeadless ? "hidden" : "visible";
+  wv.style.pointerEvents = isHeadless ? "none" : "auto";
   wv.style.zIndex = "1";
   wv.style.position = "absolute";
   wv.style.inset = "0";
@@ -651,6 +1300,9 @@ function switchTab(id) {
   updateBookmarkStar(tab.url === "about:blank" ? "" : tab.url);
   renderTabs();
   syncWebviewInteractionLayer();
+  // Keep session object in sync so syncFromActiveSession() restores correct state.
+  persistActiveSessionState();
+  traceKernel("switchTab:end", { tabId: id, state: snapshotKernelState() });
 }
 
 function closeTab(id, e) {
@@ -669,7 +1321,12 @@ function closeTab(id, e) {
     createTab();
     return;
   }
-  if (activeTabId === id) switchTab(tabs[tabs.length - 1].id);
+  if (activeTabId === id) {
+    const fallback = tabs[tabs.length - 1];
+    // If fallback tab points to a stale/removed webview, clear it so a fresh one is created.
+    if (fallback?.webview && !fallback.webview.isConnected) fallback.webview = null;
+    switchTab(fallback.id);
+  }
   else renderTabs();
 }
 
@@ -884,6 +1541,7 @@ function resolveInput(raw) {
 }
 
 function navigateTo(raw) {
+  traceKernel("navigateTo:start", { raw, state: snapshotKernelState() });
   const url = resolveInput(raw);
   if (!url) return;
   const tab = getTab(activeTabId);
@@ -893,10 +1551,25 @@ function navigateTo(raw) {
   tab.url = url;
   tab.initialized = true;
   if (addressBar) addressBar.value = url;
-  wv.loadURL(url);
+  try {
+    wv.loadURL(url);
+  } catch {
+    // Some freshly-created webviews (especially headless sessions) can throw until dom-ready.
+    // Setting src is safe pre-dom-ready and lets Electron navigate as soon as guest is ready.
+    try {
+      wv.src = url;
+    } catch {
+      try {
+        wv.setAttribute("src", url);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
   setLoading(true);
   updateSecurityIcon(url);
   hideError();
+  traceKernel("navigateTo:end", { raw, resolvedUrl: url, state: snapshotKernelState() });
 }
 
 function updateNavButtons() {
@@ -904,12 +1577,35 @@ function updateNavButtons() {
   try {
     backBtn.disabled = !browserFrame.canGoBack();
     forwardBtn.disabled = !browserFrame.canGoForward();
+    traceKernel("updateNavButtons", {
+      backDisabled: backBtn?.disabled,
+      forwardDisabled: forwardBtn?.disabled,
+      hasBrowserFrame: !!browserFrame,
+      browserFrameSession: browserFrame?.dataset?.orionSessionId || null,
+      browserFrameTab: browserFrame?.dataset?.orionTabId || null,
+    });
   } catch {
     /* webview not ready */
+    traceKernel("updateNavButtons:webview_not_ready", {
+      hasBrowserFrame: !!browserFrame,
+      browserFrameId: browserFrame?.id || null,
+    });
   }
 }
 
+function scheduleLoadingOff() {
+  if (loadingOffTimer) clearTimeout(loadingOffTimer);
+  loadingOffTimer = setTimeout(() => {
+    loadingOffTimer = null;
+    setLoading(false);
+  }, LOADING_OFF_DEBOUNCE_MS);
+}
+
 function setLoading(on) {
+  if (loadingOffTimer) {
+    clearTimeout(loadingOffTimer);
+    loadingOffTimer = null;
+  }
   isLoading = on;
   const tab = getTab(activeTabId);
   if (tab) {
@@ -917,10 +1613,30 @@ function setLoading(on) {
     renderTabs();
   }
   if (on) {
+    if (loadingOverlayHideTimer) {
+      clearTimeout(loadingOverlayHideTimer);
+      loadingOverlayHideTimer = null;
+    }
     if (loadingOverlay) {
-      const st = loadingOverlay.querySelector(".loading-spotlight-stage");
-      if (st) shuffleLoadingSpotlightStage(st);
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const wasHidden = loadingOverlay.style.display === "none" || loadingOverlay.style.display === "";
       loadingOverlay.style.display = "flex";
+      const st = loadingOverlay.querySelector(".loading-spotlight-stage");
+      if (wasHidden && st && !reduceMotion) shuffleLoadingSpotlightStage(st);
+      if (wasHidden) {
+        loadingOverlay.classList.remove("loading-overlay--visible");
+        if (reduceMotion) {
+          loadingOverlay.classList.add("loading-overlay--visible");
+        } else {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              if (loadingOverlay && isLoading) loadingOverlay.classList.add("loading-overlay--visible");
+            });
+          });
+        }
+      } else if (!loadingOverlay.classList.contains("loading-overlay--visible")) {
+        loadingOverlay.classList.add("loading-overlay--visible");
+      }
     }
     if (!USE_REACT_NAV_UI && reloadBtn) {
       reloadBtn.classList.add("stop-mode");
@@ -928,7 +1644,16 @@ function setLoading(on) {
       reloadBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
     }
   } else {
-    if (loadingOverlay) loadingOverlay.style.display = "none";
+    if (loadingOverlay) {
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      loadingOverlay.classList.remove("loading-overlay--visible");
+      if (loadingOverlayHideTimer) clearTimeout(loadingOverlayHideTimer);
+      const hideMs = reduceMotion ? 0 : 220;
+      loadingOverlayHideTimer = setTimeout(() => {
+        loadingOverlayHideTimer = null;
+        if (!isLoading && loadingOverlay) loadingOverlay.style.display = "none";
+      }, hideMs);
+    }
     if (!USE_REACT_NAV_UI && reloadBtn) {
       reloadBtn.classList.remove("stop-mode");
       reloadBtn.title = "Reload (F5)";
@@ -1040,13 +1765,15 @@ function setupWebviewEvents(wv) {
   wv.addEventListener(
     "dom-ready",
     () => {
+      webviewDomReady.add(wv);
       try {
         wv.setZoomLevel(zoomLevel);
       } catch {
         /* ignore */
       }
       const tid = Number(wv.dataset.orionTabId);
-      const tab = getTab(tid);
+      const sid = String(wv.dataset.orionSessionId || activeSessionId);
+      const tab = getTabInSession(sid, tid);
       if (tab && tab.url && tab.url !== "about:blank") {
         window.setTimeout(() => {
           if (!isActiveWebview(wv)) return;
@@ -1091,13 +1818,14 @@ function setupWebviewEvents(wv) {
 
   wv.addEventListener("did-stop-loading", () => {
     if (!isActiveWebview(wv)) return;
-    setLoading(false);
+    scheduleLoadingOff();
     updateNavButtons();
   });
 
   wv.addEventListener("did-finish-load", () => {
+    webviewDidFinishLoad.add(wv);
     if (isActiveWebview(wv)) {
-      setLoading(false);
+      scheduleLoadingOff();
       updateNavButtons();
     }
     wv
@@ -1115,7 +1843,8 @@ function setupWebviewEvents(wv) {
       )
       .then((faviconUrl) => {
         const tid = Number(wv.dataset.orionTabId);
-        const t = getTab(tid);
+        const sid = String(wv.dataset.orionSessionId || activeSessionId);
+        const t = getTabInSession(sid, tid);
         if (t && faviconUrl && !t.favicon) {
           t.favicon = faviconUrl;
           renderTabs();
@@ -1127,7 +1856,8 @@ function setupWebviewEvents(wv) {
   wv.addEventListener("did-navigate", (e) => {
     const url = e.url || wv.getURL();
     const tid = Number(wv.dataset.orionTabId);
-    const t = getTab(tid);
+    const sid = String(wv.dataset.orionSessionId || activeSessionId);
+    const t = getTabInSession(sid, tid);
     if (t) {
       t.url = url;
       t.favicon = null;
@@ -1149,7 +1879,8 @@ function setupWebviewEvents(wv) {
   wv.addEventListener("did-navigate-in-page", (e) => {
     const url = e.url || wv.getURL();
     const tid = Number(wv.dataset.orionTabId);
-    const t = getTab(tid);
+    const sid = String(wv.dataset.orionSessionId || activeSessionId);
+    const t = getTabInSession(sid, tid);
     if (t) t.url = url;
     if (isActiveWebview(wv)) {
       if (addressBar) addressBar.value = url;
@@ -1160,7 +1891,8 @@ function setupWebviewEvents(wv) {
 
   wv.addEventListener("page-title-updated", (e) => {
     const tid = Number(wv.dataset.orionTabId);
-    const t = getTab(tid);
+    const sid = String(wv.dataset.orionSessionId || activeSessionId);
+    const t = getTabInSession(sid, tid);
     if (t && e.title) {
       t.title = e.title;
       renderTabs();
@@ -1178,7 +1910,8 @@ function setupWebviewEvents(wv) {
 
   wv.addEventListener("page-favicon-updated", (e) => {
     const tid = Number(wv.dataset.orionTabId);
-    const t = getTab(tid);
+    const sid = String(wv.dataset.orionSessionId || activeSessionId);
+    const t = getTabInSession(sid, tid);
     if (t && e.favicons && e.favicons.length > 0) {
       t.favicon = e.favicons[0];
       renderTabs();
@@ -1352,27 +2085,228 @@ function closeScreenshotMenu() {
   screenshotMenuOpen = false;
 }
 
+function waitForWebviewDomReady(wv, timeoutMs = 8000) {
+  if (!wv) return Promise.reject(new Error("No webview"));
+  if (webviewDomReady.has(wv) || webviewDidFinishLoad.has(wv)) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      try {
+        // eslint-disable-next-line no-console
+        console.warn("[kernel] waitForWebviewDomReady timeout");
+      } catch {
+        /* ignore */
+      }
+      reject(new Error("dom-ready timeout"));
+    }, timeoutMs);
+
+    const onReady = () => {
+      window.clearTimeout(timer);
+      webviewDomReady.add(wv);
+      resolve(undefined);
+    };
+    const onFinish = () => {
+      window.clearTimeout(timer);
+      webviewDidFinishLoad.add(wv);
+      resolve(undefined);
+    };
+
+    // Once listener so we don't leak if screenshot is called multiple times.
+    wv.addEventListener("dom-ready", onReady, { once: true });
+    wv.addEventListener("did-finish-load", onFinish, { once: true });
+  });
+}
+
+async function copyScreenshotToClipboard(dataUrl) {
+  try {
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    const type = blob.type || "image/png";
+    await navigator.clipboard.write([new ClipboardItem({ [type]: blob })]);
+  } catch {
+    try {
+      await window.electronAPI?.copyScreenshotDataUrlToClipboard?.(dataUrl);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** New captures while the library panel is closed — shown on #screenshotsBtnBadge (persisted). */
+const UNSEEN_SCREENSHOT_LIBRARY_COUNT_KEY = "orion_screenshots_library_unseen_count";
+const UNSEEN_SCREENSHOT_LIBRARY_COUNT_MAX = 999;
+
+let unseenScreenshotLibraryCount = 0;
+
+function readPersistedUnseenScreenshotLibraryCount() {
+  try {
+    const raw = localStorage.getItem(UNSEEN_SCREENSHOT_LIBRARY_COUNT_KEY);
+    if (raw == null || raw === "") return 0;
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 0) return 0;
+    return Math.min(Math.floor(n), UNSEEN_SCREENSHOT_LIBRARY_COUNT_MAX);
+  } catch {
+    return 0;
+  }
+}
+
+function writePersistedUnseenScreenshotLibraryCount(n) {
+  try {
+    if (n <= 0) localStorage.removeItem(UNSEEN_SCREENSHOT_LIBRARY_COUNT_KEY);
+    else
+      localStorage.setItem(
+        UNSEEN_SCREENSHOT_LIBRARY_COUNT_KEY,
+        String(Math.min(Math.floor(n), UNSEEN_SCREENSHOT_LIBRARY_COUNT_MAX)),
+      );
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function restoreUnseenScreenshotRailBadgeFromStorage() {
+  unseenScreenshotLibraryCount = readPersistedUnseenScreenshotLibraryCount();
+  syncScreenshotsRailBadge();
+}
+
+function isScreenshotsLibraryPanelOpen() {
+  return !!document
+    .getElementById("screenshotsPanel")
+    ?.classList.contains(SIDE_PANEL_OPEN_CLASS);
+}
+
+function pulseScreenshotsRailBadge() {
+  const badge = document.getElementById("screenshotsBtnBadge");
+  if (!badge || badge.hidden) return;
+  try {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
+  } catch {
+    /* ignore */
+  }
+  badge.classList.remove("rail-btn__badge--pop");
+  void badge.offsetWidth;
+  badge.classList.add("rail-btn__badge--pop");
+  window.setTimeout(() => badge.classList.remove("rail-btn__badge--pop"), 480);
+}
+
+function bumpUnseenScreenshotLibraryCount() {
+  if (isScreenshotsLibraryPanelOpen()) return;
+  unseenScreenshotLibraryCount = Math.min(
+    unseenScreenshotLibraryCount + 1,
+    UNSEEN_SCREENSHOT_LIBRARY_COUNT_MAX,
+  );
+  writePersistedUnseenScreenshotLibraryCount(unseenScreenshotLibraryCount);
+  syncScreenshotsRailBadge();
+  pulseScreenshotsRailBadge();
+}
+
+function clearUnseenScreenshotLibraryCount() {
+  unseenScreenshotLibraryCount = 0;
+  writePersistedUnseenScreenshotLibraryCount(0);
+  syncScreenshotsRailBadge();
+}
+
+function syncScreenshotsRailBadge() {
+  const badge = document.getElementById("screenshotsBtnBadge");
+  const btn = document.getElementById("screenshotsBtn");
+  if (!badge) return;
+  const n = unseenScreenshotLibraryCount;
+  if (n <= 0) {
+    badge.hidden = true;
+    badge.textContent = "";
+    badge.classList.remove("rail-btn__badge--double", "rail-btn__badge--triple");
+    if (btn) {
+      btn.setAttribute("aria-label", "Screenshot library");
+      btn.setAttribute("title", "Screenshot library");
+    }
+    return;
+  }
+  const label = n > 99 ? "99+" : String(n);
+  badge.hidden = false;
+  badge.textContent = label;
+  badge.classList.toggle("rail-btn__badge--double", label.length >= 2);
+  badge.classList.toggle("rail-btn__badge--triple", label.length >= 3);
+  if (btn) {
+    btn.setAttribute(
+      "aria-label",
+      `Screenshot library, ${label} new since last opened`,
+    );
+    btn.setAttribute("title", `Screenshot library (${label} new)`);
+  }
+}
+
+function screenshotSavedToastMessage(
+  mode: ScreenshotCaptureMode | undefined,
+  filename: string,
+): string {
+  const base = filename || "image.png";
+  switch (mode) {
+    case "fullpage":
+      return `📸 Full page saved · ${base}`;
+    case "region":
+      return `📸 Region saved · ${base}`;
+    case "element":
+      return `📸 Element saved · ${base}`;
+    case "background":
+      return `📸 Background capture saved · ${base}`;
+    case "viewport":
+    default:
+      return `📸 Screenshot saved · ${base}`;
+  }
+}
+
+async function onScreenshotSaved(dataUrl, saved, meta) {
+  if (!saved?.success || !saved.path) return;
+  void copyScreenshotToClipboard(dataUrl);
+  const tab = activeTabId != null ? getTab(activeTabId) : null;
+  const rawUrl = meta?.url != null ? meta.url : tab?.url || "";
+  const url = rawUrl === "about:blank" ? "" : rawUrl;
+  const title = meta?.title != null ? meta.title : tab?.title || "";
+  appendScreenshotLibraryEntry({
+    path: saved.path,
+    filename: saved.filename,
+    url,
+    title,
+    mode: meta?.mode ?? "viewport",
+    width: meta?.width,
+    height: meta?.height,
+  });
+  window.dispatchEvent(new CustomEvent("orion-screenshot-library-changed"));
+  showToast(screenshotSavedToastMessage(meta?.mode, saved.filename), 3000);
+  bumpUnseenScreenshotLibraryCount();
+}
+
 async function takeScreenshot(mode = "viewport") {
   try {
+    if (!browserFrame) throw new Error("No webview attached");
+    await waitForWebviewDomReady(browserFrame, 8000);
     showToast("📸 Capturing...");
     const img = await captureFullImage();
     let dataUrl;
+    let w;
+    let h;
     if (mode === "fullpage") {
       const canvas = document.createElement("canvas");
       canvas.width = img.naturalWidth;
       canvas.height = img.naturalHeight;
       canvas.getContext("2d").drawImage(img, 0, 0);
       dataUrl = canvas.toDataURL("image/png");
+      w = canvas.width;
+      h = canvas.height;
     } else {
       // Viewport: crop to exactly the webview element bounds (0,0,w,h in CSS px)
       const rect = browserFrame.getBoundingClientRect();
       const scale = await getCaptureScale(img);
       dataUrl = cropImage(img, 0, 0, rect.width, rect.height, scale.x, scale.y);
+      w = Math.round(rect.width);
+      h = Math.round(rect.height);
     }
     const saved = await window.electronAPI.saveScreenshot(dataUrl);
     if (saved.success) {
-      showToast(`✅ Saved: ${saved.filename}`);
       addScreenshotMessage(dataUrl, saved.filename);
+      await onScreenshotSaved(dataUrl, saved, {
+        mode: mode === "fullpage" ? "fullpage" : "viewport",
+        width: w,
+        height: h,
+      });
     } else {
       showToast("❌ Screenshot failed");
     }
@@ -1449,8 +2383,12 @@ function takeScreenshotSelect() {
       const dataUrl = cropImage(img, x, y, w, h, scale.x, scale.y);
       const saved = await window.electronAPI.saveScreenshot(dataUrl);
       if (saved.success) {
-        showToast(`✅ Saved: ${saved.filename}`);
         addScreenshotMessage(dataUrl, saved.filename);
+        await onScreenshotSaved(dataUrl, saved, {
+          mode: "region",
+          width: Math.round(w),
+          height: Math.round(h),
+        });
       } else showToast("❌ Save failed");
     } catch (err) {
       showToast("❌ Capture failed");
@@ -1590,6 +2528,13 @@ function setupTitleBar() {
   tbMaximize.onclick = () => window.electronAPI.windowMaximize();
   tbClose.onclick = () => window.electronAPI.windowClose();
 
+  if (titlebarBrowserBtn) {
+    titlebarBrowserBtn.onclick = () => enterBrowserWorkspace();
+  }
+  if (titlebarIntelligentBtn) {
+    titlebarIntelligentBtn.onclick = () => enterIntelligentWorkspace();
+  }
+
   window.electronAPI.onWindowStateChanged((state) => {
     tbMaximize.title = state === "maximized" ? "Restore" : "Maximize";
   });
@@ -1617,19 +2562,34 @@ function applyTheme(name) {
 // ═══════════════════════════════════════════════════════════
 
 function setupSettings() {
+  if (!settingsPanel || !settingsOverlay) {
+    if (settingsBtn)
+      settingsBtn.onclick = () => {
+        toggleSidePanel("browserSettingsPanel");
+      };
+    return;
+  }
   const openSettings = () => {
     settingsPanel.style.display = "flex";
     settingsOverlay.style.display = "block";
     homePageInput.value = homePage;
+    document.getElementById("appContainer")?.setAttribute("data-settings-open", "");
+    document.getElementById("webviewOverlayHost")?.setAttribute("aria-hidden", "false");
+    settingsPanel.removeAttribute("aria-hidden");
+    settingsOverlay.setAttribute("aria-hidden", "false");
   };
   const closeSettings = () => {
     settingsPanel.style.display = "none";
     settingsOverlay.style.display = "none";
+    document.getElementById("appContainer")?.removeAttribute("data-settings-open");
+    document.getElementById("webviewOverlayHost")?.setAttribute("aria-hidden", "true");
+    settingsPanel.setAttribute("aria-hidden", "true");
+    settingsOverlay.setAttribute("aria-hidden", "true");
   };
 
   if (settingsBtn) settingsBtn.onclick = openSettings;
   if (settingsBtnChat) settingsBtnChat.onclick = openSettings;
-  closeSettingsBtn.onclick = closeSettings;
+  if (closeSettingsBtn) closeSettingsBtn.onclick = closeSettings;
   settingsOverlay.onclick = closeSettings;
 
   document.querySelectorAll(".theme-card").forEach((btn) => {
@@ -1849,8 +2809,12 @@ function setupKeyboardShortcuts() {
     const ctrl = e.ctrlKey || e.metaKey;
 
     if (e.key === "Escape") {
-      const hub = document.getElementById("toolsHubRoot");
-      if (hub && hub.classList.contains("tools-hub--open")) {
+      const browserHub = document.getElementById("toolsHubRoot");
+      const intelligentHub = document.getElementById("intelligentToolsHubRoot");
+      if (
+        (browserHub && browserHub.classList.contains("tools-hub--open")) ||
+        (intelligentHub && intelligentHub.classList.contains("tools-hub--open"))
+      ) {
         closeToolsHub();
         e.preventDefault();
         return;
@@ -2006,12 +2970,29 @@ function setupChat() {
   });
 
   clearChatBtn.onclick = () => {
-    chatMessages.innerHTML = "";
-    addBotMessage("Chat cleared. How can I help?");
+    if (typeof window.__aiChatClearConversation === "function") window.__aiChatClearConversation();
+    else clearActiveConversationMessages();
   };
 }
 
 function submitChat() {
+  if (typeof window.__aiChatSubmit === "function") {
+    const chatInputEl = document.getElementById("chatInput");
+    const chatInputMd = document.getElementById("chatInputMd");
+    const text = (chatInputEl?.value ?? "").trim();
+    if (!text) return;
+    window.__aiChatSubmit(text);
+    if (chatInputEl) {
+      chatInputEl.value = "";
+      chatInputEl.style.height = "auto";
+      chatInputEl.style.display = "block";
+    }
+    if (chatInputMd) {
+      chatInputMd.style.display = "none";
+      chatInputMd.innerHTML = "";
+    }
+    return;
+  }
   const chatInputEl = document.getElementById("chatInput");
   const chatInputMd = document.getElementById("chatInputMd");
   const text = chatInputEl.value.trim();
@@ -2026,53 +3007,515 @@ function submitChat() {
 }
 
 function getKernelAutomationContext() {
-  return {
-    getBrowserFrame: () => browserFrame,
-    navigateTo,
-    resolveInput,
-    reload: () => {
-      if (browserFrame) {
-        browserFrame.reload();
-        setLoading(true);
+  const ensureSessionCommandReady = (sessionId) =>
+    withSessionState(sessionId, () => {
+      if (tabs.length === 0) {
+        const id = ++tabCounter;
+        tabs.push({
+          id,
+          publicId: generatePublicTabId(),
+          url: homePage,
+          title: "New Tab",
+          favicon: null,
+          loading: false,
+          _new: false,
+          initialized: false,
+          webview: null,
+        });
+        activeTabId = id;
       }
+      if (activeTabId == null && tabs.length > 0) activeTabId = tabs[0].id;
+      const active = activeTabId != null ? getTab(activeTabId) : null;
+      if (active) {
+        if (!active.webview || !active.webview.isConnected) ensureWebviewForTab(active);
+        const wv = active.webview;
+        // For automation (especially headless / non-active session), the webview may sit at
+        // about:blank until that session becomes visible. Force navigation if needed.
+        if (wv && active.url && active.url !== "about:blank") {
+          let cur = "";
+          try {
+            cur = wv.getURL ? wv.getURL() : "";
+          } catch {
+            /* ignore */
+          }
+          const needsNav = !cur || cur === "about:blank" || !urlsMatchForTabSwitch(cur, active.url);
+          if (needsNav) {
+            try {
+              wv.loadURL(active.url);
+            } catch {
+              try {
+                wv.src = active.url;
+              } catch {
+                try {
+                  wv.setAttribute("src", active.url);
+                } catch {
+                  /* ignore */
+                }
+              }
+            }
+            active.initialized = true;
+          }
+        }
+      }
+      persistActiveSessionState();
+    });
+
+  const shouldUseBackground = (sessionId?: string): boolean => {
+    if (!sessionId) return false;
+    const s = getSession(sessionId);
+    if (!s) return false;
+    if (s.headless) return true;
+    return sessionId !== activeSessionId;
+  };
+
+  const getBackgroundFrame = (sessionId: string) => ({
+    executeJavaScript: async (code: string) => {
+      await window.electronAPI.bgEnsureSession(sessionId);
+      const r = await window.electronAPI.bgEval(sessionId, code);
+      if (!r?.success) throw new Error(r?.error || "bg eval failed");
+      return r.data;
     },
-    goBack: () => {
-      if (browserFrame && browserFrame.canGoBack()) browserFrame.goBack();
+    executeJavaScriptInGuestFrame: async (processId: number, routingId: number, code: string) => {
+      await window.electronAPI.bgEnsureSession(sessionId);
+      const r = await window.electronAPI.bgGuestExecInFrame(sessionId, processId, routingId, code);
+      if (!r?.success) throw new Error(r?.error || "bg guest exec failed");
+      return r.data;
     },
-    goForward: () => {
-      if (browserFrame && browserFrame.canGoForward()) browserFrame.goForward();
+  });
+
+  /** Shell-document sparkle so MCP/automation clicks show FX even when guest navigates away (guest DOM/CSP). */
+  function showHostClickFxBurst(guestX, guestY, guestW, guestH) {
+    const wv = browserFrame;
+    if (!wv || !wv.isConnected) return;
+    const rect = wv.getBoundingClientRect();
+    const vw = guestW > 0 ? guestW : 1;
+    const vh = guestH > 0 ? guestH : 1;
+    const x = rect.left + (guestX * rect.width) / vw;
+    const y = rect.top + (guestY * rect.height) / vh;
+    const host = document.getElementById("browserClickFxHost");
+    if (!host) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const root = document.createElement("div");
+    root.className = "browser-click-fx-root";
+    root.setAttribute("aria-hidden", "true");
+    root.style.left = `${x}px`;
+    root.style.top = `${y}px`;
+    const ring = document.createElement("span");
+    ring.className = reduce ? "browser-click-fx-ring browser-click-fx-ring--reduce" : "browser-click-fx-ring";
+    root.appendChild(ring);
+    const count = reduce ? 12 : 96;
+    const waveSplit = reduce ? 6 : 48;
+    for (let i = 0; i < count; i++) {
+      const wave2 = i >= waveSplit;
+      const n = wave2 ? i - waveSplit : i;
+      const nWave = wave2 ? count - waveSplit : waveSplit;
+      const base = (Math.PI * 2 * n) / nWave + (wave2 ? 0.08 : 0);
+      const ang = base + (Math.random() - 0.5) * (reduce ? 0.07 : 0.35);
+      let dist = (reduce ? 20 : 28) + Math.random() * (reduce ? 14 : 52);
+      if (wave2) dist *= 1.22 + Math.random() * 0.42;
+      const dx = Math.cos(ang) * dist;
+      const dy = Math.sin(ang) * dist;
+      let delay = 0;
+      if (!reduce) {
+        delay = wave2 ? 0.18 + Math.random() * 0.32 : Math.random() * 0.16;
+      } else if (wave2) {
+        delay = 0.1 + Math.random() * 0.12;
+      }
+      const sz = 2 + Math.floor(Math.random() * (reduce ? 2 : 3));
+      const hue = 160 + Math.floor(Math.random() * 60);
+      const p = document.createElement("i");
+      const basePx = reduce ? "browser-click-fx-pixel browser-click-fx-pixel--reduce" : "browser-click-fx-pixel";
+      p.className = wave2 ? `${basePx} browser-click-fx-pixel--wave2` : basePx;
+      p.style.setProperty("--dx", `${dx}px`);
+      p.style.setProperty("--dy", `${dy}px`);
+      p.style.width = `${sz}px`;
+      p.style.height = `${sz}px`;
+      p.style.margin = `${-sz / 2}px 0 0 ${-sz / 2}px`;
+      if (delay > 0) p.style.animationDelay = `${delay}s`;
+      p.style.background = `hsla(${hue},92%,70%,0.96)`;
+      p.style.boxShadow = `0 0 ${sz + 3}px hsla(${hue},100%,78%,0.82)`;
+      root.appendChild(p);
+    }
+    host.appendChild(root);
+    setTimeout(
+      () => {
+        try {
+          root.remove();
+        } catch {
+          /* ignore */
+        }
+      },
+      reduce ? 620 : 1680,
+    );
+  }
+
+  return {
+    getBrowserFrame: (sessionId) => {
+      if (sessionId && shouldUseBackground(sessionId)) return getBackgroundFrame(sessionId);
+      if (sessionId) ensureSessionCommandReady(sessionId);
+      return withSessionState(sessionId, () => browserFrame);
     },
-    createTab: (url) => {
-      if (url) createTab(url);
-      else createTab();
+    navigateTo: (raw, sessionId) => {
+      const uiSessionId = activeSessionId;
+      const targetSessionId = sessionId || activeSessionId;
+      const url = resolveInput(raw);
+      if (!url) return;
+      if (sessionId && shouldUseBackground(sessionId)) {
+        void window.electronAPI.bgEnsureSession(sessionId)
+          .then(() => window.electronAPI.bgGoto(sessionId, url))
+          .catch(() => {});
+        return;
+      }
+      withSessionState(sessionId, () => {
+        const tab = getTab(activeTabId);
+        if (!tab) return;
+        const wv = tab.webview || ensureWebviewForTab(tab);
+        if (!wv) return;
+        tab.url = url;
+        tab.initialized = true;
+        try {
+          wv.loadURL(url);
+        } catch {
+          try {
+            wv.src = url;
+          } catch {
+            try {
+              wv.setAttribute("src", url);
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+        // Only drive visible loading/nav UI for the actually open session.
+        if (targetSessionId === uiSessionId) {
+          if (addressBar) addressBar.value = url;
+          setLoading(true);
+          updateSecurityIcon(url);
+          hideError();
+        }
+        persistActiveSessionState();
+      });
     },
-    switchTab,
-    closeTabById: (id) => closeTab(id),
-    getTabs: () =>
-      tabs.map((t) => ({
-        id: t.id,
-        publicId: t.publicId,
-        title: t.title || "New Tab",
-        url: t.url || "",
-      })),
-    getActiveTabId: () => activeTabId,
+    beginWebviewLoadWait: (sessionId, opts) => {
+      const waitUntil = opts.waitUntil;
+      const timeoutMs = opts.timeoutMs;
+      const networkIdleMs = opts.networkIdleMs;
+      const sid = sessionId || activeSessionId;
+      const logLoadWait = (r) => {
+        traceKernel("automationLoadWait", { sessionId: sid, waitUntil, ...r });
+        return r;
+      };
+      if (waitUntil === "commit") {
+        return Promise.resolve(logLoadWait({ ok: true, phase: "commit" }));
+      }
+      if (sessionId && shouldUseBackground(sessionId)) {
+        return Promise.resolve(
+          logLoadWait({ ok: false, error: "navigation_wait_unsupported", phase: "background_session" }),
+        );
+      }
+      ensureSessionCommandReady(sessionId);
+      return withSessionState(sessionId, () => {
+        const wv = browserFrame;
+        if (!wv) {
+          return Promise.resolve(logLoadWait({ ok: false, error: "no_webview" }));
+        }
+        return createWebviewNavigationWaitPromise(wv, { waitUntil, timeoutMs, networkIdleMs }).then(logLoadWait);
+      });
+    },
+    waitForWebviewAdaptiveSettle: (sessionId, opts) => {
+      const sid = sessionId || activeSessionId;
+      if (sessionId && shouldUseBackground(sessionId)) {
+        traceKernel("automationAdaptiveSettle", {
+          sessionId: sid,
+          ok: true,
+          phase: "background_skipped",
+          didStartLoadingCount: 0,
+          didStopLoadingCount: 0,
+        });
+        return Promise.resolve({ ok: true, phase: "background_skipped" });
+      }
+      ensureSessionCommandReady(sessionId);
+      return withSessionState(sessionId, () => {
+        const wv = browserFrame;
+        if (!wv) {
+          traceKernel("automationAdaptiveSettle", {
+            sessionId: sid,
+            ok: false,
+            error: "no_webview",
+            didStartLoadingCount: 0,
+            didStopLoadingCount: 0,
+          });
+          return Promise.resolve({ ok: false, error: "no_webview" });
+        }
+        return createWebviewAdaptiveSettlePromise(wv, opts || {});
+      });
+    },
+    canGoBack: (sessionId) =>
+      withSessionState(sessionId, () => !!(browserFrame && browserFrame.canGoBack && browserFrame.canGoBack())),
+    canGoForward: (sessionId) =>
+      withSessionState(sessionId, () => !!(browserFrame && browserFrame.canGoForward && browserFrame.canGoForward())),
+    resolveInput,
+    reload: (sessionId) => {
+      const uiSessionId = activeSessionId;
+      const targetSessionId = sessionId || activeSessionId;
+      withSessionState(sessionId, () => {
+        if (browserFrame) {
+          browserFrame.reload();
+          if (targetSessionId === uiSessionId) setLoading(true);
+        }
+      });
+    },
+    goBack: (sessionId) =>
+      withSessionState(sessionId, () => {
+        if (browserFrame && browserFrame.canGoBack()) browserFrame.goBack();
+      }),
+    goForward: (sessionId) =>
+      withSessionState(sessionId, () => {
+        if (browserFrame && browserFrame.canGoForward()) browserFrame.goForward();
+      }),
+    createTab: (url, sessionId) =>
+      withSessionState(sessionId, () => {
+        if (url) createTab(url);
+        else createTab();
+      }),
+    switchTab: (id, sessionId) =>
+      withSessionState(sessionId, () => {
+        switchTab(id);
+      }),
+    closeTabById: (id, sessionId) =>
+      withSessionState(sessionId, () => {
+        closeTab(id);
+      }),
+    getTabs: (sessionId) =>
+      withSessionState(sessionId, () =>
+        tabs.map((t) => ({
+          id: t.id,
+          publicId: t.publicId,
+          title: t.title || "New Tab",
+          url: t.url || "",
+        })),
+      ),
+    getActiveTabId: (sessionId) => withSessionState(sessionId, () => activeTabId),
     applyZoom,
     getZoomLevel: () => zoomLevel,
-    takeScreenshot,
+    takeScreenshot: (mode, sessionId) => {
+      if (sessionId && shouldUseBackground(sessionId)) {
+        return (async () => {
+          await window.electronAPI.bgEnsureSession(sessionId);
+          const r = await window.electronAPI.bgScreenshot(sessionId);
+          if (!r?.success) throw new Error(r?.error || "bg screenshot failed");
+          const dataUrl = r?.data?.dataUrl || "";
+          const saved = await window.electronAPI.saveScreenshot(dataUrl);
+          if (saved.success) {
+            addScreenshotMessage(dataUrl, saved.filename);
+            let pageUrl = "";
+            let pageTitle = "";
+            try {
+              const u = await window.electronAPI.bgGetUrl(sessionId);
+              const t = await window.electronAPI.bgGetTitle(sessionId);
+              pageUrl = u?.data?.url || "";
+              pageTitle = t?.data?.title || "";
+            } catch {
+              /* ignore */
+            }
+            await onScreenshotSaved(dataUrl, saved, {
+              mode: "background",
+              url: pageUrl,
+              title: pageTitle,
+            });
+          } else {
+            showToast("❌ Screenshot failed");
+          }
+        })();
+      }
+      if (sessionId) ensureSessionCommandReady(sessionId);
+      return withSessionState(sessionId, () => takeScreenshot(mode));
+    },
+    createSession: (headless) => {
+      const s = createSessionState(headless);
+      return { id: s.id, headless: s.headless };
+    },
+    switchSession: (sessionId) => switchSession(sessionId),
+    killSession: (sessionId) => killSessionById(sessionId),
+    hasSession: (sessionId) => sessions.has(sessionId),
+    showAutomationClickFx: (guestX, guestY, guestW, guestH, sessionId) => {
+      if (sessionId && shouldUseBackground(sessionId)) return;
+      withSessionState(sessionId, () => {
+        showHostClickFxBurst(guestX, guestY, guestW, guestH);
+      });
+    },
+    runGuestChildFrameCollect: (sessionId, script, maxTotal) =>
+      withSessionState(sessionId, async () => {
+        if (sessionId && shouldUseBackground(sessionId)) {
+          await window.electronAPI.bgEnsureSession(sessionId);
+          const r = await window.electronAPI.bgEvalChildFrames(sessionId, script, maxTotal);
+          if (!r?.success || !Array.isArray(r.items)) return [];
+          return r.items as InteractableRow[];
+        }
+        const wv = browserFrame;
+        const wid = wv?.getWebContentsId?.();
+        if (wid == null) return [];
+        const r = await window.electronAPI.guestEvalChildFrames({
+          webContentsId: wid,
+          script,
+          maxTotal,
+        });
+        if (!r?.success || !Array.isArray(r.items)) return [];
+        return r.items as InteractableRow[];
+      }),
   };
 }
 
 async function processCommand(text) {
   const result = await dispatchAutomationLine(text, getKernelAutomationContext());
-  if (result.op === "screenshot" && result.success) {
-    await takeScreenshot("viewport");
-    return;
-  }
   if (result.message) addBotMessage(result.message);
 }
-// ── Message helpers ───────────────────────────────────────────
 
-function addUserMessage(text) {
+// ── Conversations (persisted) ─────────────────────────────────
+function ensureConversationBootstrap() {
+  if (!convState.conversations.length) {
+    const c = createNewConversation();
+    convState.conversations.push(c);
+    convState.activeConversationId = c.id;
+    saveConversationState(convState);
+  }
+  if (
+    !convState.activeConversationId ||
+    !convState.conversations.some((c) => c.id === convState.activeConversationId)
+  ) {
+    convState.activeConversationId = convState.conversations[0].id;
+  }
+}
+
+function getActiveConversation() {
+  ensureConversationBootstrap();
+  return convState.conversations.find((c) => c.id === convState.activeConversationId) || null;
+}
+
+function persistConvStateImmediate() {
+  saveConversationState(convState);
+}
+
+function pushUserMessageToStore(text) {
+  const c = getActiveConversation();
+  if (!c) return;
+  c.messages.push({ id: generateMessageId(), kind: "user", markdown: text });
+  c.updatedAt = Date.now();
+  const userMsgs = c.messages.filter((m) => m.kind === "user");
+  if (userMsgs.length === 1) c.title = titleFromFirstLine(text);
+  scheduleConvSave(convState);
+  refreshChatHistoryList();
+}
+
+function pushAssistantMessageToStore(text) {
+  const c = getActiveConversation();
+  if (!c) return;
+  c.messages.push({ id: generateMessageId(), kind: "assistant", markdown: text });
+  c.updatedAt = Date.now();
+  scheduleConvSave(convState);
+  refreshChatHistoryList();
+}
+
+function pushScreenshotSentToStore(dataUrl, filename) {
+  const c = getActiveConversation();
+  if (!c) return;
+  c.messages.push({
+    id: generateMessageId(),
+    kind: "screenshot_sent",
+    dataUrl,
+    filename,
+  });
+  c.updatedAt = Date.now();
+  scheduleConvSave(convState);
+  refreshChatHistoryList();
+}
+
+function pushPickerMessageToStore(sel, info, canFill, isCheckable) {
+  const c = getActiveConversation();
+  if (!c) return;
+  c.messages.push({
+    id: generateMessageId(),
+    kind: "picker",
+    selector: sel,
+    tag: info.tag || "",
+    type: info.type || "",
+    text: (info.text || "").trim(),
+    canFill: !!canFill,
+    isCheckable: !!isCheckable,
+  });
+  c.updatedAt = Date.now();
+  scheduleConvSave(convState);
+  refreshChatHistoryList();
+}
+
+function refreshChatHistoryList() {
+  if (typeof window !== "undefined" && window.__reactAiChatOwnsHistoryList) return;
+  const list = document.getElementById("chatHistoryList");
+  if (!list) return;
+  convState.conversations.sort((a, b) => b.updatedAt - a.updatedAt);
+  list.innerHTML = "";
+  for (const c of convState.conversations) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "chat-history-row";
+    if (c.id === convState.activeConversationId) row.classList.add("chat-history-row--active");
+    row.dataset.conversationId = c.id;
+    row.textContent = c.title || "Chat";
+    row.title = c.title || "Chat";
+    row.onclick = () => switchToConversation(c.id);
+    list.appendChild(row);
+  }
+}
+
+if (typeof window !== "undefined") {
+  window.__kernelRefreshChatHistoryList = refreshChatHistoryList;
+}
+
+function switchToConversation(id) {
+  if (id === convState.activeConversationId) return;
+  convState.activeConversationId = id;
+  persistConvStateImmediate();
+  renderChatFromActiveConversation();
+  refreshChatHistoryList();
+}
+
+function startNewConversation() {
+  const c = createNewConversation();
+  convState.conversations.unshift(c);
+  convState.activeConversationId = c.id;
+  persistConvStateImmediate();
+  renderChatFromActiveConversation();
+  refreshChatHistoryList();
+}
+
+function renderChatFromActiveConversation() {
+  const c = getActiveConversation();
+  if (!c || !chatMessages) return;
+  chatMessages.innerHTML = "";
+  for (const m of c.messages) {
+    renderStoreMessageToDom(m);
+  }
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function renderStoreMessageToDom(m) {
+  if (m.kind === "user") {
+    appendUserMessageDomOnly(m.markdown);
+  } else if (m.kind === "assistant") {
+    appendBotMessageDomOnly(m.markdown);
+  } else if (m.kind === "screenshot_sent") {
+    appendScreenshotSentDomOnly(m.dataUrl, m.filename);
+  } else if (m.kind === "picker") {
+    const info = {
+      tag: m.tag,
+      type: m.type,
+      text: m.text,
+    };
+    showPickerActionPopup(m.selector, info, m.canFill, m.isCheckable, false);
+  }
+}
+
+function appendUserMessageDomOnly(text) {
   const div = document.createElement("div");
   div.className = "message user-message";
   div.innerHTML = `<div class="msg-bubble">${mdToHtml(text)}</div>`;
@@ -2080,7 +3523,132 @@ function addUserMessage(text) {
     if (!e.target.closest("button")) div.classList.toggle("msg-selected");
   };
   chatMessages.appendChild(div);
+}
+
+function appendBotMessageDomOnly(text) {
+  const div = document.createElement("div");
+  div.className = "message bot-message";
+  div.innerHTML = `
+    <div class="msg-avatar bot-avatar">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <circle cx="7" cy="7" r="6" stroke="var(--accent)" stroke-width="1.2"/>
+        <path d="M4 7C4 7 5 9 7 9C9 9 10 7 10 7" stroke="var(--accent)" stroke-width="1.2" stroke-linecap="round"/>
+        <circle cx="5" cy="5.5" r="0.8" fill="var(--accent)"/>
+        <circle cx="9" cy="5.5" r="0.8" fill="var(--accent)"/>
+      </svg>
+    </div>
+    <div class="msg-bubble">${mdToHtml(text)}</div>`;
+  div.onclick = (e) => {
+    if (!e.target.closest("button")) div.classList.toggle("msg-selected");
+  };
+  chatMessages.appendChild(div);
+}
+
+function appendScreenshotSentDomOnly(dataUrl, filename) {
+  const final = document.createElement("div");
+  final.className = "message bot-message";
+  final.innerHTML = `
+    <div class="msg-avatar bot-avatar">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <circle cx="7" cy="7" r="6" stroke="var(--accent)" stroke-width="1.2"/>
+        <path d="M4 7C4 7 5 9 7 9C9 9 10 7 10 7" stroke="var(--accent)" stroke-width="1.2" stroke-linecap="round"/>
+        <circle cx="5" cy="5.5" r="0.8" fill="var(--accent)"/>
+        <circle cx="9" cy="5.5" r="0.8" fill="var(--accent)"/>
+      </svg>
+    </div>
+    <div class="msg-bubble screenshot-bubble sent">
+      <img src="${dataUrl}" class="ss-sent-thumb" alt="screenshot"/>
+      <div class="ss-preview-meta"><span class="ss-filename">📸 ${filename}</span></div>
+    </div>`;
+  final.onclick = (e) => {
+    if (!e.target.closest("button")) final.classList.toggle("msg-selected");
+  };
+  chatMessages.appendChild(final);
+}
+
+function clearActiveConversationMessages() {
+  const c = getActiveConversation();
+  if (!c) return;
+  c.messages = [
+    {
+      id: generateMessageId(),
+      kind: "assistant",
+      markdown: "Chat cleared. How can I help?",
+    },
+  ];
+  c.updatedAt = Date.now();
+  persistConvStateImmediate();
+  renderChatFromActiveConversation();
+}
+
+function applyShellWorkspaceUi(ws) {
+  shellWorkspace = ws;
+  if (appContainer) appContainer.setAttribute("data-shell-workspace", ws);
+  if (ws === "browser" || ws === "intelligent") {
+    saveShellWorkspacePreference(ws);
+  }
+  if (titlebarBrowserBtn) {
+    titlebarBrowserBtn.setAttribute("aria-pressed", ws === "browser" ? "true" : "false");
+  }
+  if (titlebarIntelligentBtn) {
+    titlebarIntelligentBtn.setAttribute("aria-pressed", ws === "intelligent" ? "true" : "false");
+  }
+  const settingsWorkspaceEl = document.getElementById("settingsWorkspace");
+  if (settingsWorkspaceEl) settingsWorkspaceEl.setAttribute("aria-hidden", "true");
+  if (chatSubtitle) {
+    if (ws === "intelligent") chatSubtitle.textContent = "General assistant";
+    else chatSubtitle.textContent = "Browser agent";
+  }
+  const closeBtn = document.getElementById("closeChatBtn");
+  if (closeBtn) {
+    closeBtn.title =
+      ws === "intelligent" ? "Back to browser" : "Close AI Chat";
+  }
+  if (ws === "intelligent") {
+    setChatOpen(true);
+    try {
+      applyIntelligentWorkspaceLayoutToDom();
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    window.dispatchEvent(
+      new CustomEvent("shell-workspace-changed", {
+        detail: { workspace: ws },
+      }),
+    );
+  } catch {
+    /* ignore */
+  }
+
+  /* Header gear hidden in intelligent workspace (CSS); browser workspace already hides #settingsBtnChat. */
+  const quickBarWrap = document.getElementById("quickPanelBtn")?.parentElement;
+  if (quickBarWrap?.classList.contains("tools-bar-wrap")) {
+    quickBarWrap.style.display = ws === "browser" ? "none" : "";
+  }
+  const toolsBarToolsWrap = document.getElementById("toolsPanelBtn")?.parentElement;
+  if (toolsBarToolsWrap?.classList.contains("tools-bar-wrap")) {
+    toolsBarToolsWrap.style.display = ws === "browser" ? "none" : "";
+  }
+}
+
+function enterBrowserWorkspace() {
+  showWebviewOnly();
+  applyShellWorkspaceUi("browser");
+}
+
+function enterIntelligentWorkspace() {
+  showWebviewOnly();
+  applyShellWorkspaceUi("intelligent");
+}
+
+// ── Message helpers ───────────────────────────────────────────
+
+function addUserMessage(text) {
+  appendUserMessageDomOnly(text);
   chatMessages.scrollTop = chatMessages.scrollHeight;
+  pushUserMessageToStore(text);
 }
 
 // Adds a screenshot preview bubble — small thumbnail + Enter to send / Esc to cancel
@@ -2101,8 +3669,8 @@ function addScreenshotMessage(dataUrl, filename) {
       <div class="ss-preview-meta">
         <span class="ss-filename">${filename}</span>
         <div class="ss-actions">
-          <button class="ss-btn ss-send-btn" title="Send to chat">Send</button>
-          <button class="ss-btn ss-discard-btn" title="Discard">×</button>
+          <button type="button" class="ss-btn ss-send-btn" aria-label="Send screenshot to chat">Send</button>
+          <button type="button" class="ss-btn ss-discard-btn" aria-label="Discard screenshot">×</button>
         </div>
       </div>
     </div>`;
@@ -2131,6 +3699,7 @@ function addScreenshotMessage(dataUrl, filename) {
       </div>`;
     chatMessages.appendChild(final);
     chatMessages.scrollTop = chatMessages.scrollHeight;
+    pushScreenshotSentToStore(dataUrl, filename);
   };
 
   div.querySelector(".ss-discard-btn").onclick = () => {
@@ -2140,95 +3709,13 @@ function addScreenshotMessage(dataUrl, filename) {
 }
 
 function addBotMessage(text) {
-  const div = document.createElement("div");
-  div.className = "message bot-message";
-  div.innerHTML = `
-    <div class="msg-avatar bot-avatar">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <circle cx="7" cy="7" r="6" stroke="var(--accent)" stroke-width="1.2"/>
-        <path d="M4 7C4 7 5 9 7 9C9 9 10 7 10 7" stroke="var(--accent)" stroke-width="1.2" stroke-linecap="round"/>
-        <circle cx="5" cy="5.5" r="0.8" fill="var(--accent)"/>
-        <circle cx="9" cy="5.5" r="0.8" fill="var(--accent)"/>
-      </svg>
-    </div>
-    <div class="msg-bubble">${mdToHtml(text)}</div>`;
-  div.onclick = (e) => {
-    if (!e.target.closest("button")) div.classList.toggle("msg-selected");
-  };
-  chatMessages.appendChild(div);
+  appendBotMessageDomOnly(text);
   chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-function escapeHtml(str) {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function normalizeCodeLang(rawLang) {
-  const l = (rawLang || "").trim().toLowerCase();
-  if (!l) return "";
-  // Conservative: keep simple token; drop anything that could break attributes.
-  return l.replace(/[^a-z0-9_+-]/g, "");
-}
-
-function buildMarkedRenderer() {
-  const r = new marked.Renderer();
-
-  // Ensure links keep the md-link class (we intercept clicks elsewhere).
-  r.link = function (tok) {
-    const safeHref = tok && typeof tok.href === "string" ? tok.href : "";
-    const safeTitle = tok && typeof tok.title === "string" ? tok.title : "";
-    const titleAttr = safeTitle ? ` title="${escapeHtml(safeTitle)}"` : "";
-    // Render link text via marked inline parser (handles emphasis/code inside links).
-    const inner =
-      tok && tok.tokens && this && this.parser && this.parser.parseInline
-        ? this.parser.parseInline(tok.tokens)
-        : escapeHtml(tok && typeof tok.text === "string" ? tok.text : "");
-    // Keep href; DOMPurify will sanitize protocols/attrs.
-    return `<a class="md-link" href="${escapeHtml(safeHref)}"${titleAttr}>${inner}</a>`;
-  };
-
-  // Wrap fenced code blocks so we can add a copy button.
-  // marked@17 passes a token object: { text, lang, escaped }.
-  r.code = (tok) => {
-    const text = typeof tok === "string" ? tok : tok && typeof tok.text === "string" ? tok.text : String(tok ?? "");
-    const langRaw = tok && typeof tok.lang === "string" ? tok.lang : "";
-    const lang = normalizeCodeLang(langRaw);
-    const label = lang ? lang : "code";
-    const codeEsc = escapeHtml(String(text ?? "")).replace(/\n$/, "");
-    const langClass = lang ? ` language-${lang}` : "";
-    const langAttr = lang ? ` data-lang="${lang}"` : "";
-    return `
-      <div class="md-codeblock"${langAttr}>
-        <div class="md-codeblock-head">
-          <span class="md-codeblock-lang">${escapeHtml(label)}</span>
-          <button type="button" class="md-codecopy" aria-label="Copy code">Copy</button>
-        </div>
-        <pre><code class="${langClass}">${codeEsc}</code></pre>
-      </div>
-    `.trim();
-  };
-
-  return r;
+  pushAssistantMessageToStore(text);
 }
 
 function mdToHtml(text) {
-  const raw = String(text ?? "");
-
-  const html = marked.parse(raw, {
-    gfm: true,
-    breaks: true,
-    headerIds: false,
-    mangle: false,
-    renderer: buildMarkedRenderer(),
-  });
-
-  // Sanitize: disallow raw HTML and any dangerous attributes.
-  return DOMPurify.sanitize(String(html ?? ""), {
-    USE_PROFILES: { html: true },
-    FORBID_TAGS: ["style", "script", "iframe", "object", "embed"],
-    FORBID_ATTR: ["style", "onerror", "onload", "onclick"],
-    ALLOW_UNKNOWN_PROTOCOLS: false,
-  });
+  return renderChatMarkdownToHtml(String(text ?? ""));
 }
 
 function formatMessage(text) {
@@ -2264,10 +3751,14 @@ function setupChatPanelLinks() {
 
         const setLabel = (txt) => {
           try {
-            copyBtn.textContent = txt;
+            copyBtn.setAttribute("aria-label", txt);
+            copyBtn.title = txt;
+            copyBtn.classList.toggle("md-codecopy--copied", txt === "Copied");
             window.clearTimeout(copyBtn.__copyTimer);
             copyBtn.__copyTimer = window.setTimeout(() => {
-              copyBtn.textContent = "Copy";
+              copyBtn.setAttribute("aria-label", "Copy code");
+              copyBtn.title = "Copy";
+              copyBtn.classList.remove("md-codecopy--copied");
             }, 1200);
           } catch {
             /* ignore */
@@ -2312,12 +3803,14 @@ function setupChatPanelLinks() {
         return;
       }
       if (/^https?:\/\//i.test(trimmed)) {
+        if (shellWorkspace === "intelligent" || shellWorkspace === "settings") enterBrowserWorkspace();
         window.legacyBrowser?.createTabWithUrl?.(trimmed);
         return;
       }
       try {
         const abs = new URL(trimmed, window.location.href).href;
         if (/^https?:\/\//i.test(abs)) {
+          if (shellWorkspace === "intelligent" || shellWorkspace === "settings") enterBrowserWorkspace();
           window.legacyBrowser?.createTabWithUrl?.(abs);
           return;
         }
@@ -2331,9 +3824,13 @@ function setupChatPanelLinks() {
 }
 
 function setChatOpen(open) {
+  if (shellWorkspace === "intelligent" && !open) {
+    enterBrowserWorkspace();
+    return;
+  }
   chatOpen = open;
   chatWrapper.classList.toggle("chat-closed", !open);
-  aiChatToggleBtn.classList.toggle("active", open);
+  if (aiChatToggleBtn) aiChatToggleBtn.classList.toggle("active", open);
   if (USE_REACT_CHAT_RESIZE) {
     window.dispatchEvent(
       new CustomEvent("legacy-chat-open", { detail: { open } }),
@@ -2573,11 +4070,13 @@ function setupToolsPanel() {
 
   function togglePanel(btn, p, otherBtn, otherP) {
     const open = p.style.display === "none";
-    otherP.style.display = "none";
-    otherBtn.classList.remove("tools-open");
+    if (otherP) otherP.style.display = "none";
+    if (otherBtn) otherBtn.classList.remove("tools-open");
     p.style.display = open ? "block" : "none";
     btn.classList.toggle("tools-open", open);
   }
+
+  if (!panelBtn || !panel || !closeBtn || !list) return;
 
   // Render tool cards
   function renderTools() {
@@ -2620,12 +4119,19 @@ function setupToolsPanel() {
 
   panelBtn.onclick = (e) => {
     e.stopPropagation();
-    togglePanel(panelBtn, panel, quickBtn, quickPanel);
+    if (quickBtn && quickPanel) togglePanel(panelBtn, panel, quickBtn, quickPanel);
+    else {
+      const open = panel.style.display === "none";
+      panel.style.display = open ? "block" : "none";
+      panelBtn.classList.toggle("tools-open", open);
+    }
   };
-  quickBtn.onclick = (e) => {
-    e.stopPropagation();
-    togglePanel(quickBtn, quickPanel, panelBtn, panel);
-  };
+  if (quickBtn && quickPanel) {
+    quickBtn.onclick = (e) => {
+      e.stopPropagation();
+      togglePanel(quickBtn, quickPanel, panelBtn, panel);
+    };
+  }
 
   closeBtn.onclick = () => {
     panel.style.display = "none";
@@ -2637,7 +4143,7 @@ function setupToolsPanel() {
       panel.style.display = "none";
       panelBtn.classList.remove("tools-open");
     }
-    if (!quickPanel.contains(e.target) && e.target !== quickBtn) {
+    if (quickPanel && quickBtn && !quickPanel.contains(e.target) && e.target !== quickBtn) {
       quickPanel.style.display = "none";
       quickBtn.classList.remove("tools-open");
     }
@@ -2659,7 +4165,7 @@ function syncToolState(id, active) {
       const tag = document.createElement("div");
       tag.className = "tool-tag";
       tag.dataset.tagId = id;
-      tag.innerHTML = `<span class="tool-tag-icon">${tool ? tool.icon : ""}</span><span>${tool ? tool.name : id}</span><button class="tool-tag-remove" title="Remove (Esc)">×</button>`;
+      tag.innerHTML = `<span class="tool-tag-icon">${tool ? tool.icon : ""}</span><span>${tool ? tool.name : id}</span><button type="button" class="tool-tag-remove" aria-label="Remove tool (Escape)">×</button>`;
       tag.querySelector(".tool-tag-remove").onclick = () => deactivateTool(id);
       tray.appendChild(tag);
     }
@@ -2771,10 +4277,11 @@ function startElementScreenshot(rearm = false) {
   elemShotActive = true;
   syncToolState("elemshot", true);
   showToast("📷 Click any element to screenshot it...");
-  if (!rearm)
+  if (!rearm && !isReactAiChatShellActive()) {
     addBotMessage(
       "📷 **Element Screenshot active** — click any element. Press Esc to cancel.",
     );
+  }
 
   injectPickerOverlay(
     async (r) => {
@@ -2794,8 +4301,21 @@ function startElementScreenshot(rearm = false) {
         const dataUrl = cropImage(img, r.x, r.y, r.w, r.h, scaleX, scaleY);
         const saved = await window.electronAPI.saveScreenshot(dataUrl);
         if (saved.success) {
-          showToast(`✅ Element captured: ${saved.filename}`);
+          if (isReactAiChatShellActive()) {
+            showToast(`📸 Element captured · ${saved.filename}`, 3000);
+            insertIntoAiComposerText(
+              `📷 **Element snapshot** saved as \`${saved.filename}\`. Describe what to do with this region.`,
+            );
+            elemShotActive = false;
+            stopElementScreenshot();
+            return;
+          }
           addScreenshotMessage(dataUrl, saved.filename);
+          await onScreenshotSaved(dataUrl, saved, {
+            mode: "element",
+            width: Math.round(r.w),
+            height: Math.round(r.h),
+          });
         } else {
           showToast("❌ Save failed");
         }
@@ -2805,11 +4325,11 @@ function startElementScreenshot(rearm = false) {
       }
       // Re-arm after capture completes
       elemShotActive = false;
-      startElementScreenshot(true);
+      if (!isReactAiChatShellActive()) startElementScreenshot(true);
     },
     () => {
       stopElementScreenshot();
-      addBotMessage("📷 Element screenshot cancelled.");
+      if (!isReactAiChatShellActive()) addBotMessage("📷 Element screenshot cancelled.");
     },
   );
 }
@@ -2921,11 +4441,13 @@ function startElementPicker(mode = "any") {
       ? "🎯 Click an interactive element (button/input/link) to pick it..."
       : "🎯 Click any element on the page to pick its selector...",
   );
-  addBotMessage(
-    mode === "interactive"
-      ? "🎯 **Interactive Picker active** — click a button/input/link. Press Esc to cancel."
-      : "🎯 **Picker active** — click any element on the page. Press Esc to cancel.",
-  );
+  if (!isReactAiChatShellActive()) {
+    addBotMessage(
+      mode === "interactive"
+        ? "🎯 **Interactive Picker active** — click a button/input/link. Press Esc to cancel."
+        : "🎯 **Picker active** — click any element on the page. Press Esc to cancel.",
+    );
+  }
 
   browserFrame
     .executeJavaScript(
@@ -3080,7 +4602,7 @@ function startElementPicker(mode = "any") {
       );
       if (sel === "__cancelled__") {
         stopElementPicker();
-        addBotMessage("🎯 Picker cancelled.");
+        if (!isReactAiChatShellActive()) addBotMessage("🎯 Picker cancelled.");
         return;
       }
       const info = await browserFrame
@@ -3128,8 +4650,41 @@ function stopElementPicker() {
     .catch(() => {});
 }
 
+function isReactAiChatShellActive() {
+  const h = document.getElementById("aiChatReactHost");
+  if (!h) return false;
+  return getComputedStyle(h).display !== "none";
+}
+
+function insertIntoAiComposerText(text) {
+  if (!text) return;
+  try {
+    window.dispatchEvent(new CustomEvent("ai-chat-append-composer", { detail: { text } }));
+  } catch {
+    /* ignore */
+  }
+}
+
+function formatPickerContextForComposer(sel, info) {
+  const lines = [
+    "**Page element**",
+    `- CSS selector: \`${sel}\``,
+    `- Tag: \`${(info && info.tag) || "?"}\``,
+  ];
+  if (info && info.type) lines.push(`- Type: \`${info.type}\``);
+  if (info && info.text)
+    lines.push(`- Visible text: "${String(info.text).replace(/"/g, '\\"').slice(0, 200)}"`);
+  lines.push("", "_Use this target with the browser automation tools._");
+  return lines.join("\n");
+}
+
 // Shows an inline action card in chat after the picker selects an element
-function showPickerActionPopup(sel, info, canFill, isCheckable) {
+function showPickerActionPopup(sel, info, canFill, isCheckable, recordStore = true) {
+  if (isReactAiChatShellActive()) {
+    insertIntoAiComposerText(formatPickerContextForComposer(sel, info));
+    showToast("Added page element to your message");
+    return;
+  }
   const div = document.createElement("div");
   div.className = "message bot-message";
 
@@ -3253,8 +4808,12 @@ function showPickerActionPopup(sel, info, canFill, isCheckable) {
       const dataUrl = cropImage(img, r.x, r.y, r.w, r.h, scaleX, scaleY);
       const saved = await window.electronAPI.saveScreenshot(dataUrl);
       if (saved.success) {
-        showToast(`✅ ${saved.filename}`);
         addScreenshotMessage(dataUrl, saved.filename);
+        await onScreenshotSaved(dataUrl, saved, {
+          mode: "element",
+          width: Math.round(r.w),
+          height: Math.round(r.h),
+        });
       } else showToast("❌ Save failed");
     } catch (err) {
       showToast("❌ Screenshot failed");
@@ -3274,6 +4833,8 @@ function showPickerActionPopup(sel, info, canFill, isCheckable) {
         chatInputEl.focus();
       });
   };
+
+  if (recordStore) pushPickerMessageToStore(sel, info, canFill, isCheckable);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3281,6 +4842,7 @@ function showPickerActionPopup(sel, info, canFill, isCheckable) {
 // ═══════════════════════════════════════════════════════════
 
 let currentProfile = null;
+let mergedAppPasswordsOnce = false;
 
 function getProfile() {
   if (!currentProfile)
@@ -3363,6 +4925,7 @@ async function loadProfile(name) {
     history: (data && data.history) || [],
     passwords: (data && data.passwords) || [],
   };
+  mergedAppPasswordsOnce = false;
   document.getElementById("profileOverlay").style.display = "none";
   initDataPanels();
   showToast(`✅ Profile "${name}" loaded`);
@@ -3434,7 +4997,7 @@ function renderBookmarks(filter) {
         <div class="side-item-url">${escapeHtml(b.url)}</div>
       </div>
       ${added ? `<span class="side-item-date">${added}</span>` : ""}
-      <button class="side-item-del" title="Remove bookmark" aria-label="Remove bookmark">✕</button>`;
+      <button type="button" class="side-item-del" aria-label="Remove bookmark">✕</button>`;
     row.querySelector(".side-item-info").onclick = () => {
       navigateTo(b.url);
       closeSidePanels();
@@ -3543,6 +5106,35 @@ function renderPasswords(filter) {
     ""
   ).toLowerCase();
   const p = getProfile();
+  // If Settings-imported passwords exist in app storage, merge them in-memory so they show here.
+  // (Settings import writes to DataManager; legacy side panels read from currentProfile.)
+  if (!mergedAppPasswordsOnce && (!p.passwords || p.passwords.length === 0) && window.electronAPI?.getPasswords) {
+    mergedAppPasswordsOnce = true;
+    window.electronAPI
+      .getPasswords()
+      .then((raw) => {
+        const arr = (raw && (raw.passwords || raw.data?.passwords)) || [];
+        if (!Array.isArray(arr) || arr.length === 0) return;
+        const seen = new Set((p.passwords || []).map((x) => `${x.url}@@${x.username}`));
+        arr.forEach((pw) => {
+          const url = String(pw.url || "").trim();
+          const username = String(pw.username || pw.username_value || "").trim();
+          if (!url || !username) return;
+          const key = `${url}@@${username}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          (p.passwords ||= []).push({
+            url,
+            username,
+            password: String(pw.password || "[encrypted]"),
+            note: pw.source ? `Imported (${pw.source})` : "",
+            addedAt: pw.dateLastUsed || pw.dateCreated || pw.timestamp || Date.now(),
+          });
+        });
+        renderPasswords();
+      })
+      .catch(() => {});
+  }
   const items = q
     ? p.passwords.filter(
         (pw) =>
@@ -3567,7 +5159,7 @@ function renderPasswords(filter) {
           <div class="pw-site">${escapeHtml(pw.url || "Unknown site")}</div>
           ${
             isEncrypted
-              ? `<span class="pw-badge" title="Encrypted by OS">Encrypted</span>`
+              ? `<span class="pw-badge" aria-label="Encrypted by operating system">Encrypted</span>`
               : ""
           }
         </div>
@@ -3578,9 +5170,9 @@ function renderPasswords(filter) {
         ${
           !isEncrypted
             ? `
-          <button class="pw-copy-btn" data-type="user"  title="Copy username">User</button>
-          <button class="pw-copy-btn" data-type="pass"  title="Copy password">Pass</button>
-          <button class="pw-del-btn"                    title="Delete">Delete</button>`
+          <button type="button" class="pw-copy-btn" data-type="user" aria-label="Copy username">User</button>
+          <button type="button" class="pw-copy-btn" data-type="pass" aria-label="Copy password">Pass</button>
+          <button type="button" class="pw-del-btn" aria-label="Delete password entry">Delete</button>`
             : ""
         }
       </div>`;
@@ -3614,13 +5206,26 @@ const SIDE_PANEL_OPEN_CLASS = "side-panel--open";
 /** Skip enter/exit transitions so bookmarks ↔ history ↔ passwords swaps feel instant. */
 const SIDE_PANEL_INSTANT_CLASS = "side-panel--instant";
 
+function resolveToolsHubHost(mode) {
+  if (mode === "intelligent") return document.getElementById("intelligentToolsHubRoot");
+  return document.getElementById("toolsHubRoot");
+}
+
+function isAnyToolsHubOpen() {
+  const browserHub = document.getElementById("toolsHubRoot");
+  const intelligentHub = document.getElementById("intelligentToolsHubRoot");
+  return !!(
+    (browserHub && browserHub.classList.contains("tools-hub--open")) ||
+    (intelligentHub && intelligentHub.classList.contains("tools-hub--open"))
+  );
+}
+
 function syncWebviewInteractionLayer() {
   const sideOpen = !!document.querySelector(".side-panel.side-panel--open");
-  const hub = document.getElementById("toolsHubRoot");
-  const hubOpen = !!(hub && hub.classList.contains("tools-hub--open"));
-  const settingsOpen = !!document
-    .getElementById("webviewContainer")
-    ?.hasAttribute("data-settings-open");
+  const hubOpen = isAnyToolsHubOpen();
+  const settingsOpen =
+    shellWorkspace === "settings" ||
+    !!document.getElementById("appContainer")?.hasAttribute("data-settings-open");
   const workbenchOpen = !!document
     .getElementById("webviewContainer")
     ?.hasAttribute("data-workbench-open");
@@ -3632,13 +5237,27 @@ function syncWebviewInteractionLayer() {
     wv.style.pointerEvents = blockWebview ? "none" : "";
   });
   syncTopChromeForSurface();
+  traceKernel("syncWebviewInteractionLayer", {
+    sideOpen,
+    hubOpen,
+    settingsOpen,
+    workbenchOpen,
+    blockWebview,
+    activeSessionId,
+    activeTabId,
+    browserFrameSession: browserFrame?.dataset?.orionSessionId || null,
+    browserFrameTab: browserFrame?.dataset?.orionTabId || null,
+  });
 }
 
 function syncRailPanelActive() {
   const map = {
+    browserSettingsPanel: "settingsBtn",
     bookmarksPanel: "bookmarksBtn",
     historyPanel: "historyBtn",
     passwordsPanel: "passwordsBtn",
+    screenshotsPanel: "screenshotsBtn",
+    sessionsPanel: "sessionsBtn",
   };
   document.querySelectorAll("#leftToolRail .rail-btn").forEach((b) => {
     b.classList.remove("rail-btn-active");
@@ -3652,11 +5271,18 @@ function syncRailPanelActive() {
     document.getElementById("networkWorkbenchBtn")?.classList.add("rail-btn-active");
     return;
   }
-  if (document.getElementById("webviewContainer")?.hasAttribute("data-settings-open")) {
+  if (document.getElementById("appContainer")?.hasAttribute("data-settings-open")) {
     document.getElementById("settingsBtn")?.classList.add("rail-btn-active");
     return;
   }
-  for (const pid of ["bookmarksPanel", "historyPanel", "passwordsPanel"]) {
+  for (const pid of [
+    "browserSettingsPanel",
+    "bookmarksPanel",
+    "historyPanel",
+    "passwordsPanel",
+    "screenshotsPanel",
+    "sessionsPanel",
+  ]) {
     const p = document.getElementById(pid);
     if (p && p.classList.contains(SIDE_PANEL_OPEN_CLASS)) {
       const bid = map[pid];
@@ -3668,42 +5294,68 @@ function syncRailPanelActive() {
 }
 
 function closeSidePanels() {
-  ["bookmarksPanel", "historyPanel", "passwordsPanel"].forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) {
-      el.classList.remove(SIDE_PANEL_OPEN_CLASS);
-      el.setAttribute("aria-hidden", "true");
-    }
-  });
+  let browserSettingsWasOpen = false;
+  [
+    "browserSettingsPanel",
+    "bookmarksPanel",
+    "historyPanel",
+    "passwordsPanel",
+    "screenshotsPanel",
+    "sessionsPanel",
+  ].forEach(
+    (id) => {
+      const el = document.getElementById(id);
+      if (el) {
+        if (id === "browserSettingsPanel" && el.classList.contains(SIDE_PANEL_OPEN_CLASS)) {
+          browserSettingsWasOpen = true;
+        }
+        el.classList.remove(SIDE_PANEL_OPEN_CLASS);
+        el.setAttribute("aria-hidden", "true");
+      }
+    },
+  );
+  if (browserSettingsWasOpen) notifyBrowserChromeSettingsSide(false);
   syncRailPanelActive();
   syncWebviewInteractionLayer();
 }
 
 function closeToolsHub() {
-  const hub = document.getElementById("toolsHubRoot");
-  if (!hub) return;
-  hub.classList.remove("tools-hub--open");
-  hub.style.display = "none";
-  hub.setAttribute("aria-hidden", "true");
+  const browserHub = document.getElementById("toolsHubRoot");
+  const intelligentHub = document.getElementById("intelligentToolsHubRoot");
+  [browserHub, intelligentHub].forEach((hub) => {
+    if (!hub) return;
+    hub.classList.remove("tools-hub--open");
+    hub.style.display = "none";
+    hub.setAttribute("aria-hidden", "true");
+  });
   syncRailPanelActive();
   syncWebviewInteractionLayer();
+  window.dispatchEvent(new CustomEvent("tools-hub-close"));
 }
 
-function openToolsHub() {
+function openToolsHub(opts = {}) {
   closeSidePanels();
-  const hub = document.getElementById("toolsHubRoot");
+  const mode = opts && opts.mode === "intelligent" ? "intelligent" : "browser";
+  const otherHub = resolveToolsHubHost(mode === "intelligent" ? "browser" : "intelligent");
+  if (otherHub) {
+    otherHub.classList.remove("tools-hub--open");
+    otherHub.style.display = "none";
+    otherHub.setAttribute("aria-hidden", "true");
+  }
+  const hub = resolveToolsHubHost(mode);
   if (!hub) return;
   hub.classList.add("tools-hub--open");
   hub.style.display = "flex";
   hub.setAttribute("aria-hidden", "false");
+  leaveWorkbenchSurfaceSync();
   leaveSettingsSurfaceSync();
   syncRailPanelActive();
   syncWebviewInteractionLayer();
-  window.dispatchEvent(new CustomEvent("tools-hub-open"));
+  window.dispatchEvent(new CustomEvent("tools-hub-open", { detail: opts }));
 }
 
 function toggleToolsHub() {
-  const hub = document.getElementById("toolsHubRoot");
+  const hub = resolveToolsHubHost("browser");
   if (!hub) return;
   if (hub.classList.contains("tools-hub--open")) closeToolsHub();
   else openToolsHub();
@@ -3716,23 +5368,28 @@ function toggleSidePanel(id) {
   if (panel.classList.contains(SIDE_PANEL_OPEN_CLASS)) {
     panel.classList.remove(SIDE_PANEL_OPEN_CLASS);
     panel.setAttribute("aria-hidden", "true");
+    if (id === "browserSettingsPanel") notifyBrowserChromeSettingsSide(false);
     syncRailPanelActive();
     syncWebviewInteractionLayer();
     return;
   }
 
   const settingsWasOpen = !!document
-    .getElementById("webviewContainer")
+    .getElementById("appContainer")
     ?.hasAttribute("data-settings-open");
-  const hub = document.getElementById("toolsHubRoot");
-  const hubWasOpen = !!(hub && hub.classList.contains("tools-hub--open"));
+  const workbenchWasOpen = !!document
+    .getElementById("webviewContainer")
+    ?.hasAttribute("data-workbench-open");
+  const hubWasOpen = isAnyToolsHubOpen();
 
   const prev = document.querySelector(".side-panel.side-panel--open");
   if (prev && prev !== panel) {
+    if (prev.id === "browserSettingsPanel") notifyBrowserChromeSettingsSide(false);
     panel.classList.add(SIDE_PANEL_INSTANT_CLASS);
     prev.classList.add(SIDE_PANEL_INSTANT_CLASS);
     panel.classList.add(SIDE_PANEL_OPEN_CLASS);
     panel.setAttribute("aria-hidden", "false");
+    if (panel.id === "screenshotsPanel") clearUnseenScreenshotLibraryCount();
     prev.classList.remove(SIDE_PANEL_OPEN_CLASS);
     prev.setAttribute("aria-hidden", "true");
     window.requestAnimationFrame(() => {
@@ -3741,29 +5398,38 @@ function toggleSidePanel(id) {
     });
     if (settingsWasOpen) window.requestAnimationFrame(() => leaveSettingsSurfaceSync());
     else leaveSettingsSurfaceSync();
+    // Close workbench only after the new panel is visible to avoid webview flashes.
+    if (workbenchWasOpen) window.requestAnimationFrame(() => leaveWorkbenchSurfaceSync());
+    else leaveWorkbenchSurfaceSync();
     if (hubWasOpen) window.requestAnimationFrame(() => closeToolsHub());
     else {
       syncRailPanelActive();
       syncWebviewInteractionLayer();
     }
+    if (id === "browserSettingsPanel") notifyBrowserChromeSettingsSide(true);
     return;
   }
 
   panel.classList.add(SIDE_PANEL_OPEN_CLASS);
   panel.setAttribute("aria-hidden", "false");
+  if (id === "screenshotsPanel") clearUnseenScreenshotLibraryCount();
   // If we're coming from the tools hub, the panel's first "open" frame can still be near-transparent
   // (transition start). Force it to be instantly visible for a frame to avoid a webview flash.
-  if (hubWasOpen || settingsWasOpen) {
+  if (hubWasOpen || settingsWasOpen || workbenchWasOpen) {
     panel.classList.add(SIDE_PANEL_INSTANT_CLASS);
     window.requestAnimationFrame(() => panel.classList.remove(SIDE_PANEL_INSTANT_CLASS));
   }
   if (settingsWasOpen) window.requestAnimationFrame(() => leaveSettingsSurfaceSync());
   else leaveSettingsSurfaceSync();
+  // Close workbench only after the new panel is visible to avoid webview flashes.
+  if (workbenchWasOpen) window.requestAnimationFrame(() => leaveWorkbenchSurfaceSync());
+  else leaveWorkbenchSurfaceSync();
   if (hubWasOpen) window.requestAnimationFrame(() => closeToolsHub());
   else {
     syncRailPanelActive();
     syncWebviewInteractionLayer();
   }
+  if (id === "browserSettingsPanel") notifyBrowserChromeSettingsSide(true);
 }
 
 function runQuickCommand(cmd, opts) {
@@ -3799,30 +5465,14 @@ function runQuickCommand(cmd, opts) {
       return;
     }
 
-    const templates = {
-      navigate: "go to ",
-      nav: "nav ",
-      tab: "tab ",
-      url: "url",
-      title: "title",
-      screenshot: "screenshot",
-      scroll: "scroll down",
-      reload: "reload",
-      back: "back",
-      forward: "forward",
-      tabs: "list tabs",
-      switchTab: "switch tab ",
-      newTab: "new tab",
-      closeTab: "close tab",
-      viewportMd: "viewport md",
-      formSchema: "form schema",
-      interactables: "interactables",
-      type: "type ",
-      wait: "wait 1000ms",
-    };
-    const val = templates[cmd] || "";
+    const activeSid = activeSessionId || "s_ab12cd";
+    const val = getToolTemplateLine(cmd, activeSid) || "";
     const chatInputEl = document.getElementById("chatInput");
     const chatInputMd = document.getElementById("chatInputMd");
+    if (!val) {
+      showToast("No template for this quick command");
+      return;
+    }
     chatInputMd.style.display = "none";
     chatInputEl.style.display = "block";
     chatInputEl.value = val;
@@ -3910,12 +5560,15 @@ async function runBrowserImport(target) {
 function setupDataPanelButtons() {
   // Nav bar buttons
   document.getElementById("railWebviewBtn").onclick = () => showWebviewOnly();
+  document.getElementById("sessionsBtn").onclick = () => toggleSidePanel("sessionsPanel");
   document.getElementById("bookmarksBtn").onclick = () =>
     toggleSidePanel("bookmarksPanel");
   document.getElementById("historyBtn").onclick = () =>
     toggleSidePanel("historyPanel");
   document.getElementById("passwordsBtn").onclick = () =>
     toggleSidePanel("passwordsPanel");
+  const shotsBtn = document.getElementById("screenshotsBtn");
+  if (shotsBtn) shotsBtn.onclick = () => toggleSidePanel("screenshotsPanel");
   document.getElementById("networkWorkbenchBtn").onclick = () => {
     // Close other surfaces first to avoid flashes
     closeSidePanels();
@@ -3941,6 +5594,9 @@ function setupDataPanelButtons() {
   document.getElementById("closeBookmarksBtn").onclick = closeSidePanels;
   document.getElementById("closeHistoryBtn").onclick = closeSidePanels;
   document.getElementById("closePasswordsBtn").onclick = closeSidePanels;
+  const closeShots = document.getElementById("closeScreenshotsBtn");
+  if (closeShots) closeShots.onclick = closeSidePanels;
+  document.getElementById("closeSessionsBtn").onclick = closeSidePanels;
 
   // Import buttons
   document.getElementById("importBookmarksBtn").onclick = () =>
@@ -4042,7 +5698,13 @@ function setupDataPanelButtons() {
     (e) => {
       if (!document.querySelector(".side-panel.side-panel--open")) return;
       const t = e.target;
-      if (t.closest("#bookmarksPanel,#historyPanel,#passwordsPanel")) return;
+      if (!(t instanceof Element)) return;
+      if (
+        t.closest(
+          "#bookmarksPanel,#historyPanel,#passwordsPanel,#screenshotsPanel,#sessionsPanel,#browserSettingsPanel",
+        )
+      )
+        return;
       if (t.closest("#leftToolRail")) return;
       closeSidePanels();
     },
@@ -4232,6 +5894,7 @@ window.legacyBrowser = {
     }
     return {
     activeTabId,
+    activeSessionId,
     tabCount: tabs.length,
     activeUrl,
     canGoBack,
@@ -4245,6 +5908,14 @@ window.legacyBrowser = {
     useReactChatResizeUi: USE_REACT_CHAT_RESIZE,
   };
   },
+  getSessions: () => listSessions(),
+  getActiveSessionId: () => activeSessionId,
+  switchSessionById: (sessionId) => switchSession(String(sessionId || "")),
+  createSession: (headless) => {
+    const s = createSessionState(!!headless);
+    return { id: s.id, headless: s.headless };
+  },
+  killSessionById: (sessionId) => killSessionById(String(sessionId || "")),
   getProfileSnapshot: () => {
     const p = getProfile();
     return {
@@ -4304,48 +5975,71 @@ window.legacyBrowser = {
   setChatPanelOpen: (open) => setChatOpen(!!open),
   runAutomationCommand: async (cmd) => runAutomationCommand(cmd, getKernelAutomationContext()),
   dispatchAutomationLine: async (line) => dispatchAutomationLine(line, getKernelAutomationContext()),
-  openToolsHub: () => openToolsHub(),
+  openToolsHub: (opts) => openToolsHub(opts || {}),
   closeToolsHub: () => closeToolsHub(),
   toggleToolsHub: () => toggleToolsHub(),
   runQuickCommand: (cmd, opts) => runQuickCommand(cmd, opts),
+  enterBrowserWorkspace: () => enterBrowserWorkspace(),
+  enterIntelligentWorkspace: () => enterIntelligentWorkspace(),
+  enterSettingsWorkspace: (panel) => enterSettingsWorkspace(panel === "browser" ? "browser" : "intelligent"),
+  openIntelligentAssistantSettings: () => openIntelligentAssistantSettings(),
+  /** Toggles browser settings side column (same as rail Settings in browser workspace). */
+  openBrowserChromeSettingsOverlay: () => toggleSidePanel("browserSettingsPanel"),
+  closeBrowserSettingsSidePanel: () => closeBrowserSettingsSidePanel(),
+  startBrowserPagePickerAny: () => startElementPicker("any"),
+  startBrowserPagePickerInteractive: () => startElementPicker("interactive"),
+  startBrowserPageElementScreenshot: () => startElementScreenshot(),
 };
 
-  setupTitleBar();
-  setupTheme();
-  if (USE_REACT_MODALS) {
-    hideLegacyModalContainers();
-    wireReactSettingsButtons();
-  } else {
-    setupSettings();
-  }
-  setupKeyboardShortcuts();
-  setupNavEvents();
-  setupFindBar();
-  setupZoom();
-  setupChat();
-  setupChatPanel();
-  setupChatPanelLinks();
-  setupToolsPanel();
-  if (!USE_REACT_CHAT_RESIZE) setupResizeHandle();
-  setupDataPanelButtons();
-  if (!USE_REACT_MODALS) setupImportWizard();
+  window.__mcpInvokeAutomation = async (cmd) => runAutomationCommand(cmd, getKernelAutomationContext());
+
+  // ── Register startup gate callbacks FIRST — before any setup that might throw ──
+  // This guarantees tabs are created and the loading overlay is cleared regardless
+  // of whether any optional setup function encounters an error.
   if (USE_REACT_MODALS) {
     window.addEventListener(
       "profile-gate-complete",
       () => {
         setProfileGateBackdrop(false);
-        if (tabs.length === 0) createTab(homePage);
+        ensureActiveShellReady();
       },
       { once: true },
     );
-  } else {
-    createTab(homePage);
+    window.setTimeout(() => {
+      ensureActiveShellReady();
+      setProfileGateBackdrop(false);
+    }, 450);
   }
-  if (!USE_REACT_MODALS) loadSystemInfo();
-  if (!USE_REACT_MODALS) {
-    setupProfileModal();
-    checkFirstRun();
+
+  // ── Setup calls — each isolated so one failure can't block shell init ──
+  try { setupTitleBar(); } catch (e) { console.warn("[kernel] setupTitleBar:", e); }
+  try { setupTheme(); } catch (e) { console.warn("[kernel] setupTheme:", e); }
+  try {
+    if (USE_REACT_MODALS) {
+      hideLegacyModalContainers();
+      wireReactSettingsButtons();
+    } else {
+      setupSettings();
+    }
+  } catch (e) { console.warn("[kernel] setupModalsOrSettings:", e); }
+  try { setupKeyboardShortcuts(); } catch (e) { console.warn("[kernel] setupKeyboardShortcuts:", e); }
+  try { setupNavEvents(); } catch (e) { console.warn("[kernel] setupNavEvents:", e); }
+  try { setupFindBar(); } catch (e) { console.warn("[kernel] setupFindBar:", e); }
+  try { setupZoom(); } catch (e) { console.warn("[kernel] setupZoom:", e); }
+  try { setupChat(); } catch (e) { console.warn("[kernel] setupChat:", e); }
+  try { setupChatPanel(); } catch (e) { console.warn("[kernel] setupChatPanel:", e); }
+  try { setupChatPanelLinks(); } catch (e) { console.warn("[kernel] setupChatPanelLinks:", e); }
+  try { setupToolsPanel(); } catch (e) { console.warn("[kernel] setupToolsPanel:", e); }
+  try { if (!USE_REACT_CHAT_RESIZE) setupResizeHandle(); } catch (e) { console.warn("[kernel] setupResizeHandle:", e); }
+  try { setupDataPanelButtons(); } catch (e) { console.warn("[kernel] setupDataPanelButtons:", e); }
+  try {
+    restoreUnseenScreenshotRailBadgeFromStorage();
+  } catch (e) {
+    console.warn("[kernel] screenshot rail badge restore:", e);
   }
+  try { if (!USE_REACT_MODALS) setupImportWizard(); } catch (e) { console.warn("[kernel] setupImportWizard:", e); }
+  try { if (!USE_REACT_MODALS) { loadSystemInfo(); setupProfileModal(); checkFirstRun(); } } catch (e) { console.warn("[kernel] legacyProfileSetup:", e); }
+
   window.addEventListener("tools-hub-breadcrumb", (e: Event) => {
     const d = (e as CustomEvent<{ parts?: unknown }>).detail;
     const parts = Array.isArray(d?.parts) ? (d?.parts as unknown[]) : [];
@@ -4353,9 +6047,38 @@ window.legacyBrowser = {
       .map((p) => (typeof p === "string" ? p : String(p ?? "")).trim())
       .filter(Boolean)
       .slice(0, 6);
-    lastToolsHubCrumbs = cleaned.length ? cleaned : ["Tool Hub"];
+    lastToolsHubCrumbs = cleaned.length ? cleaned : ["Browser Tool Hub"];
     syncTopChromeForSurface();
   });
-  syncRailPanelActive();
-  syncWebviewInteractionLayer();
+
+  window.addEventListener("orion-screenshot-crumbs", (e: Event) => {
+    const d = (e as CustomEvent<{ parts?: unknown }>).detail;
+    const parts = Array.isArray(d?.parts) ? (d?.parts as unknown[]) : [];
+    const cleaned = parts
+      .map((p) => (typeof p === "string" ? p : String(p ?? "")).trim())
+      .filter(Boolean)
+      .slice(0, 6);
+    lastScreenshotCrumbs = cleaned.length ? cleaned : ["Screenshot Library"];
+    syncTopChromeForSurface();
+  });
+
+  // ── Final shell bootstrap — always runs even if some setup above failed ──
+  if (!USE_REACT_MODALS) ensureActiveShellReady();
+  try { syncRailPanelActive(); } catch (e) { /* ignore */ }
+  try { syncWebviewInteractionLayer(); } catch (e) { /* ignore */ }
+  ensureActiveShellReady();
+  try {
+    ensureConversationBootstrap();
+    renderChatFromActiveConversation();
+    refreshChatHistoryList();
+    if (newChatBtn)
+      newChatBtn.onclick = () => {
+        if (typeof window.__aiChatNewConversation === "function") window.__aiChatNewConversation();
+        else startNewConversation();
+      };
+    applyShellWorkspaceUi(loadShellWorkspacePreference());
+  } catch (e) {
+    console.warn("[kernel] conversation / workspace bootstrap:", e);
+  }
+  traceKernel("initBrowserKernel completed");
 }
