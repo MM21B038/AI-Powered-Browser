@@ -16,6 +16,8 @@ import {
   ToolsHubRunJsDetail,
   ToolsHubBrowserSearchDetail,
   ToolsHubScientificCalcDetail,
+  ToolsHubPythonSandboxDetail,
+  ToolsHubUserSkillsDetail,
   ToolsHubScrollDetail,
   ToolsHubSelectDetail,
   ToolsHubSessionDetail,
@@ -93,20 +95,22 @@ export function ToolsHubBridge(): ReactElement | null {
   const toolId = view.kind === "toolDetail" ? view.item.id : "";
   const intelligentSearchTool = findToolByIdInCatalog("browserSearch");
   const intelligentCalcTool = findToolByIdInCatalog("scientificCalc");
+  const intelligentPythonTool = findToolByIdInCatalog("pythonSandbox");
+  const intelligentUserSkillsTool = findToolByIdInCatalog("userSkills");
   const visibleCategories =
     mode === "intelligent"
-      ? TOOLS_HUB_CATEGORIES
-          .map((cat) => ({
-            ...cat,
-            items: cat.items.filter((it) => it.id === "browserSearch" || it.id === "scientificCalc"),
-          }))
-          .filter((cat) => cat.items.length > 0)
-      : TOOLS_HUB_CATEGORIES
-          .map((cat) => ({
-            ...cat,
-            items: cat.items.filter((it) => it.id !== "browserSearch" && it.id !== "scientificCalc"),
-          }))
-          .filter((cat) => cat.items.length > 0);
+      ? TOOLS_HUB_CATEGORIES.map((cat) => ({
+          ...cat,
+          items: cat.items.filter(
+            (it) => it.id === "browserSearch" || it.id === "scientificCalc" || it.id === "pythonSandbox",
+          ),
+        })).filter((cat) => cat.items.length > 0)
+      : TOOLS_HUB_CATEGORIES.map((cat) => ({
+          ...cat,
+          items: cat.items.filter(
+            (it) => it.id !== "browserSearch" && it.id !== "scientificCalc" && it.id !== "pythonSandbox",
+          ),
+        })).filter((cat) => cat.items.length > 0);
   useEffect(() => {
     if (!hubOpen) return;
     if (mode === "intelligent") return;
@@ -158,9 +162,17 @@ export function ToolsHubBridge(): ReactElement | null {
   if (!bridge || !host) return null;
 
   let body: ReactElement;
-  if (mode === "intelligent" && intelligentSearchTool && intelligentCalcTool) {
+  if (
+    mode === "intelligent" &&
+    intelligentSearchTool &&
+    intelligentCalcTool &&
+    intelligentPythonTool &&
+    intelligentUserSkillsTool
+  ) {
     const isSearchDetail = view.kind === "toolDetail" && view.item.id === "browserSearch";
     const isCalcDetail = view.kind === "toolDetail" && view.item.id === "scientificCalc";
+    const isPythonDetail = view.kind === "toolDetail" && view.item.id === "pythonSandbox";
+    const isUserSkillsDetail = view.kind === "toolDetail" && view.item.id === "userSkills";
     body = (
       <div
         className="tools-hub-intelligent-overlay"
@@ -175,7 +187,9 @@ export function ToolsHubBridge(): ReactElement | null {
           <header className="tools-hub-intelligent-head">
             <div>
               <h1 className="tools-hub-title">Intelligent Tool Hub</h1>
-              <p className="tools-hub-subtitle">Use Web Search or Scientific calculator tools.</p>
+              <p className="tools-hub-subtitle">
+                Web search, calculator, Python sandbox, or user SKILL.md skills.
+              </p>
             </div>
             <button
               type="button"
@@ -202,6 +216,24 @@ export function ToolsHubBridge(): ReactElement | null {
               <ToolsHubScientificCalcDetail
                 category={intelligentCalcTool.category}
                 item={intelligentCalcTool.item}
+                bridge={bridge}
+                onBack={() => setView({ kind: "categories" })}
+              />
+            </div>
+          ) : isPythonDetail ? (
+            <div className="tools-hub-intelligent-body">
+              <ToolsHubPythonSandboxDetail
+                category={intelligentPythonTool.category}
+                item={intelligentPythonTool.item}
+                bridge={bridge}
+                onBack={() => setView({ kind: "categories" })}
+              />
+            </div>
+          ) : isUserSkillsDetail ? (
+            <div className="tools-hub-intelligent-body">
+              <ToolsHubUserSkillsDetail
+                category={intelligentUserSkillsTool.category}
+                item={intelligentUserSkillsTool.item}
                 bridge={bridge}
                 onBack={() => setView({ kind: "categories" })}
               />
@@ -246,6 +278,46 @@ export function ToolsHubBridge(): ReactElement | null {
                 <span className="tools-hub-card-text">
                   <span className="tools-hub-card-title">{intelligentCalcTool.item.label}</span>
                   <span className="tools-hub-card-desc">{intelligentCalcTool.item.description}</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                className="tools-hub-card tools-hub-card--single"
+                onClick={() =>
+                  setView({
+                    kind: "toolDetail",
+                    category: intelligentPythonTool.category,
+                    item: intelligentPythonTool.item,
+                  })
+                }
+              >
+                <span
+                  className="tools-hub-card-icon"
+                  dangerouslySetInnerHTML={{ __html: intelligentPythonTool.item.iconSvg }}
+                />
+                <span className="tools-hub-card-text">
+                  <span className="tools-hub-card-title">{intelligentPythonTool.item.label}</span>
+                  <span className="tools-hub-card-desc">{intelligentPythonTool.item.description}</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                className="tools-hub-card tools-hub-card--single"
+                onClick={() =>
+                  setView({
+                    kind: "toolDetail",
+                    category: intelligentUserSkillsTool.category,
+                    item: intelligentUserSkillsTool.item,
+                  })
+                }
+              >
+                <span
+                  className="tools-hub-card-icon"
+                  dangerouslySetInnerHTML={{ __html: intelligentUserSkillsTool.item.iconSvg }}
+                />
+                <span className="tools-hub-card-text">
+                  <span className="tools-hub-card-title">{intelligentUserSkillsTool.item.label}</span>
+                  <span className="tools-hub-card-desc">{intelligentUserSkillsTool.item.description}</span>
                 </span>
               </button>
             </div>
@@ -298,7 +370,11 @@ export function ToolsHubBridge(): ReactElement | null {
         </header>
         <div className="tools-hub-grid" role="navigation" aria-label="Tools in category">
           {view.category.items
-            .filter((item) => (mode === "browser" ? item.id !== "browserSearch" && item.id !== "scientificCalc" : true))
+            .filter((item) =>
+              mode === "browser"
+                ? item.id !== "browserSearch" && item.id !== "scientificCalc" && item.id !== "pythonSandbox"
+                : true,
+            )
             .map((item) => (
             <button
               key={item.id}
@@ -393,6 +469,15 @@ export function ToolsHubBridge(): ReactElement | null {
     } else if (td.item.detail === "scientificCalc") {
       body = (
         <ToolsHubScientificCalcDetail
+          category={td.category}
+          item={td.item}
+          bridge={bridge}
+          onBack={() => backFromToolDetail(td.category)}
+        />
+      );
+    } else if (td.item.detail === "pythonSandbox") {
+      body = (
+        <ToolsHubPythonSandboxDetail
           category={td.category}
           item={td.item}
           bridge={bridge}

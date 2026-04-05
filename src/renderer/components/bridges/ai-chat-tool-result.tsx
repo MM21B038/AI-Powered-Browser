@@ -1,5 +1,6 @@
 import {
   Fragment,
+  useCallback,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -8,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { renderChatMarkdownToHtml } from "../../chat/chat-markdown";
+import { highlightCodeBlock } from "../../chat/code-highlight";
 import { parseMarkdownPipeTables } from "../../chat/parse-markdown-pipe-table";
 import type { MarkdownPipeSegment } from "../../chat/parse-markdown-pipe-table";
 import { McpIcon } from "../icons/McpIcon";
@@ -86,6 +88,10 @@ type ParsedToolDisplay =
       inner: unknown;
       partsNote?: string;
     }
+  | {
+      kind: "python_sandbox";
+      payload: Record<string, unknown>;
+    }
   | { kind: "json"; value: unknown }
   | { kind: "text"; text: string };
 
@@ -150,6 +156,15 @@ function parseToolResultContent(raw: string): ParsedToolDisplay {
         inner,
         partsNote,
       };
+    }
+    if (
+      o &&
+      typeof o === "object" &&
+      !Array.isArray(o) &&
+      o._display === "python_sandbox" &&
+      typeof o.success === "boolean"
+    ) {
+      return { kind: "python_sandbox", payload: o };
     }
     return { kind: "json", value: o };
   } catch {
@@ -470,6 +485,245 @@ function KeyValueBlock({
   );
 }
 
+function downloadBytes(filename: string, bytes: Uint8Array): void {
+  const blob = new Blob([new Uint8Array(bytes)]);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function safeDownloadBasename(name: string): string {
+  const t = name.trim().replace(/^.*[/\\]/, "");
+  return t || "download.bin";
+}
+
+function downloadBase64File(filename: string, dataBase64: string): void {
+  try {
+    const bin = atob(dataBase64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    downloadBytes(safeDownloadBasename(filename), bytes);
+  } catch {
+    /* ignore */
+  }
+}
+
+function PythonSandboxResultView({ payload }: { payload: Record<string, unknown> }): ReactElement {
+  const success = Boolean(payload.success);
+  const stdout = String(payload.stdout ?? "");
+  const stderr = String(payload.stderr ?? "");
+  const err = payload.error != null ? String(payload.error) : "";
+  const images = Array.isArray(payload.images) ? payload.images : [];
+  const table = payload.table && typeof payload.table === "object" ? (payload.table as Record<string, unknown>) : null;
+  const cols = table && Array.isArray(table.columns) ? table.columns.map((c) => String(c)) : [];
+  const rows = table && Array.isArray(table.rows) ? (table.rows as unknown[][]) : [];
+  const files = Array.isArray(payload.files) ? payload.files : [];
+
+  return (
+    <div className="ai-chat-tool-card__result-inner ai-chat-tool-python">
+      <div
+        className={
+          success
+            ? "ai-chat-tool-card__banner ai-chat-tool-card__banner--ok"
+            : "ai-chat-tool-card__banner ai-chat-tool-card__banner--err"
+        }
+        role="status"
+      >
+        {success ? "Python finished" : "Python error"}
+      </div>
+      {err && !success ? (
+        <pre className="ai-chat-tool-card__pre ai-chat-tool-python__err">{err}</pre>
+      ) : null}
+      {images.map((im, i) => {
+        if (!im || typeof im !== "object") return null;
+        const m = im as Record<string, unknown>;
+        const mime = String(m.mime ?? "image/png");
+        const b64 = String(m.dataBase64 ?? "");
+        if (!b64) return null;
+        const ext = mime.includes("png")
+          ? "png"
+          : mime.includes("jpeg") || mime.includes("jpg")
+            ? "jpg"
+            : mime.includes("webp")
+              ? "webp"
+              : "png";
+        const dlName = `plot-${i + 1}.${ext}`;
+        return (
+          <figure key={i} className="ai-chat-tool-python__fig">
+            <div className="ai-chat-tool-python__fig-toolbar">
+              <span className="ai-chat-tool-python__fig-label">Figure {i + 1}</span>
+              <button
+                type="button"
+                className="ai-chat-tool-python__dl"
+                onClick={() => downloadBase64File(dlName, b64)}
+              >
+                Download
+              </button>
+            </div>
+            <img
+              className="ai-chat-tool-python__img"
+              alt={`Plot ${i + 1}`}
+              src={`data:${mime};base64,${b64}`}
+            />
+          </figure>
+        );
+      })}
+      {cols.length > 0 && rows.length > 0 ? (
+        <NestedFold summary={`DataFrame · ${rows.length} × ${cols.length}`}>
+          <div className="ai-chat-tool-table-wrap ai-chat-tool-python__table-wrap">
+            <table className="ai-chat-tool-table">
+              <thead>
+                <tr>
+                  {cols.map((c) => (
+                    <th key={c}>{c}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, ri) => (
+                  <tr key={ri}>
+                    {row.map((cell, ci) => (
+                      <td key={ci}>
+                        <div className="ai-chat-tool-kv__val-inner">{String(cell)}</div>
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </NestedFold>
+      ) : null}
+      {stdout.trim() ? (
+        <details className="ai-chat-tool-python__out" open>
+          <summary>stdout</summary>
+          <pre className="ai-chat-tool-card__pre">{stdout}</pre>
+        </details>
+      ) : null}
+      {stderr.trim() ? (
+        <details className="ai-chat-tool-python__out">
+          <summary>stderr</summary>
+          <pre className="ai-chat-tool-card__pre">{stderr}</pre>
+        </details>
+      ) : null}
+      {files.length > 0 ? (
+        <div className="ai-chat-tool-python__files">
+          <div className="ai-chat-tool-python__files-title">Output files</div>
+          <ul className="ai-chat-tool-list ai-chat-tool-list--plain">
+            {files.map((f, i) => {
+              if (!f || typeof f !== "object") return null;
+              const fr = f as Record<string, unknown>;
+              const name = String(fr.name ?? `file_${i}`);
+              const sz = Number(fr.size ?? 0);
+              const b64 = typeof fr.dataBase64 === "string" ? fr.dataBase64 : null;
+              const truncated = fr.truncated === true;
+              return (
+                <li key={i}>
+                  <span className="ai-chat-tool-python__fname">{name}</span>
+                  <span className="ai-chat-tool-python__fmeta"> ({sz} bytes)</span>
+                  {truncated ? (
+                    <span className="ai-chat-tool-card__muted"> — too large to download here</span>
+                  ) : b64 ? (
+                    <button
+                      type="button"
+                      className="ai-chat-tool-python__dl"
+                      onClick={() => downloadBase64File(name, b64)}
+                    >
+                      Download
+                    </button>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function IntelligentPythonExecuteArgsView({ toolArguments }: { toolArguments: string }): ReactElement | null {
+  const parsed = useMemo(() => {
+    try {
+      const o = JSON.parse(toolArguments) as Record<string, unknown>;
+      return o && typeof o === "object" ? o : null;
+    } catch {
+      return null;
+    }
+  }, [toolArguments]);
+
+  const code = parsed && typeof parsed.code === "string" ? parsed.code : "";
+  const packages =
+    parsed && Array.isArray(parsed.packages) ? parsed.packages.map((p) => String(p)) : [];
+
+  const highlighted = useMemo(() => highlightCodeBlock(code, "python"), [code]);
+
+  const copyCode = useCallback(() => {
+    void navigator.clipboard.writeText(code);
+  }, [code]);
+
+  if (!parsed || !code.trim()) return null;
+
+  const timeoutRaw = parsed.timeout_ms;
+  const codeClass = [
+    highlighted.hljs ? "hljs" : "",
+    highlighted.classLang ? `language-${highlighted.classLang}` : "language-python",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className="ai-chat-tool-py-args">
+      {packages.length > 0 ? (
+        <div className="ai-chat-tool-py-args__row">
+          <span className="ai-chat-tool-py-args__label">packages</span>
+          <div className="ai-chat-tool-py-args__pkgs">
+            {packages.map((p) => (
+              <span key={p} className="ai-chat-tool-py-args__pkg">
+                {p}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {timeoutRaw != null && timeoutRaw !== "" ? (
+        <div className="ai-chat-tool-py-args__row ai-chat-tool-py-args__row--meta">
+          <span className="ai-chat-tool-py-args__label">timeout_ms</span>
+          <code className="ai-chat-tool-py-args__timeout">{String(timeoutRaw)}</code>
+        </div>
+      ) : null}
+      <div className="md-codeblock" data-lang="python">
+        <div className="md-codeblock-head">
+          <span className="md-codeblock-lang">python</span>
+          <button type="button" className="md-codecopy" aria-label="Copy code" onClick={copyCode}>
+            <svg
+              className="md-codecopy-icon"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              focusable="false"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                fill="currentColor"
+                d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"
+              />
+            </svg>
+          </button>
+        </div>
+        <pre>
+          <code className={codeClass} dangerouslySetInnerHTML={{ __html: highlighted.html }} />
+        </pre>
+      </div>
+    </div>
+  );
+}
+
 function ResultBody({ parsed }: { parsed: ParsedToolDisplay }): ReactElement {
   if (parsed.kind === "mcp") {
     return (
@@ -496,6 +750,9 @@ function ResultBody({ parsed }: { parsed: ParsedToolDisplay }): ReactElement {
       </div>
     );
   }
+  if (parsed.kind === "python_sandbox") {
+    return <PythonSandboxResultView payload={parsed.payload} />;
+  }
   if (parsed.kind === "json") {
     return <JsonValueView value={parsed.value} depth={0} />;
   }
@@ -517,6 +774,19 @@ export function AiChatToolResultBlock({
     [toolArguments],
   );
 
+  const pythonArgsView = useMemo(() => {
+    const n = name.trim();
+    const raw = toolArguments?.trim() ?? "";
+    if (n !== "intelligent_python_execute" || !raw) return null;
+    try {
+      const o = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof o?.code !== "string" || !o.code.trim()) return null;
+    } catch {
+      return null;
+    }
+    return <IntelligentPythonExecuteArgsView toolArguments={raw} />;
+  }, [name, toolArguments]);
+
   const statusChip: ReactNode =
     parsed.kind === "mcp" ? (
       <span
@@ -527,6 +797,16 @@ export function AiChatToolResultBlock({
         }
       >
         {parsed.isError ? "Error" : "OK"}
+      </span>
+    ) : parsed.kind === "python_sandbox" ? (
+      <span
+        className={
+          parsed.payload.success
+            ? "ai-chat-tool-card__chip ai-chat-tool-card__chip--ok"
+            : "ai-chat-tool-card__chip ai-chat-tool-card__chip--err"
+        }
+      >
+        {parsed.payload.success ? "OK" : "Error"}
       </span>
     ) : null;
 
@@ -544,7 +824,12 @@ export function AiChatToolResultBlock({
         </div>
       </summary>
       <div className="ai-chat-tool-card__body">
-        {argsPretty !== null ? (
+        {pythonArgsView ? (
+          <section className="ai-chat-tool-card__section">
+            <h4 className="ai-chat-tool-card__section-title">Arguments</h4>
+            {pythonArgsView}
+          </section>
+        ) : argsPretty !== null ? (
           <section className="ai-chat-tool-card__section">
             <h4 className="ai-chat-tool-card__section-title">Arguments</h4>
             <pre className="ai-chat-tool-card__pre ai-chat-tool-card__pre--args">

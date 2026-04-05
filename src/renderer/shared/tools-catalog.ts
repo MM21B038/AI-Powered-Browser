@@ -18,6 +18,8 @@ export type ToolsHubToolDetail =
   | "io"
   | "browserSearch"
   | "scientificCalc"
+  | "pythonSandbox"
+  | "userSkills"
   | "pickerDemo"
   | "session"
   | "simple";
@@ -88,6 +90,10 @@ const iElemshot = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" a
 const iRunJs = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 7l-4 5 4 5M16 7l4 5-4 5M14 4l-4 16" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const iSearch = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.35"/><path d="M16 16l4 4" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>`;
 const iCalc = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2" stroke="currentColor" stroke-width="1.35"/><path d="M8 7h8M8 11h2M12 11h2M16 11h0M8 15h2M12 15h2M16 15h0" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>`;
+
+const iPython = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 4h2v3H9V4zm4 0h2v3h-2V4z" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/><path d="M7 8h10v12a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V8z" stroke="currentColor" stroke-width="1.35"/><path d="M10 12h4M12 10v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>`;
+
+const iSkill = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" stroke="currentColor" stroke-width="1.35"/><path d="M8 7h8M8 11h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.85"/></svg>`;
 
 export const TOOLS_HUB_CATEGORIES: ToolsHubCategory[] = [
   {
@@ -284,6 +290,24 @@ export const TOOLS_HUB_CATEGORIES: ToolsHubCategory[] = [
         iconSvg: iCalc,
         command: "scientificCalc",
         detail: "scientificCalc",
+      },
+      {
+        id: "pythonSandbox",
+        label: "Python sandbox",
+        description:
+          "Run Python in Docker when available, else a temp venv: optional pip packages, code, plots, DataFrame `df`, files in `output/` or cwd. Docker Desktop or host Python for fallback.",
+        iconSvg: iPython,
+        command: "pythonSandbox",
+        detail: "pythonSandbox",
+      },
+      {
+        id: "userSkills",
+        label: "User skills",
+        description:
+          "List, read, write, or delete SKILL.md instructions stored in the app (same as Assistant Settings). Enable skills there to inject them into the system prompt.",
+        iconSvg: iSkill,
+        command: "skillList",
+        detail: "userSkills",
       },
     ],
   },

@@ -109,15 +109,33 @@ export function saveConversationState(state: ConversationStoreState): void {
   }
 }
 
-export function createDebouncedSave(delayMs: number) {
+export type DebouncedSaveLegacy = ((state: ConversationStoreState) => void) & {
+  flush: (override?: ConversationStoreState) => void;
+};
+
+export function createDebouncedSave(delayMs: number): DebouncedSaveLegacy {
   let t: ReturnType<typeof setTimeout> | null = null;
-  return (state: ConversationStoreState) => {
+  let pending: ConversationStoreState | null = null;
+  const run = ((state: ConversationStoreState) => {
+    pending = state;
     if (t) clearTimeout(t);
     t = setTimeout(() => {
-      saveConversationState(state);
+      if (pending) saveConversationState(pending);
       t = null;
     }, delayMs);
+  }) as DebouncedSaveLegacy;
+  run.flush = (override?: ConversationStoreState) => {
+    if (t) {
+      clearTimeout(t);
+      t = null;
+    }
+    const s = override ?? pending;
+    if (s) {
+      saveConversationState(s);
+      pending = s;
+    }
   };
+  return run;
 }
 
 export function defaultWelcomeMessage(): ChatMessage {

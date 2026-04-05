@@ -7,13 +7,18 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
   type CSSProperties,
   type ReactElement,
 } from "react";
 import { createPortal } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import {
+  CHAT_STORAGE_KEY_V2,
   loadConversationStateV2,
+  mergeChatStatePreferNewerPerScope,
+  readChatBackupStateV2,
+  stripAttachmentsFromState,
   createDebouncedSaveV2,
   getScopedStore,
   setScopedStore,
@@ -26,7 +31,13 @@ import {
   type Conversation,
   type ConversationStoreStateV2,
   type ScopedStore,
+  type ChatAttachment,
 } from "../../chat/conversation-store";
+import {
+  chatAttachmentLimitsSummary,
+  fileToChatAttachment,
+  validateChatAttachmentList,
+} from "../../chat/chat-attachments";
 import { generateMessageId } from "../../chat/conversation-ids";
 import {
   loadIntelligentSettings,
@@ -68,9 +79,42 @@ import {
 } from "./AiChatCalculatorToolRow";
 import { AiChatToolResultBlock } from "./ai-chat-tool-result";
 import { AiChatQueryRail } from "./AiChatQueryRail";
+import { AiChatApiErrorBlock } from "./AiChatApiErrorBlock";
+import {
+  formatChatApiErrorMessage,
+  getChatApiErrorDisplay,
+  type ChatApiErrorDisplay,
+} from "../../services/api-error-format";
 import { renderChatMarkdownToHtml } from "../../chat/chat-markdown";
 
-const debouncedSave = createDebouncedSaveV2(400);
+const debouncedSave = createDebouncedSaveV2(200);
+
+/** Toast + event fallback so composer feedback is visible even if one bridge is missing. */
+function notifyComposerUser(message: string, durationMs = 4500): void {
+  const w = window as unknown as {
+    legacyBrowser?: { showToast?: (m: string, d?: number) => void };
+    browserAPI?: { showToast?: (m: string, d?: number) => void };
+  };
+  const fn = w.legacyBrowser?.showToast ?? w.browserAPI?.showToast;
+  if (typeof fn === "function") {
+    try {
+      fn(message, durationMs);
+      return;
+    } catch {
+      /* fall through */
+    }
+  }
+  try {
+    window.dispatchEvent(
+      new CustomEvent("legacy-toast", {
+        detail: { msg: message, duration: durationMs },
+      }),
+    );
+  } catch {
+    /* ignore */
+  }
+  console.warn("[ai-chat]", message);
+}
 
 function lastUserMessageContent(messages: ChatMessageV2[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -305,6 +349,24 @@ function IconClearChat(): ReactElement {
   );
 }
 
+function IconAttachFiles(): ReactElement {
+  return (
+    <svg
+      width="17"
+      height="17"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M21.44 11.05 12.25 20.24a5.98 5.98 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2.67 2.67 0 0 1-3.77-3.77l8.49-8.48" />
+    </svg>
+  );
+}
+
 function useIntelligentWorkspaceShell(): boolean {
   const [v, setV] = useState(
     () =>
@@ -448,7 +510,21 @@ type StreamSegment =
       arguments: string;
       content: string;
     }
+  | { kind: "api_error"; display: ChatApiErrorDisplay }
   | { kind: "text"; plain: string };
+
+/** Plain text for copy / footer for the in-flight stream (text + API error segments). */
+function streamSegmentsToPlainText(segments: StreamSegment[]): string {
+  const parts: string[] = [];
+  for (const s of segments) {
+    if (s.kind === "text" && s.plain.trim()) parts.push(s.plain.trim());
+    if (s.kind === "api_error") {
+      const { title, detail } = s.display;
+      parts.push([title, detail].filter((x) => x.trim()).join("\n\n"));
+    }
+  }
+  return parts.join("\n\n").trim();
+}
 
 function pushSegmentSnapshot(
   segments: StreamSegment[],
@@ -478,6 +554,8 @@ function streamScrollSignature(segments: StreamSegment[]): string {
       if (s.kind === "thinking" && s.live) return "thinkL";
       if (s.kind === "thinking") return `thinkD:${s.text.length}`;
       if (s.kind === "text") return `txt:${s.plain.length}`;
+      if (s.kind === "api_error")
+        return `api:${s.display.severity}:${s.display.title.length}:${s.display.detail.length}`;
       if (s.kind === "tool_running") return `run:${s.toolCallId}`;
       return `done:${s.name}:${s.toolCallId}`;
     })
@@ -494,6 +572,10 @@ function buildPersistedMessagesRobust(
   finalRoundThinking: string,
   assistantBuf: string,
   thinkingBufAll: string,
+  apiErrorPersist: {
+    display: ChatApiErrorDisplay;
+    assistantPrefix: string;
+  } | null,
 ): ChatMessageV2[] {
   const out: ChatMessageV2[] = [];
   let consumedFromFlat = 0;
@@ -538,6 +620,16 @@ function buildPersistedMessagesRobust(
     id: generateMessageId(),
     role: "assistant",
     content: outText,
+    ...(apiErrorPersist
+      ? {
+          apiError: {
+            display: apiErrorPersist.display,
+            ...(apiErrorPersist.assistantPrefix.trim()
+              ? { assistantPrefix: apiErrorPersist.assistantPrefix.trim() }
+              : {}),
+          },
+        }
+      : {}),
     ...(ft ? { thinking: ft } : {}),
   });
   return out;
@@ -562,6 +654,30 @@ async function runChatPipelineRound(
   let segments: StreamSegment[] = [];
   /** Preamble strip + assistantBuf reset at most once per SSE stream (first tool in batch). */
   let preambleClearedForStream = false;
+  let apiErrorPersist: {
+    display: ChatApiErrorDisplay;
+    assistantPrefix: string;
+  } | null = null;
+
+  /** Replace trailing text segment(s) with full `assistantBuf` (used on done); keep `api_error` segments. */
+  const flushAssistantBufToTextTail = () => {
+    while (
+      segments.length > 0 &&
+      segments[segments.length - 1]?.kind === "text"
+    ) {
+      segments = segments.slice(0, -1);
+    }
+    const last = segments[segments.length - 1];
+    if (last?.kind === "api_error") {
+      pushSegmentSnapshot(segments, onSegmentUpdate);
+      return;
+    }
+    const tail = assistantBuf.trim();
+    if (tail) {
+      segments = [...segments, { kind: "text", plain: tail }];
+    }
+    pushSegmentSnapshot(segments, onSegmentUpdate);
+  };
 
   const onEvent = (e: ChatStreamEvent) => {
     switch (e.type) {
@@ -666,25 +782,29 @@ async function runChatPipelineRound(
         roundThinking = "";
         break;
       }
-      case "error":
+      case "error": {
         segments = closeLiveThinkingSegments(segments);
-        assistantBuf += `\n\n_Error: ${e.message}_`;
+        const prior = assistantBuf;
+        const msg = e.message;
+        assistantBuf += (prior.trim() ? "\n\n" : "") + msg;
+        const display = getChatApiErrorDisplay(msg, e.httpStatus);
+        apiErrorPersist = {
+          display,
+          assistantPrefix: prior.trim(),
+        };
+        let i = segments.length;
+        while (i > 0 && segments[i - 1]?.kind === "text") i--;
+        segments = segments.slice(0, i);
+        if (prior.trim()) {
+          segments = [...segments, { kind: "text", plain: prior.trim() }];
+        }
+        segments = [...segments, { kind: "api_error", display }];
+        pushSegmentSnapshot(segments, onSegmentUpdate);
         break;
+      }
       case "done":
         segments = closeLiveThinkingSegments(segments);
-        while (
-          segments.length > 0 &&
-          segments[segments.length - 1]?.kind === "text"
-        ) {
-          segments = segments.slice(0, -1);
-        }
-        {
-          const tail = assistantBuf.trim();
-          if (tail) {
-            segments = [...segments, { kind: "text", plain: tail }];
-          }
-        }
-        pushSegmentSnapshot(segments, onSegmentUpdate);
+        flushAssistantBufToTextTail();
         break;
       default: {
         const _never: never = e;
@@ -693,17 +813,26 @@ async function runChatPipelineRound(
     }
   };
 
-  await runAiChatPipeline({
-    scope,
-    settings: loadIntelligentSettings(),
-    api,
-    messages: ensureSystemMessage(storedMessages, scope),
-    onEvent,
-    toolAllowlist:
-      scope === "intelligent" && toolAllowlist != null && toolAllowlist.length > 0
-        ? toolAllowlist
-        : null,
-  });
+  try {
+    await runAiChatPipeline({
+      scope,
+      settings: loadIntelligentSettings(),
+      api,
+      messages: ensureSystemMessage(storedMessages, scope),
+      onEvent,
+      toolAllowlist:
+        scope === "intelligent" && toolAllowlist != null && toolAllowlist.length > 0
+          ? toolAllowlist
+          : null,
+    });
+  } catch (err) {
+    const raw = err instanceof Error ? err.message : String(err);
+    onEvent({
+      type: "error",
+      message: formatChatApiErrorMessage(raw),
+    });
+    onEvent({ type: "done" });
+  }
 
   const messagesToAppend = buildPersistedMessagesRobust(
     rounds,
@@ -711,6 +840,7 @@ async function runChatPipelineRound(
     roundThinking,
     assistantBuf,
     thinkingBufAll,
+    apiErrorPersist,
   );
   return { messagesToAppend };
 }
@@ -722,10 +852,16 @@ function AiChatPanel(): ReactElement {
   const [store, setStore] = useState<ConversationStoreStateV2>(() =>
     loadConversationStateV2(),
   );
+  /** Latest chat store for synchronous persist on `pagehide` / unload (debounce may not fire in time). */
+  const chatStorePersistRef = useRef(store);
   const [settings, setSettings] = useState<IntelligentSettingsState>(() =>
     loadIntelligentSettings(),
   );
   const [input, setInput] = useState("");
+  const [composerAttachments, setComposerAttachments] = useState<ChatAttachment[]>([]);
+  const composerAttachmentsRef = useRef<ChatAttachment[]>([]);
+  composerAttachmentsRef.current = composerAttachments;
+  const composerAttachmentInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [streamSegments, setStreamSegments] = useState<StreamSegment[]>([]);
   /** Conversation id for the in-flight pipeline stream (UI only; keeps stream under the right thread when switching chats). */
@@ -1075,16 +1211,123 @@ function AiChatPanel(): ReactElement {
     debouncedSave(store);
   }, [store]);
 
+  useLayoutEffect(() => {
+    chatStorePersistRef.current = store;
+  }, [store]);
+
+  /** Merge disk backup per workspace so one tab’s backup does not wipe the other workspace; sync localStorage if updated. */
+  useEffect(() => {
+    void readChatBackupStateV2().then((disk) => {
+      if (!disk) return;
+      setStore((s) => {
+        const next = mergeChatStatePreferNewerPerScope(s, disk);
+        if (next === s) return s;
+        try {
+          localStorage.setItem(CHAT_STORAGE_KEY_V2, JSON.stringify(next));
+        } catch {
+          try {
+            localStorage.setItem(
+              CHAT_STORAGE_KEY_V2,
+              JSON.stringify(stripAttachmentsFromState(next)),
+            );
+          } catch {
+            /* ignore */
+          }
+        }
+        return next;
+      });
+    });
+  }, []);
+
+  useEffect(() => {
+    const onStorageFallback = (e: Event) => {
+      const kind = (e as CustomEvent<{ kind?: string }>).detail?.kind;
+      const msg =
+        kind === "stripped"
+          ? "Browser storage is full; file attachments were removed from the saved copy only (your current message is unchanged). Re-attach files if you need them again."
+          : kind === "disk_only"
+            ? "Browser storage is full; full chat was saved to app data on disk."
+            : "Could not save chat to browser storage or app data. Free disk space or clear old history.";
+      notifyComposerUser(msg, 8000);
+    };
+    window.addEventListener("chat-storage-fallback", onStorageFallback as EventListener);
+    return () => window.removeEventListener("chat-storage-fallback", onStorageFallback as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const persist = () => debouncedSave.flush(chatStorePersistRef.current);
+    window.addEventListener("pagehide", persist);
+    window.addEventListener("beforeunload", persist);
+    const onVis = () => {
+      if (document.visibilityState === "hidden") persist();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("pagehide", persist);
+      window.removeEventListener("beforeunload", persist);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
+
   const persistSettings = useCallback((next: IntelligentSettingsState) => {
     setSettings(next);
     saveIntelligentSettings(next);
   }, []);
 
+  const removeComposerAttachment = useCallback((id: string) => {
+    setComposerAttachments((prev) => prev.filter((x) => x.id !== id));
+  }, []);
+
+  const onComposerAttachmentInputChange = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const input = e.target;
+      const list = input.files;
+      if (!list?.length) return;
+      /** Copy before clearing — resetting `value` empties the live `FileList` in Chromium/Electron. */
+      const picked = Array.from(list);
+      input.value = "";
+      const newItems: ChatAttachment[] = [];
+
+      for (const f of picked) {
+        try {
+          const att = await fileToChatAttachment(f);
+          if (!att.dataBase64?.length) {
+            notifyComposerUser(`Could not read file data for “${f.name}”.`);
+            continue;
+          }
+          newItems.push(att);
+        } catch {
+          notifyComposerUser(`Could not read “${f.name}”.`);
+        }
+      }
+
+      if (newItems.length === 0) {
+        notifyComposerUser("No files could be attached.");
+        return;
+      }
+
+      const merged = [...composerAttachmentsRef.current, ...newItems];
+      const err = validateChatAttachmentList(merged);
+      if (err) {
+        notifyComposerUser(err);
+        return;
+      }
+      setComposerAttachments(merged);
+    },
+    [],
+  );
+
   const runSendWithText = useCallback(
-    async (rawText: string) => {
+    async (rawText: string, attachmentBatch?: ChatAttachment[]) => {
       const text = rawText.trim();
+      const att = attachmentBatch ?? [];
       const conv = active;
-      if (!text || !api || !conv || busy) return;
+      if ((!text && att.length === 0) || !api || !conv || busy) return;
+      const v = validateChatAttachmentList(att);
+      if (v) {
+        notifyComposerUser(v);
+        return;
+      }
       stickMessagesToBottomRef.current = true;
       setThinkingLiveOpen(false);
       setBusy(true);
@@ -1092,7 +1335,7 @@ function AiChatPanel(): ReactElement {
       setStreamingConversationId(conv.id);
       thinkingStartRef.current = null;
 
-      const stored = appendUserMessage([...conv.messages], text);
+      const stored = appendUserMessage([...conv.messages], text, att.length > 0 ? att : undefined);
       const convUpdated: Conversation = {
         ...conv,
         messages: stored,
@@ -1101,7 +1344,7 @@ function AiChatPanel(): ReactElement {
           scope === "browser"
             ? "Browser agent"
             : conv.messages.filter((m) => m.role === "user").length === 0
-              ? titleFromFirstLine(text)
+              ? titleFromFirstLine(text || att[0]?.name || "Files")
               : conv.title,
       };
       updateScoped({
@@ -1162,7 +1405,7 @@ function AiChatPanel(): ReactElement {
 
         setStore((s) => {
           const sc = getScopedStore(s, scope);
-          return setScopedStore(s, scope, {
+          const next = setScopedStore(s, scope, {
             ...sc,
             activeConversationId: convId,
             conversations: sc.conversations.map((c) =>
@@ -1171,11 +1414,14 @@ function AiChatPanel(): ReactElement {
                 : c,
             ),
           });
+          debouncedSave.flush(next);
+          return next;
         });
       } finally {
         setBusy(false);
         setStreamSegments([]);
         setStreamingConversationId(null);
+        queueMicrotask(() => debouncedSave.flush(chatStorePersistRef.current));
       }
     },
     [api, active, busy, scope, scoped, settings, updateScoped],
@@ -1240,7 +1486,7 @@ function AiChatPanel(): ReactElement {
 
         setStore((s) => {
           const sc = getScopedStore(s, scope);
-          return setScopedStore(s, scope, {
+          const next = setScopedStore(s, scope, {
             ...sc,
             conversations: sc.conversations.map((c) =>
               c.id === convId
@@ -1248,11 +1494,14 @@ function AiChatPanel(): ReactElement {
                 : c,
             ),
           });
+          debouncedSave.flush(next);
+          return next;
         });
       } finally {
         setBusy(false);
         setStreamSegments([]);
         setStreamingConversationId(null);
+        queueMicrotask(() => debouncedSave.flush(chatStorePersistRef.current));
       }
     },
     [api, scope, settings],
@@ -1318,10 +1567,12 @@ function AiChatPanel(): ReactElement {
 
   const onSend = useCallback(async () => {
     const text = input.trim();
-    if (!text) return;
+    const batch = composerAttachments;
+    if (!text && batch.length === 0) return;
     setInput("");
-    await runSendWithText(text);
-  }, [input, runSendWithText]);
+    setComposerAttachments([]);
+    await runSendWithText(text, batch);
+  }, [input, composerAttachments, runSendWithText]);
 
   const newChat = useCallback(() => {
     if (scope === "browser") return;
@@ -1420,10 +1671,12 @@ function AiChatPanel(): ReactElement {
     if (!edited) return;
 
     const head = active.messages.slice(0, idx);
+    const prevUser = active.messages[idx] as Extract<ChatMessageV2, { role: "user" }>;
     const newUser: ChatMessageV2 = {
       id: generateMessageId(),
       role: "user",
       content: edited,
+      ...(prevUser.attachments?.length ? { attachments: prevUser.attachments } : {}),
     };
     const stored = [...head, newUser];
 
@@ -2122,6 +2375,26 @@ function AiChatPanel(): ReactElement {
       >
         <McpIcon size={17} />
       </button>
+      <button
+        type="button"
+        className="ai-chat-icon-btn ai-chat-icon-btn--attach"
+        aria-label="Attach files"
+        title={`Attach files — ${chatAttachmentLimitsSummary()}`}
+        disabled={busy}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={() => composerAttachmentInputRef.current?.click()}
+      >
+        <IconAttachFiles />
+      </button>
+      <input
+        ref={composerAttachmentInputRef}
+        type="file"
+        className="ai-chat-attachment-input"
+        multiple
+        aria-hidden
+        tabIndex={-1}
+        onChange={(e) => void onComposerAttachmentInputChange(e)}
+      />
       <span className="ai-chat-composer-toolbar__sep" aria-hidden />
       <ModelQuickPick
         selectedModelId={selectedModelIdForChatScope(settings, scope)}
@@ -2292,11 +2565,13 @@ function AiChatPanel(): ReactElement {
     />
   );
 
+  const canSend = Boolean(input.trim()) || composerAttachments.length > 0;
+
   const composerSendBtn = (
     <button
       type="button"
       className="ai-chat-send"
-      disabled={busy || !input.trim()}
+      disabled={busy || !canSend}
       aria-label="Send"
       onClick={() => void onSend()}
     >
@@ -2308,13 +2583,40 @@ function AiChatPanel(): ReactElement {
     <button
       type="button"
       className="ai-chat-send ai-chat-send--iw"
-      disabled={busy || !input.trim()}
+      disabled={busy || !canSend}
       aria-label="Send"
       onClick={() => void onSend()}
     >
       <IconSendPlane />
     </button>
   );
+
+  const composerAttachmentChips =
+    composerAttachments.length > 0 ? (
+      <div className="ai-chat-composer-attachments-wrap">
+        <div className="ai-chat-composer-attachments" role="list" aria-label="Attachments to send">
+          {composerAttachments.map((a) => (
+            <div key={a.id} className="ai-chat-composer-attachment-chip" role="listitem">
+              <span className="ai-chat-composer-attachment-chip__name" title={`${a.name} · ${a.mime}`}>
+                {a.name}
+              </span>
+              <button
+                type="button"
+                className="ai-chat-composer-attachment-chip__rm"
+                aria-label={`Remove ${a.name}`}
+                disabled={busy}
+                onClick={() => removeComposerAttachment(a.id)}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+        <p className="ai-chat-composer-attachment-hint" role="note">
+          {chatAttachmentLimitsSummary()}
+        </p>
+      </div>
+    ) : null;
 
   const showQueryRail =
     intelligentWorkspaceShell && queryRailUsers.length > 1;
@@ -2451,15 +2753,36 @@ function AiChatPanel(): ReactElement {
                       </div>
                     ) : (
                       <>
-                        <div
-                          className="ai-chat-bubble"
-                          dangerouslySetInnerHTML={{
-                            __html: renderAiChatMd(m.content),
-                          }}
-                        />
+                        {m.content.trim() ? (
+                          <div
+                            className="ai-chat-bubble"
+                            dangerouslySetInnerHTML={{
+                              __html: renderAiChatMd(m.content),
+                            }}
+                          />
+                        ) : null}
+                        {m.attachments?.length ? (
+                          <div
+                            className="ai-chat-msg-attachments"
+                            aria-label="Attached files"
+                          >
+                            {m.attachments.map((a) => (
+                              <span
+                                key={a.id}
+                                className="ai-chat-msg-attachment-pill"
+                                title={`${a.name} · ${a.mime}`}
+                              >
+                                {a.name}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
                         <AiChatMsgFooter
                           align="end"
-                          plainText={m.content}
+                          plainText={
+                            m.content ||
+                            (m.attachments?.map((a) => a.name).join(", ") ?? "")
+                          }
                           showEdit={scope === "intelligent"}
                           editDisabled={busy}
                           onEdit={
@@ -2593,7 +2916,29 @@ function AiChatPanel(): ReactElement {
                         durationMs={m.thinkingDurationMs}
                       />
                     ) : null}
-                    {(m.content || "").trim() ? (
+                    {"apiError" in m && m.apiError ? (
+                      <>
+                        {(m.apiError.assistantPrefix || "").trim() ? (
+                          <div
+                            className="ai-chat-bubble"
+                            dangerouslySetInnerHTML={{
+                              __html: renderAiChatMd(m.apiError.assistantPrefix!),
+                            }}
+                          />
+                        ) : null}
+                        <AiChatApiErrorBlock display={m.apiError.display} />
+                        <AiChatMsgFooter
+                          align="start"
+                          plainText={m.content}
+                          onRetry={
+                            canRetryAssistant
+                              ? () => setRetryExitAssistantId(m.id)
+                              : undefined
+                          }
+                          retryDisabled={busy || retryExitAssistantId != null}
+                        />
+                      </>
+                    ) : (m.content || "").trim() ? (
                       <>
                         <div
                           className="ai-chat-bubble"
@@ -2628,7 +2973,9 @@ function AiChatPanel(): ReactElement {
                   const key =
                     seg.kind === "tool_running" || seg.kind === "tool_done"
                       ? `${i}-${seg.kind}-${seg.toolCallId}`
-                      : `${i}-${seg.kind}`;
+                      : seg.kind === "api_error"
+                        ? `${i}-api_error-${seg.display.title.length}-${seg.display.detail.length}`
+                        : `${i}-${seg.kind}`;
                   switch (seg.kind) {
                     case "thinking":
                       return seg.live ? (
@@ -2659,6 +3006,20 @@ function AiChatPanel(): ReactElement {
                           content={seg.content}
                         />
                       );
+                    case "api_error": {
+                      const isLast = i === streamSegments.length - 1;
+                      return (
+                        <Fragment key={key}>
+                          <AiChatApiErrorBlock display={seg.display} />
+                          {isLast ? (
+                            <AiChatMsgFooter
+                              align="start"
+                              plainText={streamSegmentsToPlainText(streamSegments)}
+                            />
+                          ) : null}
+                        </Fragment>
+                      );
+                    }
                     case "text": {
                       const isLast = i === streamSegments.length - 1;
                       return (
@@ -2670,7 +3031,10 @@ function AiChatPanel(): ReactElement {
                             }}
                           />
                           {isLast ? (
-                            <AiChatMsgFooter align="start" plainText={seg.plain} />
+                            <AiChatMsgFooter
+                              align="start"
+                              plainText={streamSegmentsToPlainText(streamSegments)}
+                            />
                           ) : null}
                         </Fragment>
                       );
@@ -2694,6 +3058,7 @@ function AiChatPanel(): ReactElement {
                   {composerToolbarMain}
                 </div>
               </div>
+              {composerAttachmentChips}
               <div className="ai-chat-composer-input-row ai-chat-composer-input-row--mention-wrap">
                 {composerMentionBlock}
                 {composerTextarea}
@@ -2702,6 +3067,7 @@ function AiChatPanel(): ReactElement {
             </>
           ) : (
             <>
+              {composerAttachmentChips}
               <div className="ai-chat-composer-input-row ai-chat-composer-input-row--mention-wrap ai-chat-composer-input-row--iw-query">
                 {composerMentionBlock}
                 {composerTextarea}
@@ -2748,9 +3114,11 @@ export function AiChatBridge(): ReactElement | null {
     messagesEl?.style.setProperty("display", "none");
     if (inputArea) inputArea.style.display = "none";
     return () => {
-      host.style.display = "none";
-      messagesEl?.style.removeProperty("display");
-      if (inputArea) inputArea.style.removeProperty("display");
+      /* StrictMode runs this between mount passes. Do not set #aiChatReactHost to display:none —
+       * the chat column would render blank (no flex child) and remount can race badly. Keep legacy
+       * nodes hidden; do not removeProperty (that briefly reveals legacy transcript). */
+      messagesEl?.style.setProperty("display", "none");
+      if (inputArea) inputArea.style.setProperty("display", "none");
     };
   }, []);
 

@@ -6,7 +6,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.electron.json && tsc --noEmit -p tsconfig.renderer.json && tsc --noEmit -p tsconfig.tests.json",
     "check:dirs": "node scripts/check-kebab-dirs.mjs",
-    "build:electron": "tsc -p tsconfig.electron.json && node -e \"const fs=require('node:fs'),p=require('node:path');const d=p.join('dist','electron','electron');for(const f of['chrome-importer.impl.js','firefox-importer.impl.js'])fs.copyFileSync(p.join('electron',f),p.join(d,f));\"",
+    "build:electron": "tsc -p tsconfig.electron.json && node -e \"const fs=require('node:fs'),p=require('node:path');const d=p.join('dist','electron','electron');for(const f of['chrome-importer.impl.js','firefox-importer.impl.js','python-sandbox-runner.py'])fs.copyFileSync(p.join('electron',f),p.join(d,f));\"",
     "build:renderer": "vite build",
     "rasterize-icon": "node scripts/rasterize-app-icon.mjs",
     "build:app": "npm run rasterize-icon && npm run build:electron && npm run build:renderer",

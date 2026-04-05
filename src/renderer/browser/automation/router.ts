@@ -1,4 +1,5 @@
 import type { AutomationCommand, AutomationResult, GotoWaitUntil } from "../../../shared/automation-types";
+import type { PythonSandboxExecuteResult, UserSkillListItem } from "../../../shared/ipc-types";
 import {
   domClick,
   domFill,
@@ -90,6 +91,15 @@ export interface AutomationKernelContext {
   ) => Promise<{ ok: true; phase?: string } | { ok: false; error: string; phase?: string }>;
   canGoBack?: (sessionId?: string) => boolean;
   canGoForward?: (sessionId?: string) => boolean;
+  /** Intelligent workspace: run Python in main-process sandbox. */
+  runPythonSandbox?: (
+    cmd: Extract<AutomationCommand, { op: "python_execute" }>,
+  ) => Promise<PythonSandboxExecuteResult>;
+  /** User SKILL.md CRUD (main process). */
+  userSkillsList?: () => Promise<UserSkillListItem[]>;
+  userSkillsRead?: (slug: string) => Promise<{ ok: true; markdown: string } | { ok: false; error: string }>;
+  userSkillsWrite?: (slug: string, markdown: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  userSkillsDelete?: (slug: string) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 function now() {
@@ -318,7 +328,17 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
 
   try {
     if (cmd.kind === "info") {
-      if (!wv && cmd.op !== "list_tabs" && cmd.op !== "browser_search" && cmd.op !== "scientific_calc") {
+      if (
+        !wv &&
+        cmd.op !== "list_tabs" &&
+        cmd.op !== "browser_search" &&
+        cmd.op !== "scientific_calc" &&
+        cmd.op !== "python_execute" &&
+        cmd.op !== "skill_list" &&
+        cmd.op !== "skill_read" &&
+        cmd.op !== "skill_write" &&
+        cmd.op !== "skill_delete"
+      ) {
         return wrap(cmd.op, finish(cmd.op, false, { kind: "info", error: "No webview", message: "No page loaded." }));
       }
       switch (cmd.op) {
@@ -467,6 +487,186 @@ export async function runAutomationCommand(cmd: AutomationCommand, ctx: Automati
                 : `Calculator failed: ${out.error || "unknown error"}`,
               ...(out.success ? {} : { error: out.error || "scientific_calc_failed" }),
               data: out,
+            }),
+          );
+        }
+        case "python_execute": {
+          if (!ctx.runPythonSandbox) {
+            return wrap(
+              cmd.op,
+              finish(cmd.op, false, {
+                kind: "info",
+                error: "python_unavailable",
+                message: "Python sandbox is not available in this environment.",
+                data: {
+                  python_sandbox: {
+                    success: false,
+                    stdout: "",
+                    stderr: "",
+                    error: "unavailable",
+                  },
+                },
+              }),
+            );
+          }
+          const r = await ctx.runPythonSandbox(cmd);
+          if (!r.ok) {
+            return wrap(
+              cmd.op,
+              finish(cmd.op, false, {
+                kind: "info",
+                message: `Python run failed: ${r.error}`,
+                data: {
+                  python_sandbox: {
+                    success: false,
+                    stdout: "",
+                    stderr: "",
+                    error: r.error,
+                  },
+                },
+                error: r.error,
+              }),
+            );
+          }
+          const ps = r.python_sandbox;
+          const preview = ps.stdout.trim().slice(0, 2000);
+          const msg = ps.success
+            ? `**Python** finished.\n\n\`\`\`text\n${preview || "(no stdout)"}\n\`\`\``
+            : `**Python** error.\n\n\`\`\`text\n${String(ps.error || ps.stderr).slice(0, 4000)}\n\`\`\``;
+          return wrap(
+            cmd.op,
+            finish(cmd.op, ps.success, {
+              kind: "info",
+              message: msg,
+              data: { python_sandbox: ps },
+              ...(ps.success ? {} : { error: ps.error || "python_failed" }),
+            }),
+          );
+        }
+        case "skill_list": {
+          if (!ctx.userSkillsList) {
+            return wrap(
+              cmd.op,
+              finish(cmd.op, false, {
+                kind: "info",
+                error: "skills_unavailable",
+                message: "User skills are not available in this environment.",
+              }),
+            );
+          }
+          try {
+            const items = await ctx.userSkillsList();
+            const rows = items.map((it) => [it.slug, it.name, it.description.slice(0, 120), new Date(it.updatedAt).toISOString()]);
+            return wrap(
+              cmd.op,
+              finish(cmd.op, true, {
+                kind: "info",
+                message:
+                  "**User skills**\n\n" +
+                  (items.length
+                    ? mdTable(["slug", "name", "description", "updated"], rows)
+                    : "(No skills yet. Create one in Settings or with intelligent_skill_write.)"),
+                data: { skills: items },
+              }),
+            );
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            return wrap(
+              cmd.op,
+              finish(cmd.op, false, { kind: "info", error: msg, message: `Skills list failed: ${msg}` }),
+            );
+          }
+        }
+        case "skill_read": {
+          if (!ctx.userSkillsRead) {
+            return wrap(
+              cmd.op,
+              finish(cmd.op, false, {
+                kind: "info",
+                error: "skills_unavailable",
+                message: "User skills are not available in this environment.",
+              }),
+            );
+          }
+          const r = await ctx.userSkillsRead(cmd.slug);
+          if (!r.ok) {
+            return wrap(
+              cmd.op,
+              finish(cmd.op, false, {
+                kind: "info",
+                error: r.error,
+                message: `Read skill failed: ${r.error}`,
+              }),
+            );
+          }
+          return wrap(
+            cmd.op,
+            finish(cmd.op, true, {
+              kind: "info",
+              message: `**Skill \`${cmd.slug}\`**\n\n\`\`\`markdown\n${r.markdown.slice(0, 12000)}${r.markdown.length > 12000 ? "\n…(truncated in message)" : ""}\n\`\`\``,
+              data: { slug: cmd.slug, markdown: r.markdown },
+            }),
+          );
+        }
+        case "skill_write": {
+          if (!ctx.userSkillsWrite) {
+            return wrap(
+              cmd.op,
+              finish(cmd.op, false, {
+                kind: "info",
+                error: "skills_unavailable",
+                message: "User skills are not available in this environment.",
+              }),
+            );
+          }
+          const w = await ctx.userSkillsWrite(cmd.slug, cmd.content);
+          if (!w.ok) {
+            return wrap(
+              cmd.op,
+              finish(cmd.op, false, {
+                kind: "info",
+                error: w.error,
+                message: `Write skill failed: ${w.error}`,
+              }),
+            );
+          }
+          return wrap(
+            cmd.op,
+            finish(cmd.op, true, {
+              kind: "info",
+              message: `Saved skill **${cmd.slug}**. Enable it in Settings if you want it in the system prompt.`,
+              data: { slug: cmd.slug, ok: true },
+            }),
+          );
+        }
+        case "skill_delete": {
+          if (!ctx.userSkillsDelete) {
+            return wrap(
+              cmd.op,
+              finish(cmd.op, false, {
+                kind: "info",
+                error: "skills_unavailable",
+                message: "User skills are not available in this environment.",
+              }),
+            );
+          }
+          const d = await ctx.userSkillsDelete(cmd.slug);
+          if (!d.ok) {
+            return wrap(
+              cmd.op,
+              finish(cmd.op, false, {
+                kind: "info",
+                error: d.error,
+                message: `Delete skill failed: ${d.error}`,
+              }),
+            );
+          }
+          return wrap(
+            cmd.op,
+            finish(cmd.op, true, {
+              kind: "info",
+              message: `Deleted skill **${cmd.slug}**.`,
+              data: { slug: cmd.slug, ok: true },
             }),
           );
         }

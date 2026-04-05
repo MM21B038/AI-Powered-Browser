@@ -55,6 +55,18 @@ export function getToolTemplateLine(command: string, sessionId?: string): string
       null,
       0,
     ),
+    pythonSandbox: JSON.stringify(
+      {
+        kind: "info",
+        op: "python_execute",
+        packages: ["numpy"],
+        code: "import numpy as np\nprint(np.arange(3))",
+        timeout_ms: 300000,
+      },
+      null,
+      0,
+    ),
+    skillList: JSON.stringify({ kind: "info", op: "skill_list" }, null, 0),
     picker: "",
     pickerInteractive: "",
     elemshot: "",

@@ -5,7 +5,11 @@
 /// <reference path="../../types/global.d.ts" />
 import type { AutomationCommand, AutomationResult } from "../../shared/automation-types";
 import type { McpServerConfigPayload } from "../../shared/mcp-external-types";
-import type { ChatMessageV2, ChatScope } from "../chat/conversation-store";
+import type { ChatAttachment, ChatMessageV2, ChatScope } from "../chat/conversation-store";
+import {
+  attachmentInstructionText,
+  chatAttachmentsToSandboxInputFiles,
+} from "../chat/chat-attachments";
 import { generateMessageId } from "../chat/conversation-ids";
 import {
   type AiProvider,
@@ -33,6 +37,7 @@ import {
   unknownAtToolNames,
 } from "../chat/ai-tool-mentions";
 import type { ElectronApi } from "../../shared/ipc-types";
+import { formatChatApiErrorMessage } from "./api-error-format";
 import { systemPromptForWorkspace } from "./ai-system-prompts";
 
 /** Default max Chat Completions rounds (each may include tool calls). Bounded to avoid runaway loops. */
@@ -51,15 +56,21 @@ export type ChatStreamEvent =
       resultPreview: string;
       fullResult: string;
     }
-  | { type: "error"; message: string }
+  | { type: "error"; message: string; httpStatus?: number }
   /** Start of one model SSE response (each outer agent round). Resets bridge preamble state. */
   | { type: "stream_start" }
   /** Fired after each tool round completes (before the next model stream). Used to persist thinking before tools per round. */
   | { type: "round_end" }
   | { type: "done" };
 
+type OpenAiContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 type OpenAiMsg =
-  | { role: "system" | "user" | "assistant"; content: string | null }
+  | { role: "system"; content: string | null }
+  | { role: "user"; content: string | OpenAiContentPart[] | null }
+  | { role: "assistant"; content: string | null }
   | {
       role: "assistant";
       content: string | null;
@@ -251,6 +262,41 @@ function toolArgumentsForApi(t: ToolMsgV2): string {
   return "{}";
 }
 
+function lastUserMessageAttachments(messages: ChatMessageV2[]): ChatAttachment[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "user") continue;
+    const att = m.attachments;
+    if (Array.isArray(att) && att.length > 0) return att;
+  }
+  return [];
+}
+
+function buildUserOpenAiContent(
+  content: string,
+  attachments?: ChatAttachment[],
+): string | OpenAiContentPart[] {
+  if (!attachments?.length) return content;
+  const trimmed = content.trim();
+  const note = attachmentInstructionText(attachments);
+  const textBody =
+    [trimmed, note].filter(Boolean).join("\n\n") || "(User attached files; no text message.)";
+  const images = attachments.filter((a) => a.mime.startsWith("image/"));
+  if (images.length === 0) return textBody;
+  const parts: OpenAiContentPart[] = [{ type: "text", text: textBody }];
+  for (const a of images) {
+    parts.push({
+      type: "image_url",
+      image_url: { url: `data:${a.mime};base64,${a.dataBase64}` },
+    });
+  }
+  return parts;
+}
+
+function userMessageToOpenAiContent(m: Extract<ChatMessageV2, { role: "user" }>): string | OpenAiContentPart[] {
+  return buildUserOpenAiContent(m.content, m.attachments);
+}
+
 function collectContiguousTools(messages: ChatMessageV2[], start: number): { tools: ToolMsgV2[]; end: number } {
   const tools: ToolMsgV2[] = [];
   let j = start;
@@ -276,9 +322,10 @@ function buildOpenAiMessagesFromChatV2(sysContent: string, messages: ChatMessage
       continue;
     }
     if (m.role === "user") {
+      const um = m as Extract<ChatMessageV2, { role: "user" }>;
       const { tools, end } = collectContiguousTools(messages, i + 1);
       if (tools.length > 0) {
-        oa.push({ role: "user", content: m.content });
+        oa.push({ role: "user", content: userMessageToOpenAiContent(um) });
         oa.push({
           role: "assistant",
           content: null,
@@ -302,7 +349,7 @@ function buildOpenAiMessagesFromChatV2(sysContent: string, messages: ChatMessage
         i = end;
         continue;
       }
-      oa.push({ role: "user", content: m.content });
+      oa.push({ role: "user", content: userMessageToOpenAiContent(um) });
       i++;
       continue;
     }
@@ -495,7 +542,7 @@ export async function runAiChatPipeline(opts: {
   }
 
   await runOpenAiCompatible(
-    { ...opts, api: opts.api },
+    { ...opts, api: opts.api, settings: opts.settings },
     modelId,
     baseUrl,
     apiKey,
@@ -558,12 +605,37 @@ function applyThinkingToRequestBody(
   }
 }
 
+async function buildSystemPromptForApi(
+  scope: ChatScope,
+  settings: IntelligentSettingsState,
+  api: ElectronApi,
+): Promise<string> {
+  const base = systemPromptForWorkspace(scope);
+  const slugs = settings.enabledSkillSlugs ?? [];
+  const useSkills =
+    slugs.length > 0 &&
+    (scope === "intelligent" || (scope === "browser" && settings.skillsApplyToBrowserAgent));
+  if (!useSkills) return base;
+  const build = api.userSkillsBuildPromptAppend;
+  if (typeof build !== "function") return base;
+  try {
+    const append = await build({ slugs });
+    if (append?.text?.trim()) {
+      return base + append.text;
+    }
+  } catch {
+    /* IPC or disk errors — chat must still run without skill injection */
+  }
+  return base;
+}
+
 async function runOpenAiCompatible(
   opts: {
     scope: ChatScope;
     messages: ChatMessageV2[];
     onEvent: (e: ChatStreamEvent) => void;
     api: ElectronApi;
+    settings: IntelligentSettingsState;
   },
   modelId: string,
   baseUrl: string,
@@ -575,8 +647,11 @@ async function runOpenAiCompatible(
   dispatch: ReturnType<typeof buildToolDispatchMap>["dispatch"],
   maxRounds: number,
 ): Promise<void> {
-  const sys = systemPromptForWorkspace(opts.scope);
+  const sys = await buildSystemPromptForApi(opts.scope, opts.settings, opts.api);
   const oaMessages = buildOpenAiMessagesFromChatV2(sys, opts.messages);
+  const pythonInputFilesFromChat = chatAttachmentsToSandboxInputFiles(
+    lastUserMessageAttachments(opts.messages),
+  );
 
   const url = openAiStyleChatCompletionsUrl(baseUrl);
   const headers: Record<string, string> = {
@@ -682,6 +757,7 @@ async function runOpenAiCompatible(
       const bodyStr = JSON.stringify(body);
 
       if (proxy) {
+        let proxyHttpStatus: number | undefined;
         try {
           const outcome = await new Promise<"done" | "retry">((resolve, reject) => {
             proxy(
@@ -695,6 +771,7 @@ async function runOpenAiCompatible(
                     resolve("retry");
                     return;
                   }
+                  proxyHttpStatus = httpStatus;
                   reject(new Error(m));
                 },
               },
@@ -702,7 +779,12 @@ async function runOpenAiCompatible(
           });
           if (outcome === "retry") continue streamAttempt;
         } catch (e) {
-          opts.onEvent({ type: "error", message: e instanceof Error ? e.message : String(e) });
+          const raw = e instanceof Error ? e.message : String(e);
+          opts.onEvent({
+            type: "error",
+            message: formatChatApiErrorMessage(raw, proxyHttpStatus),
+            ...(proxyHttpStatus != null ? { httpStatus: proxyHttpStatus } : {}),
+          });
           opts.onEvent({ type: "done" });
           return;
         }
@@ -728,7 +810,11 @@ async function runOpenAiCompatible(
             toolsOmittedForSession = true;
             continue streamAttempt;
           }
-          opts.onEvent({ type: "error", message: t || `HTTP ${res.status}` });
+          opts.onEvent({
+            type: "error",
+            message: formatChatApiErrorMessage(t || "", res.status),
+            httpStatus: res.status,
+          });
           opts.onEvent({ type: "done" });
           return;
         }
@@ -741,10 +827,18 @@ async function runOpenAiCompatible(
         }
 
         const dec = new TextDecoder();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          feedSseChunk(dec.decode(value, { stream: true }));
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            feedSseChunk(dec.decode(value, { stream: true }));
+          }
+        } catch (e) {
+          const raw =
+            e instanceof Error ? e.message : `Stream read failed: ${String(e)}`;
+          opts.onEvent({ type: "error", message: formatChatApiErrorMessage(raw) });
+          opts.onEvent({ type: "done" });
+          return;
         }
       }
 
@@ -792,7 +886,10 @@ async function runOpenAiCompatible(
         try {
           if (!ref) throw new Error("Unknown tool");
           if (ref.kind === "butcher") {
-            resultText = await executeButcherTool(ref.name, args, runAutomationSafe);
+            resultText = await executeButcherTool(ref.name, args, runAutomationSafe, {
+              pythonInputFiles:
+                pythonInputFilesFromChat.length > 0 ? pythonInputFilesFromChat : undefined,
+            });
           } else {
             resultText = await executeExternalTool(opts.api, ref.server, ref.toolName, args);
           }
@@ -833,8 +930,22 @@ async function runOpenAiCompatible(
   opts.onEvent({ type: "done" });
 }
 
-export function appendUserMessage(messages: ChatMessageV2[], text: string): ChatMessageV2[] {
-  return [...messages, { id: generateMessageId(), role: "user", content: text.trim() }];
+export function appendUserMessage(
+  messages: ChatMessageV2[],
+  text: string,
+  attachments?: ChatAttachment[],
+): ChatMessageV2[] {
+  const t = text.trim();
+  const att = attachments?.filter((a) => a.dataBase64?.length) ?? [];
+  return [
+    ...messages,
+    {
+      id: generateMessageId(),
+      role: "user",
+      content: t,
+      ...(att.length > 0 ? { attachments: att } : {}),
+    },
+  ];
 }
 
 export function ensureSystemMessage(messages: ChatMessageV2[], scope: ChatScope): ChatMessageV2[] {

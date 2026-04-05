@@ -4,6 +4,11 @@
  */
 
 import type { AutomationCommand, AutomationResult } from "./automation-types";
+import {
+  clampPythonTimeoutMs,
+  validatePythonCode,
+  validatePythonPackageSpecs,
+} from "./python-sandbox-validation";
 
 export type McpToolDefinition = {
   name: string;
@@ -220,6 +225,83 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
         precision: { type: "integer", minimum: 16, maximum: 256, description: "Optional BigNumber precision (default 64)." },
       },
       required: ["expression"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "intelligent_python_execute",
+    description:
+      "Run Python in a sandbox (Docker if available, else a temp venv on the host). **Always pass `packages`**: pip install specs before `code`, or `[]` when the script uses only the standard library. Pass `code` and optional `timeout_ms` (default 300000). Set a pandas DataFrame as `df` for a table preview; save files under `output/` or cwd; matplotlib outputs are downloadable. Chat attachments are in the working directory.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        packages: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Required. Pip packages to install before running `code`. Use `[]` for stdlib-only scripts. Examples: [\"pandas\",\"matplotlib\"], [\"numpy==2.0\"]. Up to 20 non-empty entries.",
+        },
+        code: { type: "string", description: "Python source to run after installing `packages`." },
+        timeout_ms: {
+          type: "integer",
+          minimum: 30000,
+          maximum: 600000,
+          description: "Optional. Total ms for install + run (default 300000).",
+        },
+      },
+      required: ["packages", "code"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "intelligent_skill_list",
+    description:
+      "List user-defined skills (SKILL.md under app user data): slug, display name, description from frontmatter, updated time. Use to see what persisted instructions exist before reading or editing.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "intelligent_skill_read",
+    description: "Read the full markdown of one user skill by slug (includes YAML frontmatter and body).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string", description: "Skill folder name (kebab-case, e.g. my-workflow)." },
+      },
+      required: ["slug"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "intelligent_skill_write",
+    description:
+      "Create or replace a user skill. Pass full SKILL.md content: must start with --- YAML frontmatter --- and include non-empty `name` and **required** `description` (short summary of when/how to use the skill; shown in skill list). Body markdown follows. Writes are rejected without a description. Use multiline `description: |` if needed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string", description: "Skill folder name (kebab-case)." },
+        content: {
+          type: "string",
+          description:
+            "Full SKILL.md: ---\\nname: ...\\ndescription: ... (required, non-empty)\\n---\\n then body.",
+        },
+      },
+      required: ["slug", "content"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "intelligent_skill_delete",
+    description: "Delete a user skill folder and its SKILL.md permanently.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string", description: "Skill folder name to remove." },
+      },
+      required: ["slug"],
       additionalProperties: false,
     },
   },
@@ -488,6 +570,44 @@ export function automationCommandFromMcpTool(name: string, args: unknown): Autom
           ...(sid ? { sessionId: sid } : {}),
         };
       }
+      case "intelligent_python_execute": {
+        if (!Array.isArray(a.packages)) {
+          return new Error(
+            'packages is required: pass [] for stdlib-only code, or e.g. ["pandas","matplotlib"] for third-party imports',
+          );
+        }
+        const pkgs = validatePythonPackageSpecs(a.packages);
+        if (pkgs instanceof Error) return pkgs;
+        const code = validatePythonCode(a.code);
+        if (code instanceof Error) return code;
+        const timeoutMs = clampPythonTimeoutMs(a.timeout_ms);
+        return {
+          kind: "info",
+          op: "python_execute",
+          packages: pkgs,
+          code,
+          timeoutMs,
+        };
+      }
+      case "intelligent_skill_list": {
+        return { kind: "info", op: "skill_list" };
+      }
+      case "intelligent_skill_read": {
+        const slug = String(a.slug ?? "").trim();
+        if (!slug) return new Error("slug required");
+        return { kind: "info", op: "skill_read", slug };
+      }
+      case "intelligent_skill_write": {
+        const slug = String(a.slug ?? "").trim();
+        const content = String(a.content ?? "");
+        if (!slug) return new Error("slug required");
+        return { kind: "info", op: "skill_write", slug, content };
+      }
+      case "intelligent_skill_delete": {
+        const slug = String(a.slug ?? "").trim();
+        if (!slug) return new Error("slug required");
+        return { kind: "info", op: "skill_delete", slug };
+      }
       case "butcher_run_js": {
         const script = String(a.script ?? "");
         if (!script.trim()) return new Error("script required");
@@ -619,6 +739,29 @@ export function sanitizeAutomationResultForMcp(result: AutomationResult): unknow
       ...(d.result != null ? { result: String(d.result) } : {}),
       ...(result.success ? {} : { error: String(result.error ?? d.error ?? "scientific_calc_failed") }),
     };
+  }
+  if (result.op === "python_execute") {
+    const d = (result.data ?? {}) as Record<string, unknown>;
+    const py = (d.python_sandbox ?? {}) as Record<string, unknown>;
+    const out: Record<string, unknown> = {
+      _display: "python_sandbox",
+      success: !!result.success && !!py.success,
+      stdout: String(py.stdout ?? ""),
+      stderr: String(py.stderr ?? ""),
+    };
+    if (Array.isArray(py.images)) {
+      out.images = py.images;
+    }
+    if (py.table && typeof py.table === "object") {
+      out.table = py.table;
+    }
+    if (Array.isArray(py.files)) {
+      out.files = py.files;
+    }
+    if (!result.success || !py.success) {
+      out.error = String(py.error ?? result.error ?? "python_execute_failed");
+    }
+    return out;
   }
 
   if (!result.artifacts?.length) return result;

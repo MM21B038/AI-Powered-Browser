@@ -103,6 +103,30 @@ export interface CapturedRequestRecord {
 
 export type ListedAiModel = { id: string; displayName?: string };
 
+/** Main-process user skills (SKILL.md under userData/skills). */
+export type UserSkillListItem = {
+  slug: string;
+  name: string;
+  description: string;
+  updatedAt: number;
+};
+
+export type UserSkillsPromptAppendResult = {
+  text: string;
+  truncated: boolean;
+  omittedSlugs: string[];
+};
+
+export type UserSkillsWritePayload = {
+  slug: string;
+  markdown: string;
+};
+
+export type UserSkillsBuildPromptPayload = {
+  slugs: string[];
+  maxChars?: number;
+};
+
 export type AiTestChatHiPayload =
   | { provider: "google"; googleApiKey: string; modelId: string }
   | {
@@ -113,6 +137,35 @@ export type AiTestChatHiPayload =
       /** Extra PEM CA for private TLS (custom OpenAI-compatible hosts). */
       tlsCaPem?: string;
     };
+
+/** Main-process Python sandbox (intelligent_python_execute). */
+export type PythonSandboxPayload = {
+  packages: string[];
+  code: string;
+  timeoutMs: number;
+  /** Optional user-attached files (main process writes to work dir before executing code). */
+  inputFiles?: Array<{ name: string; dataBase64: string }>;
+};
+
+export type PythonSandboxExecuteResult =
+  | {
+      ok: true;
+      python_sandbox: {
+        success: boolean;
+        stdout: string;
+        stderr: string;
+        images?: Array<{ mime: string; dataBase64: string }>;
+        table?: { columns: string[]; rows: unknown[][] } | null;
+        files?: Array<{
+          name: string;
+          size: number;
+          dataBase64?: string;
+          truncated?: boolean;
+        }>;
+        error?: string;
+      };
+    }
+  | { ok: false; error: string };
 
 export type AiChatProxyStreamHandlers = {
   onChunk: (text: string) => void;
@@ -304,6 +357,8 @@ export interface ElectronApi {
     tlsCaPem?: string,
   ) => Promise<ListedAiModel[]>;
   aiTestChatHi: (payload: AiTestChatHiPayload) => Promise<{ reply: string }>;
+  /** Run Python in ephemeral venv (main process). */
+  pythonSandboxExecute: (payload: PythonSandboxPayload) => Promise<PythonSandboxExecuteResult>;
   /** Stream POST body to OpenAI-compatible chat/completions from main. Returns unsubscribe. */
   aiChatProxyStream: (
     payload: {
@@ -315,4 +370,22 @@ export interface ElectronApi {
     },
     handlers: AiChatProxyStreamHandlers,
   ) => () => void;
+  /** List user SKILL.md skills (userData/skills). */
+  userSkillsList: () => Promise<UserSkillListItem[]>;
+  /** Read one skill markdown or error code. */
+  userSkillsRead: (
+    slug: string,
+  ) => Promise<{ ok: true; markdown: string } | { ok: false; error: string }>;
+  userSkillsWrite: (
+    payload: UserSkillsWritePayload,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  userSkillsDelete: (slug: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  userSkillsBuildPromptAppend: (
+    payload: UserSkillsBuildPromptPayload,
+  ) => Promise<UserSkillsPromptAppendResult>;
+  /** Reveal userData/skills in the file manager. */
+  userSkillsOpenFolder: () => Promise<{ ok: boolean }>;
+  /** Full chat JSON backup when localStorage quota is exceeded (`userData/chat-backup/conversations-v2.json`). */
+  chatStateBackupWrite: (json: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  chatStateBackupRead: () => Promise<string | null>;
 }

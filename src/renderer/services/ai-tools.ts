@@ -206,10 +206,26 @@ export async function executeButcherTool(
   name: string,
   args: unknown,
   runCmd: (cmd: AutomationCommand) => Promise<AutomationResult>,
+  opts?: {
+    /** Merged into `python_execute` so chat attachments land in the sandbox work dir. */
+    pythonInputFiles?: Array<{ name: string; dataBase64: string }>;
+  },
 ): Promise<string> {
   const cmdOrErr = automationCommandFromMcpTool(name, args);
   if (cmdOrErr instanceof Error) return JSON.stringify({ error: cmdOrErr.message });
-  const result = await runCmd(cmdOrErr);
+  let cmd: AutomationCommand = cmdOrErr;
+  if (
+    opts?.pythonInputFiles?.length &&
+    name === "intelligent_python_execute" &&
+    cmd.kind === "info" &&
+    cmd.op === "python_execute"
+  ) {
+    cmd = {
+      ...cmd,
+      inputFiles: opts.pythonInputFiles,
+    };
+  }
+  const result = await runCmd(cmd);
   const sanitized = sanitizeAutomationResultForMcp(result);
   return JSON.stringify(sanitized);
 }
