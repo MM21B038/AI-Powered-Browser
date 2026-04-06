@@ -96,7 +96,12 @@ const INTELLIGENT_SETTINGS_SECTIONS: readonly {
   id: string;
   label: string;
   hint: string;
-  icon: "appearance" | "ai" | "mcp-browser-bridge" | "mcp-intelligent-bridge" | "mcp-tools";
+  icon:
+    | "appearance"
+    | "ai"
+    | "mcp-browser-bridge"
+    | "mcp-intelligent-bridge"
+    | "mcp-tools";
 }[] = [
   {
     id: "iw-settings-appearance",
@@ -299,6 +304,8 @@ type SettingsPanelProps = {
   layout?: "modal" | "workspace" | "sidePanel";
   /** Wider centered modal for assistant settings. */
   modalSize?: "default" | "xl";
+  /** Bumps when kernel re-dispatches open while React `open` may still be true — re-sync `data-settings-open` / overlay host. */
+  domSyncEpoch?: number;
 };
 
 type AppDataStats = {
@@ -359,6 +366,7 @@ export function SettingsPanel({
   panel = "browser",
   layout = "modal",
   modalSize = "default",
+  domSyncEpoch = 0,
 }: SettingsPanelProps): ReactElement | null {
   const [homePage, setHomePage] = useState("");
   const [sys, setSys] = useState<SystemInfo | null>(null);
@@ -387,6 +395,8 @@ export function SettingsPanel({
   const [intelligentSettings, setIntelligentSettings] =
     useState<IntelligentSettingsState>(() => loadIntelligentSettings());
   const intelligentHydratedRef = useRef(false);
+  /** Matches last persisted intelligent JSON (disk or explicit save) to avoid debounced save + global events on every open. */
+  const intelligentDiskJsonRef = useRef<string>("");
   const [mcpBridge, setMcpBridge] = useState<McpBridgeState | null>(null);
   const [mcpPortDraft, setMcpPortDraft] = useState("");
   const [mcpIntelligentPortDraft, setMcpIntelligentPortDraft] = useState("");
@@ -454,7 +464,7 @@ export function SettingsPanel({
     if (shell) shell.toggleAttribute("data-settings-open", open);
     if (host) host.setAttribute("aria-hidden", open ? "false" : "true");
     window.legacyBrowser?.syncRailAndWebview?.();
-  }, [open, layout]);
+  }, [open, layout, domSyncEpoch]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -476,6 +486,7 @@ export function SettingsPanel({
     setActiveTheme(localStorage.getItem("theme") || "dark");
     const loaded = loadIntelligentSettings();
     setIntelligentSettings(loaded);
+    intelligentDiskJsonRef.current = JSON.stringify(loaded);
     if (panel === "intelligent") {
       setExpandedMcpServerIds(
         new Set(
@@ -512,8 +523,11 @@ export function SettingsPanel({
   useEffect(() => {
     if (!open || !intelligentHydratedRef.current || panel !== "intelligent")
       return;
+    const json = JSON.stringify(intelligentSettings);
+    if (json === intelligentDiskJsonRef.current) return;
     const t = window.setTimeout(() => {
       saveIntelligentSettings(intelligentSettings);
+      intelligentDiskJsonRef.current = json;
     }, 400);
     return () => window.clearTimeout(t);
   }, [open, panel, intelligentSettings]);
@@ -733,6 +747,7 @@ export function SettingsPanel({
 
   const saveAssistantSettingsNow = () => {
     saveIntelligentSettings(intelligentSettings);
+    intelligentDiskJsonRef.current = JSON.stringify(intelligentSettings);
     bridge?.showToast?.("Assistant settings saved");
   };
 
@@ -746,6 +761,7 @@ export function SettingsPanel({
     }
     const reloaded = loadIntelligentSettings();
     setIntelligentSettings(reloaded);
+    intelligentDiskJsonRef.current = JSON.stringify(reloaded);
     setExpandedMcpServerIds(
       new Set(
         reloaded.mcpServers
@@ -809,6 +825,7 @@ export function SettingsPanel({
         Object.keys(patch).some((k) => AI_SETTINGS_IMMEDIATE_PERSIST.has(k))
       ) {
         saveIntelligentSettings(next);
+        intelligentDiskJsonRef.current = JSON.stringify(next);
       }
       return next;
     });
@@ -860,6 +877,7 @@ export function SettingsPanel({
 
   const saveMcpServer = (id: string) => {
     saveIntelligentSettings(intelligentSettings);
+    intelligentDiskJsonRef.current = JSON.stringify(intelligentSettings);
     const row = intelligentSettings.mcpServers.find((x) => x.id === id);
     const label = row?.name?.trim() || row?.id || "MCP server";
     bridge?.showToast?.(`Saved “${label}”`);
@@ -2600,6 +2618,7 @@ export function SettingsPanel({
                   )}
                 </div>
               </div>
+
               </div>
             </div>
           )}

@@ -186,6 +186,10 @@ export type IntelligentSettingsState = {
   mcpServers: McpServerConfig[];
   mcpTogglesBrowser: WorkspaceMcpToggles;
   mcpTogglesIntelligent: WorkspaceMcpToggles;
+  /** Enabled user skill slugs (SKILL.md); injected into intelligent chat system prompt when set. */
+  enabledSkillSlugs: string[];
+  /** When true, enabled skills also append to the Browser Agent system prompt. */
+  skillsApplyToBrowserAgent: boolean;
 };
 
 function newMcpId(): string {
@@ -239,6 +243,8 @@ export function defaultIntelligentSettings(): IntelligentSettingsState {
     mcpServers: [],
     mcpTogglesBrowser: defaultWorkspaceMcpToggles(),
     mcpTogglesIntelligent: defaultWorkspaceMcpToggles(),
+    enabledSkillSlugs: [],
+    skillsApplyToBrowserAgent: false,
   };
 }
 
@@ -377,6 +383,12 @@ function parseIntelligentPayload(parsed: Record<string, unknown>): IntelligentSe
     parsed.intelligentThinkingLevel !== undefined
       ? parseThinkingLevel(parsed.intelligentThinkingLevel)
       : legacyThinking;
+  const enabledRaw = parsed.enabledSkillSlugs;
+  const enabledSkillSlugs = Array.isArray(enabledRaw)
+    ? enabledRaw.filter((x): x is string => typeof x === "string")
+    : [];
+  const skillsApplyToBrowserAgent =
+    typeof parsed.skillsApplyToBrowserAgent === "boolean" ? parsed.skillsApplyToBrowserAgent : false;
   return {
     aiProvider,
     googleApiKey: typeof parsed.googleApiKey === "string" ? parsed.googleApiKey : "",
@@ -391,6 +403,8 @@ function parseIntelligentPayload(parsed: Record<string, unknown>): IntelligentSe
     mcpServers,
     mcpTogglesBrowser: parseWorkspaceMcpToggles(parsed.mcpTogglesBrowser),
     mcpTogglesIntelligent: parseWorkspaceMcpToggles(parsed.mcpTogglesIntelligent),
+    enabledSkillSlugs,
+    skillsApplyToBrowserAgent,
   };
 }
 

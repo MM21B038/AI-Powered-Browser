@@ -8,6 +8,7 @@ import {
 import { SPOTLIGHT_ICON_SVGS } from "../shared/spotlight-icon-svgs";
 import { QUICK_COMMAND_ENTRIES } from "../shared/quick-command-entries";
 import { getToolTemplateLine } from "../shared/tools-hub-templates";
+import { PYTHON_SANDBOX_LIMITS } from "../../shared/python-sandbox-validation";
 import { normalizeHomePageUrl, urlsMatchForTabSwitch } from "./kernel-utils";
 import {
   loadConversationState,
@@ -800,7 +801,15 @@ setProfileGateBackdrop(USE_REACT_MODALS && tabs.length === 0);
 let chatOpen = true;
 
 let convState = loadConversationState();
-const scheduleConvSave = createDebouncedSave(400);
+const scheduleConvSave = createDebouncedSave(200);
+if (typeof window !== "undefined") {
+  const persistLegacyChat = () => scheduleConvSave.flush(convState);
+  window.addEventListener("pagehide", persistLegacyChat);
+  window.addEventListener("beforeunload", persistLegacyChat);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") persistLegacyChat();
+  });
+}
 let shellWorkspace = "browser";
 
 // ── Init ─────────────────────────────────────────────────────
@@ -820,12 +829,15 @@ function hideLegacyModalContainers() {
   document.getElementById("webviewOverlayHost")?.setAttribute("aria-hidden", "true");
 }
 
-/** Clears intelligent-settings modal flag over webview and notifies embedded UIs. */
-function leaveSettingsSurfaceSync() {
-  document.getElementById("appContainer")?.removeAttribute("data-settings-open");
+/** Clears intelligent-settings overlay DOM; optionally notifies React (ModalsBridge) — skip notify when about to open settings in the same gesture. */
+function leaveSettingsSurfaceSync(notifyReact = true) {
+  const shell = document.getElementById("appContainer");
+  shell?.removeAttribute("data-settings-open");
   const host = document.getElementById("webviewOverlayHost");
   if (host) host.setAttribute("aria-hidden", "true");
-  window.dispatchEvent(new CustomEvent("react-close-settings"));
+  if (notifyReact) {
+    window.dispatchEvent(new CustomEvent("legacy-intelligent-settings-overlay-cleared"));
+  }
 }
 
 function notifyBrowserChromeSettingsSide(open) {
@@ -846,12 +858,10 @@ function closeBrowserSettingsSidePanel() {
   syncWebviewInteractionLayer();
 }
 
-/** Close browser settings column + clear modal overlay flag (intelligent settings modal). */
-function closeBrowserChromeSettingsOverlay() {
+/** Close browser settings column + same overlay teardown as intelligent modal (React sync via event). */
+function closeBrowserChromeSettingsOverlay(notifyReact = true) {
   closeBrowserSettingsSidePanel();
-  document.getElementById("appContainer")?.removeAttribute("data-settings-open");
-  const host = document.getElementById("webviewOverlayHost");
-  if (host) host.setAttribute("aria-hidden", "true");
+  leaveSettingsSurfaceSync(notifyReact);
 }
 
 /** @deprecated Use rail Settings (toggles side panel). Kept for API compatibility. */
@@ -888,18 +898,20 @@ function openIntelligentAssistantSettings() {
     closeToolsHub();
   }
   leaveWorkbenchSurfaceSync();
-  /* React SettingsPanel sets data-settings-open when the modal is open. Clearing it here on
-   * every call broke sync: reopening while already on intelligent removed the attribute but
-   * React did not re-run the layout effect (open stayed true), leaving overlay/CSS out of sync
-   * until the modal broke (e.g. settings would not open again). Only clear when switching
-   * into intelligent workspace from elsewhere. */
+  /* enterIntelligentWorkspace(true): clear overlay DOM without legacy-intelligent-settings-overlay-cleared. */
   if (shellWorkspace !== "intelligent") {
-    document.getElementById("appContainer")?.removeAttribute("data-settings-open");
-    enterIntelligentWorkspace();
+    enterIntelligentWorkspace(true);
+  } else {
+    leaveSettingsSurfaceSync(false);
   }
-  window.dispatchEvent(new CustomEvent("intelligent-assistant-settings-open"));
-  syncRailPanelActive();
-  syncWebviewInteractionLayer();
+  /* Double rAF: run after shell-workspace DOM + layout so ModalsBridge/SettingsPanel apply data-settings-open reliably. */
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      window.dispatchEvent(new CustomEvent("intelligent-assistant-settings-open"));
+      syncRailPanelActive();
+      syncWebviewInteractionLayer();
+    });
+  });
 }
 
 function enterSettingsWorkspace(panel) {
@@ -957,12 +969,12 @@ function wireReactSettingsButtons() {
   }
 }
 
-function showWebviewOnly() {
-  closeBrowserChromeSettingsOverlay();
+function showWebviewOnly(opts?: { skipSettingsReactNotify?: boolean }) {
+  const skip = opts?.skipSettingsReactNotify ?? false;
+  closeBrowserChromeSettingsOverlay(!skip);
   closeSidePanels();
   closeToolsHub();
   leaveWorkbenchSurfaceSync();
-  leaveSettingsSurfaceSync();
   syncRailPanelActive();
   syncWebviewInteractionLayer();
 }
@@ -3363,6 +3375,38 @@ function getKernelAutomationContext() {
         if (!r?.success || !Array.isArray(r.items)) return [];
         return r.items as InteractableRow[];
       }),
+    runPythonSandbox: async (cmd) => {
+      const api = window.electronAPI;
+      if (!api?.pythonSandboxExecute) {
+        return { ok: false, error: "Python sandbox is not available in this environment." };
+      }
+      return api.pythonSandboxExecute({
+        packages: cmd.packages,
+        code: cmd.code,
+        timeoutMs: cmd.timeoutMs ?? PYTHON_SANDBOX_LIMITS.defaultTimeoutMs,
+        ...(cmd.inputFiles?.length ? { inputFiles: cmd.inputFiles } : {}),
+      });
+    },
+    userSkillsList: async () => {
+      const api = window.electronAPI;
+      if (!api?.userSkillsList) throw new Error("User skills are not available.");
+      return api.userSkillsList();
+    },
+    userSkillsRead: async (slug) => {
+      const api = window.electronAPI;
+      if (!api?.userSkillsRead) return { ok: false, error: "unavailable" };
+      return api.userSkillsRead(slug);
+    },
+    userSkillsWrite: async (slug, markdown) => {
+      const api = window.electronAPI;
+      if (!api?.userSkillsWrite) return { ok: false, error: "unavailable" };
+      return api.userSkillsWrite({ slug, markdown });
+    },
+    userSkillsDelete: async (slug) => {
+      const api = window.electronAPI;
+      if (!api?.userSkillsDelete) return { ok: false, error: "unavailable" };
+      return api.userSkillsDelete(slug);
+    },
   };
 }
 
@@ -3488,7 +3532,13 @@ function startNewConversation() {
   refreshChatHistoryList();
 }
 
+/** Legacy #chatMessages is not shown when React `AiChatBridge` owns the column (StrictMode can clear inline `display:none`). */
+function shouldSkipLegacyChatDomRender() {
+  return shellWorkspace === "browser" || shellWorkspace === "intelligent";
+}
+
 function renderChatFromActiveConversation() {
+  if (shouldSkipLegacyChatDomRender()) return;
   const c = getActiveConversation();
   if (!c || !chatMessages) return;
   chatMessages.innerHTML = "";
@@ -3638,8 +3688,8 @@ function enterBrowserWorkspace() {
   applyShellWorkspaceUi("browser");
 }
 
-function enterIntelligentWorkspace() {
-  showWebviewOnly();
+function enterIntelligentWorkspace(fromOpenAssistantSettings = false) {
+  showWebviewOnly({ skipSettingsReactNotify: fromOpenAssistantSettings });
   applyShellWorkspaceUi("intelligent");
 }
 
@@ -6068,6 +6118,7 @@ window.legacyBrowser = {
   try { syncWebviewInteractionLayer(); } catch (e) { /* ignore */ }
   ensureActiveShellReady();
   try {
+    applyShellWorkspaceUi(loadShellWorkspacePreference());
     ensureConversationBootstrap();
     renderChatFromActiveConversation();
     refreshChatHistoryList();
@@ -6076,7 +6127,6 @@ window.legacyBrowser = {
         if (typeof window.__aiChatNewConversation === "function") window.__aiChatNewConversation();
         else startNewConversation();
       };
-    applyShellWorkspaceUi(loadShellWorkspacePreference());
   } catch (e) {
     console.warn("[kernel] conversation / workspace bootstrap:", e);
   }

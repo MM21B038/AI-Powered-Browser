@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { BrowserImportOverlay } from "../modals/BrowserImportOverlay";
 import { FirstRunModal } from "../modals/FirstRunModal";
 import { ImportWizardModal } from "../modals/ImportWizardModal";
@@ -7,16 +7,16 @@ import { SettingsPanel } from "../modals/SettingsPanel";
 
 const POLL_MS = 400;
 
-/** Clicks that open intelligent settings — must not run the outside-click closer first (close+reopen flicker). */
+/** Clicks that open intelligent settings — must not run the outside-click closer (open+instant-close glitch). */
 function isIntelligentSettingsOpenTrigger(target: Element): boolean {
   if (target.closest("#intelligentWorkspaceSettingsBtn")) return true;
+  if (target.closest("#intelligentWorkspaceSettingsFooter")) return true;
   if (target.closest("#chatHistoryRailSettingsBtn")) return true;
   if (target.closest("#settingsBtnChat")) return true;
   if (target.closest(".model-quick-pick__empty")) return true;
-  if (
-    document.getElementById("appContainer")?.getAttribute("data-shell-workspace") ===
-      "intelligent" && target.closest("#settingsBtn")
-  ) {
+  const ws =
+    document.getElementById("appContainer")?.getAttribute("data-shell-workspace") ?? "";
+  if ((ws === "intelligent" || ws === "browser") && target.closest("#settingsBtn")) {
     return true;
   }
   return false;
@@ -28,6 +28,10 @@ export function ModalsBridge(): ReactElement | null {
   const [firstRunOpen, setFirstRunOpen] = useState(false);
   const [importWizardOpen, setImportWizardOpen] = useState(false);
   const [intelligentSettingsModalOpen, setIntelligentSettingsModalOpen] = useState(false);
+  /** Increment on each intelligent-assistant-settings-open so SettingsPanel re-runs layout if React `open` was already true (kernel cleared DOM). */
+  const [intelligentSettingsDomEpoch, setIntelligentSettingsDomEpoch] = useState(0);
+  /** Ignore outside mousedown briefly after open so the same gesture cannot close the modal (capture runs after React commits). */
+  const ignoreOutsideMouseDownUntilRef = useRef(0);
 
   useEffect(() => {
     const sync = () => {
@@ -40,9 +44,39 @@ export function ModalsBridge(): ReactElement | null {
   }, []);
 
   useEffect(() => {
-    const open = () => setIntelligentSettingsModalOpen(true);
+    const open = () => {
+      ignoreOutsideMouseDownUntilRef.current = Date.now() + 1200;
+      setIntelligentSettingsModalOpen(true);
+      setIntelligentSettingsDomEpoch((n) => n + 1);
+    };
     window.addEventListener("intelligent-assistant-settings-open", open);
     return () => window.removeEventListener("intelligent-assistant-settings-open", open);
+  }, []);
+
+  /** Kernel cleared overlay DOM (tool hub, workspace switch, etc.) — drop React open state. */
+  useEffect(() => {
+    const onDomCleared = () => {
+      setIntelligentSettingsModalOpen(false);
+    };
+    window.addEventListener("legacy-intelligent-settings-overlay-cleared", onDomCleared);
+    return () =>
+      window.removeEventListener("legacy-intelligent-settings-overlay-cleared", onDomCleared);
+  }, []);
+
+  /** Only close when switching to browser workspace — not on `ws !== "intelligent"` (empty/stale reads could close while opening). */
+  useEffect(() => {
+    const onWs = (ev: Event) => {
+      const d = (ev as CustomEvent<{ workspace?: string }>).detail;
+      const ws =
+        d?.workspace ??
+        document.getElementById("appContainer")?.getAttribute("data-shell-workspace") ??
+        "";
+      if (ws === "browser") {
+        setIntelligentSettingsModalOpen(false);
+      }
+    };
+    window.addEventListener("shell-workspace-changed", onWs);
+    return () => window.removeEventListener("shell-workspace-changed", onWs);
   }, []);
 
   useEffect(() => {
@@ -62,6 +96,7 @@ export function ModalsBridge(): ReactElement | null {
     const onDownCapture = (e: MouseEvent) => {
       const t = e.target;
       if (!(t instanceof Element)) return;
+      if (Date.now() < ignoreOutsideMouseDownUntilRef.current) return;
       if (t.closest("#chatHistoryResizeHandle")) return;
       if (isIntelligentSettingsOpenTrigger(t)) return;
       const panel = document.querySelector(
@@ -106,6 +141,7 @@ export function ModalsBridge(): ReactElement | null {
         layout="modal"
         modalSize="xl"
         panel="intelligent"
+        domSyncEpoch={intelligentSettingsDomEpoch}
         onClose={() => setIntelligentSettingsModalOpen(false)}
       />
     </>

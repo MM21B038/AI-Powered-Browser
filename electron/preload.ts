@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   ElectronApi,
   ImportBrowserDataOptions,
+  PythonSandboxExecuteResult,
 } from "../src/shared/ipc-types";
 
 const electronApi: ElectronApi = {
@@ -122,6 +123,18 @@ const electronApi: ElectronApi = {
   aiListOpenAiModels: (baseUrl, apiKey, tlsCaPem) =>
     ipcRenderer.invoke("ai-list-openai-models", { baseUrl, apiKey, tlsCaPem }),
   aiTestChatHi: (payload) => ipcRenderer.invoke("ai-test-chat-hi", payload),
+  pythonSandboxExecute: (payload) =>
+    ipcRenderer.invoke("python-sandbox-execute", payload) as Promise<PythonSandboxExecuteResult>,
+  userSkillsList: () => ipcRenderer.invoke("user-skills-list"),
+  userSkillsRead: (slug) => ipcRenderer.invoke("user-skills-read", slug),
+  userSkillsWrite: (payload) => ipcRenderer.invoke("user-skills-write", payload),
+  userSkillsDelete: (slug) => ipcRenderer.invoke("user-skills-delete", slug),
+  userSkillsBuildPromptAppend: (payload) =>
+    ipcRenderer.invoke("user-skills-build-prompt-append", payload),
+  userSkillsOpenFolder: () => ipcRenderer.invoke("user-skills-open-folder"),
+  chatStateBackupWrite: (json: string) =>
+    ipcRenderer.invoke("chat-state-backup-write", json) as Promise<{ ok: true } | { ok: false; error: string }>,
+  chatStateBackupRead: () => ipcRenderer.invoke("chat-state-backup-read") as Promise<string | null>,
   aiChatProxyStream: (payload, handlers) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     const channel = `ai-chat-proxy:${id}`;

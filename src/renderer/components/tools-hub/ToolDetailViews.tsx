@@ -1710,6 +1710,58 @@ export function ToolsHubScientificCalcDetail({
   );
 }
 
+export function ToolsHubPythonSandboxDetail({
+  category,
+  item,
+  bridge,
+  onBack,
+}: {
+  category: ToolsHubCategory;
+  item: ToolsHubItem;
+  bridge: Bridge;
+  onBack: () => void;
+}): ReactElement {
+  const templateLine = useMemo(() => getToolTemplateLine("pythonSandbox"), []);
+  const testNow = useCallback(async () => {
+    const line = templateLine.trim();
+    if (!line) {
+      bridge.showToast?.("No template for this tool", 2500);
+      return;
+    }
+    try {
+      bridge.closeToolsHub?.();
+      await delay(60);
+      const r = await bridge.dispatchAutomationLine?.(line);
+      toastResult(bridge, r, line);
+    } catch (e) {
+      bridge.showToast?.(e instanceof Error ? e.message : "Command failed", 4000);
+    }
+  }, [bridge, templateLine]);
+
+  return (
+    <div className="tools-hub-inner tools-hub-inner--tool">
+      <ToolHero category={category} item={item} onBack={onBack} />
+      <section className="tools-hub-tool-section">
+        <h3 className="tools-hub-tool-h3">Python sandbox</h3>
+        <p className="tools-hub-tool-hint">
+          <code className="tools-hub-inline-code">intelligent_python_execute</code> requires{" "}
+          <code className="tools-hub-inline-code">packages</code> (always present—use <code className="tools-hub-inline-code">[]</code> for stdlib-only) and{" "}
+          <code className="tools-hub-inline-code">code</code>; optional <code className="tools-hub-inline-code">timeout_ms</code>.{" "}
+          <code className="tools-hub-inline-code">df</code> for pandas table preview; save under <code className="tools-hub-inline-code">output/</code> or cwd; matplotlib downloads in the result.
+        </p>
+        <pre className="tools-hub-tool-pre tools-hub-tool-pre--compact" role="region" aria-label="Example JSON">
+          {templateLine}
+        </pre>
+      </section>
+      <div className="tools-hub-tool-actions">
+        <button type="button" className="tools-hub-test-btn" onClick={() => void testNow()}>
+          Test now
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const DEMO_CLASS: Partial<Record<string, string>> = {
   screenshot: "tools-hub-simple-demo--shot",
   tabs: "tools-hub-simple-demo--tabs",
@@ -1811,6 +1863,56 @@ export function ToolsHubGenericDetail({
       <div className="tools-hub-tool-actions">
         <button type="button" className="tools-hub-test-btn" onClick={() => void testNow()}>
           {quick ? "Run (same as Quick)" : "Test now"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function ToolsHubUserSkillsDetail({
+  category,
+  item,
+  bridge,
+  onBack,
+}: {
+  category: ToolsHubCategory;
+  item: ToolsHubItem;
+  bridge: Bridge;
+  onBack: () => void;
+}): ReactElement {
+  const templateLine = useMemo(() => getToolTemplateLine("skillList"), []);
+  const testNow = useCallback(async () => {
+    try {
+      bridge.closeToolsHub?.();
+      await delay(60);
+      const r = await bridge.dispatchAutomationLine?.(templateLine);
+      toastResult(bridge, r, "skill_list");
+    } catch (e) {
+      bridge.showToast?.(e instanceof Error ? e.message : "skill_list failed", 4000);
+    }
+  }, [bridge, templateLine]);
+
+  return (
+    <div className="tools-hub-inner tools-hub-inner--tool">
+      <ToolHero category={category} item={item} onBack={onBack} />
+      <section className="tools-hub-tool-section">
+        <h3 className="tools-hub-tool-h3">AI tools</h3>
+        <p className="tools-hub-tool-hint">
+          Same as the intelligent MCP tools:{" "}
+          <code className="tools-hub-inline-code">intelligent_skill_list</code>,{" "}
+          <code className="tools-hub-inline-code">intelligent_skill_read</code> (slug),{" "}
+          <code className="tools-hub-inline-code">intelligent_skill_write</code> (slug + full SKILL.md),{" "}
+          <code className="tools-hub-inline-code">intelligent_skill_delete</code> (slug). Enable skills under{" "}
+          <strong>Settings → User skills</strong> to append them to the system prompt.
+        </p>
+      </section>
+      <section className="tools-hub-tool-section">
+        <h3 className="tools-hub-tool-h3">List payload (automation)</h3>
+        <pre className="tools-hub-tool-pre tools-hub-tool-pre--io">{templateLine}</pre>
+      </section>
+      <div className="tools-hub-tool-actions">
+        <button type="button" className="tools-hub-test-btn" onClick={() => void testNow()}>
+          Test now (list skills)
         </button>
       </div>
     </div>

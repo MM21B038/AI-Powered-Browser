@@ -45,6 +45,17 @@ import {
   externalMcpListTools,
   mcpExternalDisconnect,
 } from "./mcp/mcp-external-pool";
+import { executePythonSandbox, type PythonSandboxPayload } from "./python-sandbox";
+import { readChatStateBackup, writeChatStateBackup } from "./chat-backup-store";
+import {
+  buildUserSkillsPromptAppend,
+  deleteUserSkill,
+  listUserSkills,
+  readUserSkillMarkdown,
+  resolveSkillsPromptMaxChars,
+  skillsRootDir,
+  writeUserSkillMarkdown,
+} from "./user-skills-store";
 import {
   listGoogleModelsMain,
   listOpenAiCompatibleModelsMain,
@@ -394,6 +405,72 @@ ipcMain.handle(
 );
 
 registerBackgroundSessionIpc(ipcMain, traceMain);
+
+ipcMain.handle(
+  "python-sandbox-execute",
+  async (_: IpcMainInvokeEvent, payload: PythonSandboxPayload) => {
+    try {
+      return await executePythonSandbox(payload);
+    } catch (e) {
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+  },
+);
+
+ipcMain.handle("user-skills-list", async () => listUserSkills(app.getPath("userData")));
+
+ipcMain.handle("user-skills-read", async (_: IpcMainInvokeEvent, slug: string) =>
+  readUserSkillMarkdown(app.getPath("userData"), slug),
+);
+
+ipcMain.handle(
+  "user-skills-write",
+  async (_: IpcMainInvokeEvent, payload: { slug: string; markdown: string }) =>
+    writeUserSkillMarkdown(app.getPath("userData"), payload.slug, payload.markdown),
+);
+
+ipcMain.handle("user-skills-delete", async (_: IpcMainInvokeEvent, slug: string) =>
+  deleteUserSkill(app.getPath("userData"), slug),
+);
+
+ipcMain.handle(
+  "user-skills-build-prompt-append",
+  async (_: IpcMainInvokeEvent, payload: { slugs: string[]; maxChars?: number }) => {
+    try {
+      const ud = app.getPath("userData");
+      const max =
+        typeof payload?.maxChars === "number" && Number.isFinite(payload.maxChars) && payload.maxChars > 0
+          ? payload.maxChars
+          : resolveSkillsPromptMaxChars();
+      return await buildUserSkillsPromptAppend(ud, Array.isArray(payload?.slugs) ? payload.slugs : [], max);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      appendStartupTrace(`[user-skills-build-prompt-append] ${msg}`);
+      return { text: "", truncated: false, omittedSlugs: [] };
+    }
+  },
+);
+
+ipcMain.handle("user-skills-open-folder", async () => {
+  try {
+    const root = skillsRootDir(app.getPath("userData"));
+    await fs.promises.mkdir(root, { recursive: true });
+    await shell.openPath(root);
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+});
+
+ipcMain.handle(
+  "chat-state-backup-write",
+  async (_: IpcMainInvokeEvent, json: string) => writeChatStateBackup(app.getPath("userData"), typeof json === "string" ? json : ""),
+);
+
+ipcMain.handle("chat-state-backup-read", async () => readChatStateBackup(app.getPath("userData")));
 
 function guestFrameBelongsToWebContents(frame: Electron.WebFrameMain, wc: Electron.WebContents): boolean {
   try {

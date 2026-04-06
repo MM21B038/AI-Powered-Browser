@@ -82,6 +82,19 @@ export type AutomationCommand =
       expression: string;
       precision?: number;
     } & SessionScoped)
+  | {
+      kind: "info";
+      op: "python_execute";
+      packages: string[];
+      code: string;
+      timeoutMs?: number;
+      /** Injected by chat UI: user-attached files written into the sandbox work dir before run. */
+      inputFiles?: Array<{ name: string; dataBase64: string }>;
+    }
+  | { kind: "info"; op: "skill_list" }
+  | { kind: "info"; op: "skill_read"; slug: string }
+  | { kind: "info"; op: "skill_write"; slug: string; content: string }
+  | { kind: "info"; op: "skill_delete"; slug: string }
   | { kind: "action"; op: "session"; headless: boolean }
   | { kind: "action"; op: "kill_session"; sessionId: string };
 

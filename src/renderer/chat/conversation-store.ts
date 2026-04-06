@@ -2,6 +2,8 @@
  * Persisted chat: dual Browser vs Intelligent workspaces, multi-role messages (v2).
  */
 
+import { getElectronApi } from "../services/electron-api";
+import type { ChatApiErrorDisplay } from "../services/api-error-format";
 import { generateMessageId } from "./conversation-ids";
 
 export const CHAT_STORAGE_KEY = "butcher.chat.conversations.v1";
@@ -9,6 +11,16 @@ export const CHAT_STORAGE_KEY_V2 = "butcher.chat.v2";
 export const SHELL_WORKSPACE_KEY = "butcher.shell.workspace.v1";
 
 export type ChatScope = "browser" | "intelligent";
+
+/** User-attached files (composer); stored as base64 for persistence and Python sandbox injection. */
+export type ChatAttachment = {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  /** Raw base64 (no data: prefix). */
+  dataBase64: string;
+};
 
 /** Legacy v1 message kinds (migration). */
 export type ChatMessageLegacy =
@@ -29,7 +41,7 @@ export type ChatMessageLegacy =
 /** OpenAI-style transcript + optional thinking on assistant. */
 export type ChatMessageV2 =
   | { id: string; role: "system"; content: string }
-  | { id: string; role: "user"; content: string }
+  | { id: string; role: "user"; content: string; attachments?: ChatAttachment[] }
   | {
       id: string;
       role: "assistant";
@@ -37,6 +49,12 @@ export type ChatMessageV2 =
       thinking?: string;
       /** Wall-clock duration of the thinking stream, for “Thought · 2.1s” UI. */
       thinkingDurationMs?: number;
+      /** Structured API/network error UI; `content` remains full plain text for copy/API replay. */
+      apiError?: {
+        display: ChatApiErrorDisplay;
+        /** Assistant text streamed before the error, if any. */
+        assistantPrefix?: string;
+      };
     }
   | {
       id: string;
@@ -90,15 +108,60 @@ function emptyScoped(): ScopedStore {
   return { conversations: [], activeConversationId: null };
 }
 
+function isChatAttachment(x: unknown): x is ChatAttachment {
+  if (!x || typeof x !== "object") return false;
+  const a = x as Record<string, unknown>;
+  return (
+    typeof a.id === "string" &&
+    typeof a.name === "string" &&
+    typeof a.mime === "string" &&
+    typeof a.size === "number" &&
+    Number.isFinite(a.size) &&
+    typeof a.dataBase64 === "string"
+  );
+}
+
+function isChatApiErrorDisplayObj(x: unknown): x is ChatApiErrorDisplay {
+  if (!x || typeof x !== "object") return false;
+  const d = x as Record<string, unknown>;
+  const sev = d.severity;
+  if (sev !== "error" && sev !== "warning" && sev !== "info") return false;
+  if (typeof d.title !== "string" || typeof d.detail !== "string") return false;
+  if (d.httpStatus !== undefined && typeof d.httpStatus !== "number") return false;
+  if (d.codeLabel !== undefined && typeof d.codeLabel !== "string") return false;
+  return true;
+}
+
+function isAssistantApiErrorBundle(x: unknown): boolean {
+  if (!x || typeof x !== "object") return false;
+  const o = x as Record<string, unknown>;
+  if (!isChatApiErrorDisplayObj(o.display)) return false;
+  if (o.assistantPrefix !== undefined && typeof o.assistantPrefix !== "string")
+    return false;
+  return true;
+}
+
 function isChatMessageV2(x: unknown): x is ChatMessageV2 {
   if (!x || typeof x !== "object") return false;
   const m = x as Record<string, unknown>;
   if (typeof m.id !== "string" || typeof m.role !== "string") return false;
   switch (m.role) {
     case "system":
-    case "user":
-    case "assistant":
       return typeof m.content === "string";
+    case "assistant": {
+      if (typeof m.content !== "string") return false;
+      if (m.thinking !== undefined && typeof m.thinking !== "string") return false;
+      if (m.thinkingDurationMs !== undefined && typeof m.thinkingDurationMs !== "number")
+        return false;
+      if (m.apiError !== undefined && !isAssistantApiErrorBundle(m.apiError)) return false;
+      return true;
+    }
+    case "user": {
+      if (typeof m.content !== "string") return false;
+      if (m.attachments === undefined) return true;
+      if (!Array.isArray(m.attachments)) return false;
+      return m.attachments.every(isChatAttachment);
+    }
     case "tool": {
       const tm = m as Record<string, unknown>;
       return (
@@ -273,23 +336,190 @@ export function normalizeBrowserScoped(scoped: ScopedStore): ScopedStore {
   return { conversations: [one], activeConversationId: one.id };
 }
 
-export function saveConversationStateV2(state: ConversationStoreStateV2): void {
+/** Latest `updatedAt` across all conversations (both workspaces). */
+export function chatStateMaxUpdatedAt(state: ConversationStoreStateV2): number {
+  let max = 0;
+  for (const scoped of [state.browser, state.intelligent]) {
+    for (const c of scoped.conversations) {
+      if (typeof c.updatedAt === "number" && c.updatedAt > max) max = c.updatedAt;
+    }
+  }
+  return max;
+}
+
+/** Drop attachment payloads so the JSON fits browser storage (names/mimes/sizes kept). */
+export function stripAttachmentsFromState(state: ConversationStoreStateV2): ConversationStoreStateV2 {
+  const stripScoped = (scoped: ScopedStore): ScopedStore => ({
+    ...scoped,
+    conversations: scoped.conversations.map((c) => ({
+      ...c,
+      messages: c.messages.map((m) => {
+        if (m.role !== "user" || !m.attachments?.length) return m;
+        return {
+          ...m,
+          attachments: m.attachments.map((a) => ({
+            ...a,
+            dataBase64: "",
+          })),
+        };
+      }),
+    })),
+  });
+  return {
+    version: 2,
+    browser: stripScoped(state.browser),
+    intelligent: stripScoped(state.intelligent),
+  };
+}
+
+const NOTIFY_DEBOUNCE_MS = 60_000;
+let lastNotifyAt = 0;
+let lastNotifyKind = "";
+
+function maybeNotifyStorageFallback(kind: "stripped" | "disk_only" | "failed") {
+  if (typeof window === "undefined") return;
+  const now = Date.now();
+  if (kind === lastNotifyKind && now - lastNotifyAt < NOTIFY_DEBOUNCE_MS) return;
+  lastNotifyAt = now;
+  lastNotifyKind = kind;
   try {
-    localStorage.setItem(CHAT_STORAGE_KEY_V2, JSON.stringify(state));
+    window.dispatchEvent(new CustomEvent("chat-storage-fallback", { detail: { kind } }));
   } catch {
-    /* quota */
+    /* ignore */
   }
 }
 
-export function createDebouncedSaveV2(delayMs: number) {
+async function persistFullStateToDisk(json: string): Promise<boolean> {
+  const api = getElectronApi();
+  if (!api?.chatStateBackupWrite) return false;
+  const r = await api.chatStateBackupWrite(json);
+  return r.ok === true;
+}
+
+export type SaveConversationStateResult =
+  | { ok: true; mode: "localStorage_full" | "localStorage_stripped" | "disk" }
+  | { ok: false };
+
+/**
+ * Persist v2 chat state. On quota error: retry without attachment bytes, then full JSON under userData via IPC.
+ */
+export function saveConversationStateV2(state: ConversationStoreStateV2): SaveConversationStateResult {
+  const json = JSON.stringify(state);
+  try {
+    localStorage.setItem(CHAT_STORAGE_KEY_V2, json);
+    return { ok: true, mode: "localStorage_full" };
+  } catch {
+    /* quota or disabled storage */
+  }
+
+  const stripped = stripAttachmentsFromState(state);
+  const jsonStripped = JSON.stringify(stripped);
+  try {
+    localStorage.setItem(CHAT_STORAGE_KEY_V2, jsonStripped);
+    if (jsonStripped !== json) {
+      maybeNotifyStorageFallback("stripped");
+    }
+    void persistFullStateToDisk(json);
+    return { ok: true, mode: "localStorage_stripped" };
+  } catch {
+    /* still over quota */
+  }
+
+  void persistFullStateToDisk(json).then((ok) => {
+    if (ok) maybeNotifyStorageFallback("disk_only");
+    else maybeNotifyStorageFallback("failed");
+  });
+
+  return { ok: true, mode: "disk" };
+}
+
+function maxUpdatedInScoped(scoped: ScopedStore): number {
+  let max = 0;
+  for (const c of scoped.conversations) {
+    if (typeof c.updatedAt === "number" && c.updatedAt > max) max = c.updatedAt;
+  }
+  return max;
+}
+
+/**
+ * Merge disk backup with current in-memory state **per workspace** so one scope cannot overwrite the other
+ * (e.g. intelligent disk backup newer than local must not wipe browser-only chat in memory).
+ */
+export function mergeChatStatePreferNewerPerScope(
+  current: ConversationStoreStateV2,
+  disk: ConversationStoreStateV2,
+): ConversationStoreStateV2 {
+  const takeBrowser = maxUpdatedInScoped(disk.browser) > maxUpdatedInScoped(current.browser);
+  const takeIntel =
+    maxUpdatedInScoped(disk.intelligent) > maxUpdatedInScoped(current.intelligent);
+  if (!takeBrowser && !takeIntel) return current;
+  return {
+    version: 2,
+    browser: takeBrowser ? disk.browser : current.browser,
+    intelligent: takeIntel ? disk.intelligent : current.intelligent,
+  };
+}
+
+export function parseConversationStoreV2FromJson(raw: string): ConversationStoreStateV2 | null {
+  try {
+    const diskRaw = JSON.parse(raw) as unknown;
+    if (!diskRaw || typeof diskRaw !== "object") return null;
+    const o = diskRaw as Record<string, unknown>;
+    if (o.version !== 2) return null;
+    return {
+      version: 2,
+      browser: normalizeBrowserScoped(parseScoped(o.browser, "browser")),
+      intelligent: parseScoped(o.intelligent, "intelligent"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Read normalized v2 chat from disk backup (Electron only). */
+export async function readChatBackupStateV2(): Promise<ConversationStoreStateV2 | null> {
+  const api = getElectronApi();
+  if (!api?.chatStateBackupRead) return null;
+  const raw = await api.chatStateBackupRead();
+  if (!raw?.trim()) return null;
+  return parseConversationStoreV2FromJson(raw);
+}
+
+export type DebouncedSaveV2 = ((state: ConversationStoreStateV2) => void) & {
+  /**
+   * Write to disk immediately. Pass the current store if you have it (e.g. from a ref on `pagehide`);
+   * otherwise the last pending state from `schedule()` is used.
+   */
+  flush: (override?: ConversationStoreStateV2) => void;
+};
+
+/**
+ * Debounced localStorage write. Always keeps the latest `state` as pending so `flush()` can persist
+ * even if the timer never fires (e.g. process exit during the debounce window).
+ */
+export function createDebouncedSaveV2(delayMs: number): DebouncedSaveV2 {
   let t: ReturnType<typeof setTimeout> | null = null;
-  return (state: ConversationStoreStateV2) => {
+  let pending: ConversationStoreStateV2 | null = null;
+  const run = ((state: ConversationStoreStateV2) => {
+    pending = state;
     if (t) clearTimeout(t);
     t = setTimeout(() => {
-      saveConversationStateV2(state);
+      if (pending) saveConversationStateV2(pending);
       t = null;
     }, delayMs);
+  }) as DebouncedSaveV2;
+  run.flush = (override?: ConversationStoreStateV2) => {
+    if (t) {
+      clearTimeout(t);
+      t = null;
+    }
+    const s = override ?? pending;
+    if (s) {
+      saveConversationStateV2(s);
+      pending = s;
+    }
   };
+  return run;
 }
 
 export function getScopedStore(state: ConversationStoreStateV2, scope: ChatScope): ScopedStore {

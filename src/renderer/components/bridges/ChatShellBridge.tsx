@@ -208,8 +208,14 @@ export function ChatShellBridge(): ReactElement | null {
     const onCollapse = () => setCollapsed(true);
     const onExpand = () => setCollapsed(false);
     const onRailNew = () => document.getElementById("newChatBtn")?.click();
-    const onRailSettings = () =>
+    const onRailSettings = () => {
+      const open = window.legacyBrowser?.openIntelligentAssistantSettings;
+      if (typeof open === "function") {
+        open();
+        return;
+      }
       document.getElementById("intelligentWorkspaceSettingsBtn")?.click();
+    };
 
     collapseBtn?.addEventListener("click", onCollapse);
     expandBtn?.addEventListener("click", onExpand);
