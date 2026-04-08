@@ -36,6 +36,10 @@ import {
   resolveToolAllowlist,
   unknownAtToolNames,
 } from "../chat/ai-tool-mentions";
+import {
+  extractSlashSkillSlugs,
+  validateSkillSlug,
+} from "../chat/ai-skill-mentions";
 import type { ElectronApi } from "../../shared/ipc-types";
 import { formatChatApiErrorMessage } from "./api-error-format";
 import { systemPromptForWorkspace } from "./ai-system-prompts";
@@ -137,8 +141,67 @@ export function responseLooksLikeToolsNotSupported(httpStatus: number, body: str
   return false;
 }
 
+/** Typed parts (Gemini OpenAI-compat, OpenRouter, etc.): reasoning lives in `content` / `content_blocks` arrays. */
+function extractThinkingFromStructuredParts(parts: unknown): string {
+  if (!Array.isArray(parts)) return "";
+  let out = "";
+  for (const part of parts) {
+    if (!part || typeof part !== "object") continue;
+    const p = part as Record<string, unknown>;
+    const typ = typeof p.type === "string" ? p.type.toLowerCase() : "";
+    const thoughtish =
+      typ === "reasoning" ||
+      typ === "thinking" ||
+      typ === "thought" ||
+      typ === "thought_summary" ||
+      (typ.length > 0 &&
+        /reason|think|thought|chain|deliberat|cognitive|internal|monologue/.test(typ));
+    if (!thoughtish) continue;
+    if (typeof p.text === "string") out += p.text;
+    else if (typeof p.content === "string") out += p.content;
+    else if (typeof p.reasoning === "string") out += p.reasoning;
+    else if (typeof p.thinking === "string") out += p.thinking;
+  }
+  return out;
+}
+
+/**
+ * Gemini sometimes attaches `extra_content`; human-readable summaries may appear beside
+ * `thought_signature` (opaque). Skip signature-like keys only.
+ */
+function extractThinkingFromExtraContent(ex: unknown): string {
+  if (!ex || typeof ex !== "object") return "";
+  let out = "";
+  const walk = (obj: Record<string, unknown>, depth: number): void => {
+    if (depth > 5) return;
+    for (const [k, v] of Object.entries(obj)) {
+      const kl = k.toLowerCase();
+      if (kl.includes("signature") || kl === "thought_signature") continue;
+      if (typeof v === "string" && v.length > 0) {
+        if (
+          /thought|summary|reason|think|rationale|deliberation|internal/i.test(kl) &&
+          !/^[A-Za-z0-9+/=_-]{80,}$/.test(v)
+        ) {
+          out += v;
+        }
+        continue;
+      }
+      if (v && typeof v === "object" && !Array.isArray(v)) {
+        walk(v as Record<string, unknown>, depth + 1);
+      } else if (Array.isArray(v)) {
+        out += extractThinkingFromStructuredParts(v);
+        for (const item of v) {
+          if (item && typeof item === "object") walk(item as Record<string, unknown>, depth + 1);
+        }
+      }
+    }
+  };
+  walk(ex as Record<string, unknown>, 0);
+  return out;
+}
+
 /** OpenAI-compatible streams: reasoning / thinking may appear under several delta keys (OpenRouter, o-series, Gemini, etc.). */
-function extractThinkingDelta(d: Record<string, unknown>): string {
+export function extractThinkingDelta(d: Record<string, unknown>): string {
   const directKeys = [
     "reasoning",
     "reasoning_content",
@@ -151,16 +214,28 @@ function extractThinkingDelta(d: Record<string, unknown>): string {
     "internal_monologue",
     "thoughts",
   ] as const;
+  const usedKeys = new Set<string>();
   let out = "";
   for (const k of directKeys) {
     const v = d[k];
-    if (typeof v === "string" && v.length) out += v;
+    if (typeof v === "string" && v.length) {
+      out += v;
+      usedKeys.add(k);
+    }
   }
   for (const [k, v] of Object.entries(d)) {
     if (typeof v !== "string" || !v.length) continue;
-    if (k === "content" || k === "role" || k === "refusal" || k === "tool_calls") continue;
-    if (/reason|think|thought|chain|internal|monologue|deliberat|cognitive/i.test(k)) out += v;
+    if (k === "content" || k === "role" || k === "refusal" || k === "tool_calls")
+      continue;
+    if (usedKeys.has(k)) continue;
+    if (/reason|think|thought|chain|internal|monologue|deliberat|cognitive/i.test(k)) {
+      out += v;
+      usedKeys.add(k);
+    }
   }
+  out += extractThinkingFromStructuredParts(d.content);
+  out += extractThinkingFromStructuredParts(d.content_blocks);
+  out += extractThinkingFromExtraContent(d.extra_content);
   return out;
 }
 
@@ -186,6 +261,8 @@ function extractVisibleDeltaText(d: Record<string, unknown>): string {
       if (
         typ === "reasoning" ||
         typ === "thinking" ||
+        typ === "thought" ||
+        typ === "thought_summary" ||
         typ === "tool_use" ||
         typ === "tool-call" ||
         typ === "function"
@@ -272,6 +349,14 @@ function lastUserMessageAttachments(messages: ChatMessageV2[]): ChatAttachment[]
   return [];
 }
 
+function lastUserMessagePlainText(messages: ChatMessageV2[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role === "user" && typeof m.content === "string") return m.content;
+  }
+  return "";
+}
+
 function buildUserOpenAiContent(
   content: string,
   attachments?: ChatAttachment[],
@@ -307,11 +392,22 @@ function collectContiguousTools(messages: ChatMessageV2[], start: number): { too
   return { tools, end: j };
 }
 
+const PREVIOUS_REQUEST_DID_NOT_COMPLETE_STUB = "Previous request did not complete.";
+
+/** Provider-facing assistant `content`: never replay polluted `content` when `apiError` is set (legacy saves). */
+function assistantWireContentForOpenAi(m: Extract<ChatMessageV2, { role: "assistant" }>): string {
+  if (m.apiError) {
+    const p = (m.apiError.assistantPrefix ?? "").trim();
+    return p || PREVIOUS_REQUEST_DID_NOT_COMPLETE_STUB;
+  }
+  return m.content ?? "";
+}
+
 /**
  * Chat UI persists `[user, tool, tool, …, assistant]` but OpenAI/Gemini require
  * `assistant + tool_calls` before each tool result block. Rebuild that shape here.
  */
-function buildOpenAiMessagesFromChatV2(sysContent: string, messages: ChatMessageV2[]): OpenAiMsg[] {
+export function buildOpenAiMessagesFromChatV2(sysContent: string, messages: ChatMessageV2[]): OpenAiMsg[] {
   const oa: OpenAiMsg[] = [{ role: "system", content: sysContent }];
   let i = 0;
   while (i < messages.length) {
@@ -354,12 +450,14 @@ function buildOpenAiMessagesFromChatV2(sysContent: string, messages: ChatMessage
       continue;
     }
     if (m.role === "assistant") {
+      const am = m as Extract<ChatMessageV2, { role: "assistant" }>;
       const { tools, end } = collectContiguousTools(messages, i + 1);
-      const text = (m.content || "").trim();
+      const wireText = assistantWireContentForOpenAi(am);
+      const text = wireText.trim();
       if (tools.length > 0) {
         oa.push({
           role: "assistant",
-          content: text.length > 0 ? m.content : null,
+          content: text.length > 0 ? wireText : null,
           tool_calls: tools.map((t) => ({
             id: t.toolCallId,
             type: "function" as const,
@@ -380,7 +478,7 @@ function buildOpenAiMessagesFromChatV2(sysContent: string, messages: ChatMessage
         i = end;
         continue;
       }
-      oa.push({ role: "assistant", content: m.content });
+      oa.push({ role: "assistant", content: wireText });
       i++;
       continue;
     }
@@ -478,6 +576,20 @@ export async function getIntelligentOpenAiToolNames(
   return listOpenAiToolNames(butcherDefs, externalGroups);
 }
 
+/** Name + description for @ tool mention UI (same tool set as `getIntelligentOpenAiToolNames`). */
+export async function getIntelligentOpenAiToolSummaries(
+  api: ElectronApi,
+  settings: IntelligentSettingsState,
+): Promise<Array<{ name: string; description: string }>> {
+  const butcherDefs = filterButcherTools(settings, "intelligent");
+  const externalGroups = await loadExternalToolGroups(api, settings, "intelligent");
+  const { openAiTools } = buildToolDispatchMap(butcherDefs, externalGroups);
+  return openAiTools.map((t) => ({
+    name: t.function.name,
+    description: (t.function.description ?? "").trim(),
+  }));
+}
+
 export async function computeIntelligentToolAllowlistFromUserText(
   text: string,
   api: ElectronApi,
@@ -507,6 +619,8 @@ export async function runAiChatPipeline(opts: {
   maxToolRounds?: number;
   /** When set (intelligent workspace), only these OpenAI function names are exposed to the model. */
   toolAllowlist?: string[] | null;
+  /** When aborted, streaming stops and `done` is emitted (partial assistant text may be kept). */
+  abortSignal?: AbortSignal;
 }): Promise<void> {
   const maxRounds = opts.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
   const modelId = selectedModelIdForChatScope(opts.settings, opts.scope).trim();
@@ -557,7 +671,9 @@ export async function runAiChatPipeline(opts: {
 
 /**
  * Maps chat “thinking” level to provider-specific Chat Completions fields.
- * OpenAI / Google Gemini compat: top-level `reasoning_effort`.
+ * Google Gemini OpenAI-compat: `extra_body.google.thinking_config` with `include_thoughts` so
+ * summaries stream; do not send `reasoning_effort` for the same request (API rejects both).
+ * Other OpenAI-compat: top-level `reasoning_effort`.
  * OpenRouter: unified `reasoning` object (pass-through to upstream models).
  * DeepSeek API: `thinking.type` (native); avoid mixing with `reasoning_effort` which can 400.
  * Custom / unknown proxy: send both `reasoning_effort` and `reasoning` for compatibility.
@@ -590,6 +706,15 @@ function applyThinkingToRequestBody(
       body.reasoning = { effort: thinkingLevel, exclude: false };
       return;
     case "google":
+      body.extra_body = {
+        google: {
+          thinking_config: {
+            thinking_level: thinkingLevel,
+            include_thoughts: true,
+          },
+        },
+      };
+      return;
     case "openai":
     case "groq":
     case "mistral":
@@ -609,9 +734,14 @@ async function buildSystemPromptForApi(
   scope: ChatScope,
   settings: IntelligentSettingsState,
   api: ElectronApi,
+  mentionedSlugsFromMessage: string[] = [],
 ): Promise<string> {
   const base = systemPromptForWorkspace(scope);
-  const slugs = settings.enabledSkillSlugs ?? [];
+  const normalizedMentioned = mentionedSlugsFromMessage
+    .map((s) => validateSkillSlug(s))
+    .filter((s): s is string => s != null);
+  const baseSlugs = settings.enabledSkillSlugs ?? [];
+  const slugs = [...new Set([...baseSlugs, ...normalizedMentioned])];
   const useSkills =
     slugs.length > 0 &&
     (scope === "intelligent" || (scope === "browser" && settings.skillsApplyToBrowserAgent));
@@ -636,6 +766,7 @@ async function runOpenAiCompatible(
     onEvent: (e: ChatStreamEvent) => void;
     api: ElectronApi;
     settings: IntelligentSettingsState;
+    abortSignal?: AbortSignal;
   },
   modelId: string,
   baseUrl: string,
@@ -647,7 +778,18 @@ async function runOpenAiCompatible(
   dispatch: ReturnType<typeof buildToolDispatchMap>["dispatch"],
   maxRounds: number,
 ): Promise<void> {
-  const sys = await buildSystemPromptForApi(opts.scope, opts.settings, opts.api);
+  let mentionedSkillSlugs = extractSlashSkillSlugs(
+    lastUserMessagePlainText(opts.messages),
+  );
+  if (opts.scope === "browser" && !opts.settings.skillsApplyToBrowserAgent) {
+    mentionedSkillSlugs = [];
+  }
+  const sys = await buildSystemPromptForApi(
+    opts.scope,
+    opts.settings,
+    opts.api,
+    mentionedSkillSlugs,
+  );
   const oaMessages = buildOpenAiMessagesFromChatV2(sys, opts.messages);
   const pythonInputFilesFromChat = chatAttachmentsToSandboxInputFiles(
     lastUserMessageAttachments(opts.messages),
@@ -665,6 +807,11 @@ async function runOpenAiCompatible(
   let rounds = 0;
   while (rounds < maxRounds) {
     rounds++;
+
+    if (opts.abortSignal?.aborted) {
+      opts.onEvent({ type: "done" });
+      return;
+    }
 
     const proxy = opts.api.aiChatProxyStream;
 
@@ -759,24 +906,60 @@ async function runOpenAiCompatible(
       if (proxy) {
         let proxyHttpStatus: number | undefined;
         try {
-          const outcome = await new Promise<"done" | "retry">((resolve, reject) => {
-            proxy(
+          const ac = opts.abortSignal;
+          const outcome = await new Promise<"done" | "retry" | "aborted">((resolve, reject) => {
+            let settled = false;
+            let proxyUnsub: (() => void) | null = null;
+            const cleanupAbort = () => {
+              if (ac) ac.removeEventListener("abort", onAbort);
+            };
+            const onAbort = () => {
+              if (settled) return;
+              settled = true;
+              proxyUnsub?.();
+              cleanupAbort();
+              resolve("aborted");
+            };
+            if (ac) {
+              if (ac.aborted) {
+                resolve("aborted");
+                return;
+              }
+              ac.addEventListener("abort", onAbort);
+            }
+            proxyUnsub = proxy(
               { url, headers, body: bodyStr, ...(tlsCaPem ? { tlsCaPem } : {}) },
               {
                 onChunk: feedSseChunk,
-                onComplete: () => resolve("done"),
+                onComplete: () => {
+                  if (settled) return;
+                  settled = true;
+                  cleanupAbort();
+                  resolve("done");
+                },
                 onError: (m, httpStatus) => {
+                  if (settled) return;
                   if (includeTools && responseLooksLikeToolsNotSupported(httpStatus ?? 0, m)) {
                     toolsOmittedForSession = true;
+                    settled = true;
+                    cleanupAbort();
                     resolve("retry");
                     return;
                   }
+                  settled = true;
+                  cleanupAbort();
                   proxyHttpStatus = httpStatus;
                   reject(new Error(m));
                 },
               },
             );
           });
+          if (outcome === "aborted") {
+            feedSseChunk("\n");
+            flushAssistantThinkBuffer();
+            opts.onEvent({ type: "done" });
+            return;
+          }
           if (outcome === "retry") continue streamAttempt;
         } catch (e) {
           const raw = e instanceof Error ? e.message : String(e);
@@ -798,44 +981,65 @@ async function runOpenAiCompatible(
           opts.onEvent({ type: "done" });
           return;
         }
-        const res = await fetch(url, {
-          method: "POST",
-          headers,
-          body: bodyStr,
-        });
-
-        if (!res.ok) {
-          const t = await res.text();
-          if (includeTools && responseLooksLikeToolsNotSupported(res.status, t)) {
-            toolsOmittedForSession = true;
-            continue streamAttempt;
-          }
-          opts.onEvent({
-            type: "error",
-            message: formatChatApiErrorMessage(t || "", res.status),
-            httpStatus: res.status,
-          });
-          opts.onEvent({ type: "done" });
-          return;
-        }
-
-        const reader = res.body?.getReader();
-        if (!reader) {
-          opts.onEvent({ type: "error", message: "No response stream" });
-          opts.onEvent({ type: "done" });
-          return;
-        }
-
-        const dec = new TextDecoder();
         try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            feedSseChunk(dec.decode(value, { stream: true }));
+          const res = await fetch(url, {
+            method: "POST",
+            headers,
+            body: bodyStr,
+            signal: opts.abortSignal,
+          });
+
+          if (!res.ok) {
+            const t = await res.text();
+            if (includeTools && responseLooksLikeToolsNotSupported(res.status, t)) {
+              toolsOmittedForSession = true;
+              continue streamAttempt;
+            }
+            opts.onEvent({
+              type: "error",
+              message: formatChatApiErrorMessage(t || "", res.status),
+              httpStatus: res.status,
+            });
+            opts.onEvent({ type: "done" });
+            return;
+          }
+
+          const reader = res.body?.getReader();
+          if (!reader) {
+            opts.onEvent({ type: "error", message: "No response stream" });
+            opts.onEvent({ type: "done" });
+            return;
+          }
+
+          const dec = new TextDecoder();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              feedSseChunk(dec.decode(value, { stream: true }));
+            }
+          } catch (e) {
+            if (e instanceof DOMException && e.name === "AbortError") {
+              feedSseChunk("\n");
+              flushAssistantThinkBuffer();
+              opts.onEvent({ type: "done" });
+              return;
+            }
+            const raw =
+              e instanceof Error ? e.message : `Stream read failed: ${String(e)}`;
+            opts.onEvent({ type: "error", message: formatChatApiErrorMessage(raw) });
+            opts.onEvent({ type: "done" });
+            return;
           }
         } catch (e) {
+          if (e instanceof DOMException && e.name === "AbortError") {
+            feedSseChunk("\n");
+            flushAssistantThinkBuffer();
+            opts.onEvent({ type: "done" });
+            return;
+          }
           const raw =
-            e instanceof Error ? e.message : `Stream read failed: ${String(e)}`;
+            e instanceof Error ? e.message : `Request failed: ${String(e)}`;
           opts.onEvent({ type: "error", message: formatChatApiErrorMessage(raw) });
           opts.onEvent({ type: "done" });
           return;
@@ -853,6 +1057,10 @@ async function runOpenAiCompatible(
       .filter((t) => t.id);
 
     if (toolCalls.length) {
+      if (opts.abortSignal?.aborted) {
+        opts.onEvent({ type: "done" });
+        return;
+      }
       const valid = toolCalls.filter((t) => (t.name || "").trim().length > 0);
       if (valid.length === 0) {
         opts.onEvent({
@@ -873,6 +1081,10 @@ async function runOpenAiCompatible(
       });
 
       for (const tc of valid) {
+        if (opts.abortSignal?.aborted) {
+          opts.onEvent({ type: "done" });
+          return;
+        }
         const apiToolName = nonEmptyToolName(tc.name);
         opts.onEvent({ type: "tool_start", name: apiToolName, toolCallId: tc.id });
         let args: unknown = {};

@@ -49,7 +49,7 @@ export type ChatMessageV2 =
       thinking?: string;
       /** Wall-clock duration of the thinking stream, for “Thought · 2.1s” UI. */
       thinkingDurationMs?: number;
-      /** Structured API/network error UI; `content` remains full plain text for copy/API replay. */
+      /** Structured API/network error UI; `content` is assistant-visible text only (no error blob). */
       apiError?: {
         display: ChatApiErrorDisplay;
         /** Assistant text streamed before the error, if any. */
@@ -441,6 +441,14 @@ function maxUpdatedInScoped(scoped: ScopedStore): number {
   return max;
 }
 
+/** Latest activity marker across both workspaces (for picking the fresher full-store snapshot on flush). */
+function maxUpdatedAcrossScopes(state: ConversationStoreStateV2): number {
+  return Math.max(
+    maxUpdatedInScoped(state.browser),
+    maxUpdatedInScoped(state.intelligent),
+  );
+}
+
 /**
  * Merge disk backup with current in-memory state **per workspace** so one scope cannot overwrite the other
  * (e.g. intelligent disk backup newer than local must not wipe browser-only chat in memory).
@@ -513,7 +521,15 @@ export function createDebouncedSaveV2(delayMs: number): DebouncedSaveV2 {
       clearTimeout(t);
       t = null;
     }
-    const s = override ?? pending;
+    let s: ConversationStoreStateV2 | null = null;
+    if (override !== undefined && pending !== null) {
+      s =
+        maxUpdatedAcrossScopes(pending) > maxUpdatedAcrossScopes(override)
+          ? pending
+          : override;
+    } else {
+      s = override !== undefined ? override : pending;
+    }
     if (s) {
       saveConversationStateV2(s);
       pending = s;

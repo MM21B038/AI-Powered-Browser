@@ -2567,6 +2567,11 @@ function applyTheme(name) {
   document.querySelectorAll(".theme-card").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.theme === name);
   });
+  try {
+    void window.electronAPI?.syncAppIconTheme?.(name);
+  } catch {
+    /* ignore */
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3672,7 +3677,7 @@ function applyShellWorkspaceUi(ws) {
     /* ignore */
   }
 
-  /* Header gear hidden in intelligent workspace (CSS); browser workspace already hides #settingsBtnChat. */
+  /* Header gear hidden in intelligent workspace (CSS); browser workspace hides header gear + clear (CSS). */
   const quickBarWrap = document.getElementById("quickPanelBtn")?.parentElement;
   if (quickBarWrap?.classList.contains("tools-bar-wrap")) {
     quickBarWrap.style.display = ws === "browser" ? "none" : "";

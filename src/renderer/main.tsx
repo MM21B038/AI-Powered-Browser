@@ -39,6 +39,11 @@ window.addEventListener("unhandledrejection", (event) => {
 
 const theme = localStorage.getItem("theme") || "dark";
 document.body.className = `theme-${theme}`;
+try {
+  void window.electronAPI?.syncAppIconTheme?.(theme);
+} catch {
+  /* ignore */
+}
 traceRenderer("renderer bootstrap start", { theme });
 
 const rootEl = document.getElementById("root");

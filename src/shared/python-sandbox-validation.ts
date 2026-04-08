@@ -2,8 +2,8 @@
 const PACKAGE_SPEC_RE = /^[a-zA-Z0-9_.+\-\[\]=~<>,!@/]+$/;
 
 export const PYTHON_SANDBOX_LIMITS = {
-  maxCodeChars: 256_000,
-  maxPackages: 20,
+  maxCodeChars: 384_000,
+  maxPackages: 28,
   minTimeoutMs: 30_000,
   maxTimeoutMs: 600_000,
   /** Enough for venv + pip install (pandas/matplotlib wheels) + script run when omitted. */

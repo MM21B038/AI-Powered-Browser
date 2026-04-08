@@ -6,6 +6,8 @@ import type {
 } from "../src/shared/ipc-types";
 
 const electronApi: ElectronApi = {
+  syncAppIconTheme: (themeId: string) =>
+    ipcRenderer.invoke("app-sync-themed-icon", themeId),
   windowMinimize: () => ipcRenderer.invoke("window-minimize"),
   windowMaximize: () => ipcRenderer.invoke("window-maximize"),
   windowClose: () => ipcRenderer.invoke("window-close"),
@@ -163,7 +165,10 @@ const electronApi: ElectronApi = {
         ipcRenderer.removeListener(channel, listener);
         handlers.onError(e instanceof Error ? e.message : String(e));
       });
-    return () => ipcRenderer.removeListener(channel, listener);
+    return () => {
+      ipcRenderer.removeListener(channel, listener);
+      void ipcRenderer.invoke("ai-chat-proxy-abort", channel);
+    };
   },
 };
 

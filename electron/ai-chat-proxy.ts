@@ -5,6 +5,21 @@
 import type { WebContents } from "electron";
 import { httpsRequestStream, readErrorBody } from "./ai-custom-tls";
 
+const activeCancels = new Map<string, () => void>();
+
+/** Called from IPC when the renderer stops generation (AbortSignal). */
+export function cancelAiChatProxyByChannel(channel: string): void {
+  const fn = activeCancels.get(channel);
+  if (fn) {
+    activeCancels.delete(channel);
+    try {
+      fn();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 export async function proxyOpenAiChatCompletionsStream(
   sender: WebContents,
   channel: string,
@@ -14,7 +29,9 @@ export async function proxyOpenAiChatCompletionsStream(
   tlsCaPem?: string,
 ): Promise<void> {
   try {
-    const res = await httpsRequestStream(url, "POST", headers, body, tlsCaPem);
+    const session = await httpsRequestStream(url, "POST", headers, body, tlsCaPem);
+    activeCancels.set(channel, session.cancel);
+    const res = session.response;
     const status = res.statusCode ?? 0;
     if (status < 200 || status >= 300) {
       const t = await readErrorBody(res);
@@ -36,5 +53,7 @@ export async function proxyOpenAiChatCompletionsStream(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     sender.send(channel, { error: msg });
+  } finally {
+    activeCancels.delete(channel);
   }
 }

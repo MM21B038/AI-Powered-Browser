@@ -231,7 +231,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
   {
     name: "intelligent_python_execute",
     description:
-      "Run Python in a sandbox (Docker if available, else a temp venv on the host). **Always pass `packages`**: pip install specs before `code`, or `[]` when the script uses only the standard library. Pass `code` and optional `timeout_ms` (default 300000). Set a pandas DataFrame as `df` for a table preview; save files under `output/` or cwd; matplotlib outputs are downloadable. Chat attachments are in the working directory.",
+      "Run Python in a sandbox (Docker if available, else a temp venv on the host). **Always pass `packages`**: every non-stdlib dependency the script imports (e.g. `pandas`, `numpy`, `matplotlib`, **`scipy`**, `scikit-learn`, `requests`). Use `[]` only for stdlib-only scripts. Pass `code` and optional `timeout_ms` (default 300000). Set a pandas DataFrame as `df` for a table preview (NaN/Inf safe). Write outputs anywhere under the work dir (`output/`, cwd, nested subfolders); files up **8 MB** each are embedded for download. **PNG/JPEG** on disk also appear as inline figure previews (size-capped) even after `plt.close()`. Open matplotlib figures at process end are still captured as PNG. Network works in Docker for `pip` and `read_csv` URLs. Chat attachments are in the working directory.",
     inputSchema: {
       type: "object",
       properties: {
@@ -239,7 +239,7 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
           type: "array",
           items: { type: "string" },
           description:
-            "Required. Pip packages to install before running `code`. Use `[]` for stdlib-only scripts. Examples: [\"pandas\",\"matplotlib\"], [\"numpy==2.0\"]. Up to 20 non-empty entries.",
+            "Required. Pip packages before `code`. Use `[]` for stdlib-only. Examples: [\"pandas\",\"numpy\",\"matplotlib\"], [\"pandas\",\"scipy\",\"matplotlib\"]. Up to 28 non-empty entries.",
         },
         code: { type: "string", description: "Python source to run after installing `packages`." },
         timeout_ms: {

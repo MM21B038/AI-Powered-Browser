@@ -68,6 +68,12 @@ export async function httpsRequestBody(
   });
 }
 
+export type HttpsStreamSession = {
+  response: http.IncomingMessage;
+  /** Abort the in-flight request (stops the response stream). */
+  cancel: () => void;
+};
+
 /** Stream UTF-8 chunks from response body; caller handles non-2xx before reading body. */
 export async function httpsRequestStream(
   url: string,
@@ -75,10 +81,21 @@ export async function httpsRequestStream(
   headers: Record<string, string>,
   body: string,
   tlsCaPem: string | undefined,
-): Promise<http.IncomingMessage> {
+): Promise<HttpsStreamSession> {
   const { lib, options } = buildRequestParts(url, method, headers, tlsCaPem);
   return new Promise((resolve, reject) => {
-    const req = lib.request(options, resolve);
+    const req = lib.request(options, (response) => {
+      resolve({
+        response,
+        cancel: () => {
+          try {
+            req.destroy();
+          } catch {
+            /* ignore */
+          }
+        },
+      });
+    });
     req.on("error", reject);
     req.write(body);
     req.end();
