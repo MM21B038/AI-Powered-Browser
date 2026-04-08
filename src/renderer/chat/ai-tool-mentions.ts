@@ -82,6 +82,47 @@ export function filterToolNameSuggestions(
   return filtered.slice(0, maxVisible).map((s) => s.name);
 }
 
+export type ToolCatalogItem = { name: string; description: string };
+
+/** Filter/sort tools by function name and description (for @ composer). */
+export function filterToolCatalogSuggestions(
+  items: ToolCatalogItem[],
+  query: string,
+  maxVisible: number,
+): ToolCatalogItem[] {
+  const q = query.trim().toLowerCase();
+  const scored = items.map((item) => {
+    const name = item.name.toLowerCase();
+    const desc = (item.description || "").toLowerCase();
+    const namePrefix = q.length === 0 || name.startsWith(q);
+    const nameIdx = q.length ? name.indexOf(q) : 0;
+    const descIdx = q.length ? desc.indexOf(q) : 0;
+    let score = 999;
+    let tier = 2;
+    if (q.length === 0) {
+      score = 0;
+      tier = 0;
+    } else if (namePrefix) {
+      score = 0;
+      tier = 0;
+    } else if (nameIdx >= 0) {
+      score = 2 + nameIdx;
+      tier = 1;
+    } else if (descIdx >= 0) {
+      score = 10 + descIdx;
+      tier = 1;
+    }
+    return { item, score, tier };
+  });
+  scored.sort((a, b) => {
+    if (a.tier !== b.tier) return a.tier - b.tier;
+    if (a.score !== b.score) return a.score - b.score;
+    return a.item.name.localeCompare(b.item.name);
+  });
+  const filtered = q.length === 0 ? scored : scored.filter((s) => s.score < 999);
+  return filtered.slice(0, maxVisible).map((s) => s.item);
+}
+
 export function replaceMentionAtCaret(
   value: string,
   caret: number,

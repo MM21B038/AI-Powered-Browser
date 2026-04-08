@@ -42,7 +42,7 @@ export type PythonSandboxInner = {
 };
 
 const MAX_STD_CHARS = 500_000;
-const MAX_IMAGES = 12;
+const MAX_IMAGES = 18;
 const MAX_IMAGE_B64 = 6 * 1024 * 1024;
 
 function runnerSourcePath(): string {
@@ -239,6 +239,15 @@ function writeWorkDirPayload(workDir: string, payload: PythonSandboxPayload): { 
   return { ok: true };
 }
 
+function readResultJsonUtf8(resultPath: string): string {
+  const buf = fs.readFileSync(resultPath);
+  const stripBom =
+    buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf
+      ? buf.subarray(3)
+      : buf;
+  return stripBom.toString("utf8");
+}
+
 function parseResultJson(
   workDir: string,
   extraStderr: string,
@@ -248,11 +257,35 @@ function parseResultJson(
     return { ok: false, error: "Missing result.json from runner." };
   }
 
+  let size = -1;
+  try {
+    size = fs.statSync(resultPath).size;
+  } catch {
+    /* ignore */
+  }
+
+  let jsonText: string;
+  try {
+    jsonText = readResultJsonUtf8(resultPath);
+  } catch (readErr) {
+    const msg = readErr instanceof Error ? readErr.message : String(readErr);
+    return {
+      ok: false,
+      error: `Could not read result.json (${size >= 0 ? `${size} bytes` : "unknown size"}): ${msg}`,
+    };
+  }
+
   let raw: unknown;
   try {
-    raw = JSON.parse(fs.readFileSync(resultPath, "utf8")) as unknown;
-  } catch {
-    return { ok: false, error: "Invalid result.json from runner." };
+    raw = JSON.parse(jsonText) as unknown;
+  } catch (parseErr) {
+    const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+    const oneLine = jsonText.replace(/\s+/g, " ").trim();
+    const prefix = oneLine.length > 320 ? `${oneLine.slice(0, 320)}…` : oneLine;
+    return {
+      ok: false,
+      error: `Invalid result.json from runner (${size >= 0 ? `${size} bytes` : "unknown size"}): ${msg}. Prefix: ${prefix}`,
+    };
   }
   const o = raw as Record<string, unknown>;
   const inner: PythonSandboxInner = {

@@ -60,8 +60,15 @@ import {
   listGoogleModelsMain,
   listOpenAiCompatibleModelsMain,
 } from "./ai-list-models";
-import { proxyOpenAiChatCompletionsStream } from "./ai-chat-proxy";
+import {
+  cancelAiChatProxyByChannel,
+  proxyOpenAiChatCompletionsStream,
+} from "./ai-chat-proxy";
 import { testGoogleHiMain, testOpenAiHiMain } from "./ai-test-hi";
+import {
+  normalizeAppThemeId,
+  tintAppIconBase,
+} from "./theme-app-icon";
 
 let mainWindow: BrowserWindow | null = null;
 let mcpBridgeConfig: McpBridgeFileConfig | null = null;
@@ -90,6 +97,15 @@ function traceMain(message: string, extra?: unknown): void {
     console.log(`[main] ${full}`);
   }
   appendStartupTrace(`[main] ${full}`);
+}
+
+/** Commit renderer localStorage/sessionStorage to disk (Chromium batches writes). */
+function flushRendererDomStorage(): void {
+  try {
+    session.defaultSession.flushStorageData();
+  } catch (e) {
+    appendStartupTrace(`[main] flushStorageData failed ${String(e)}`);
+  }
 }
 
 function ensureDirWritable(dir: string): boolean {
@@ -144,7 +160,7 @@ function getRendererEntry(): string {
 }
 
 /** Möbius strip app icon (build/icon.png); copied to resources when packaged. */
-function getAppIcon(): Electron.NativeImage | undefined {
+function loadAppIconFromDisk(): Electron.NativeImage | undefined {
   const candidates: string[] = [];
   if (app.isPackaged) {
     candidates.push(path.join(process.resourcesPath, "icon.png"));
@@ -163,6 +179,30 @@ function getAppIcon(): Electron.NativeImage | undefined {
     }
   }
   return undefined;
+}
+
+let appIconBaseMemo: Electron.NativeImage | undefined;
+
+function getAppIconBase(): Electron.NativeImage | undefined {
+  if (appIconBaseMemo && !appIconBaseMemo.isEmpty()) return appIconBaseMemo;
+  appIconBaseMemo = loadAppIconFromDisk();
+  return appIconBaseMemo && !appIconBaseMemo.isEmpty() ? appIconBaseMemo : undefined;
+}
+
+function getAppIcon(): Electron.NativeImage | undefined {
+  return getAppIconBase();
+}
+
+function syncMainWindowAppIcon(themeIdRaw: unknown): void {
+  const base = getAppIconBase();
+  if (!mainWindow || mainWindow.isDestroyed() || !base) return;
+  const themeId = normalizeAppThemeId(themeIdRaw);
+  const themed = tintAppIconBase(base, themeId) ?? base;
+  try {
+    mainWindow.setIcon(themed);
+  } catch {
+    /* ignore */
+  }
 }
 
 function createWindow(): BrowserWindow {
@@ -200,6 +240,10 @@ function createWindow(): BrowserWindow {
 
   win.webContents.on("did-finish-load", () => {
     traceMain("renderer did-finish-load");
+    void win.webContents
+      .executeJavaScript(`localStorage.getItem("theme") || "dark"`)
+      .then((t) => syncMainWindowAppIcon(t))
+      .catch(() => syncMainWindowAppIcon("dark"));
   });
   win.webContents.on("did-fail-load", (_e, code, desc, validatedURL) => {
     console.error("[main] renderer load failed", { code, desc, validatedURL });
@@ -228,6 +272,9 @@ function createWindow(): BrowserWindow {
     appendStartupTrace(
       `[renderer-console] level=${level} ${sourceId}:${line} ${message}`,
     );
+  });
+  win.on("close", () => {
+    flushRendererDomStorage();
   });
   win.on("closed", () => {
     traceMain("main window closed");
@@ -285,6 +332,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  flushRendererDomStorage();
   stopAllMcpBridges();
 });
 
@@ -358,6 +406,10 @@ ipcMain.handle(
     return { success: true };
   },
 );
+
+ipcMain.handle("app-sync-themed-icon", (_: IpcMainInvokeEvent, themeId: unknown) => {
+  syncMainWindowAppIcon(themeId);
+});
 
 ipcMain.handle("window-minimize", () => mainWindow?.minimize());
 ipcMain.handle("window-maximize", () =>
@@ -1183,3 +1235,9 @@ ipcMain.handle(
     );
   },
 );
+
+ipcMain.handle("ai-chat-proxy-abort", (_event: IpcMainInvokeEvent, channel: string) => {
+  if (typeof channel === "string" && channel.length > 0) {
+    cancelAiChatProxyByChannel(channel);
+  }
+});

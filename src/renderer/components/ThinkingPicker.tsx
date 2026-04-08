@@ -53,7 +53,7 @@ export function ThinkingPicker({
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-label={`Thinking: ${shortLabel(level)}`}
-        title="Reasoning for this chat: OpenAI & Gemini use reasoning_effort; OpenRouter uses reasoning.effort; DeepSeek uses thinking mode. Off sends no extra parameters."
+        title="Reasoning for this chat: Gemini uses extra_body thinking_config + include_thoughts; OpenAI-style APIs use reasoning_effort; OpenRouter uses reasoning.effort; DeepSeek uses thinking mode. Off sends no thinking parameters."
         onClick={() => setOpen((v) => !v)}
       >
         <span className="thinking-picker__icon" aria-hidden>

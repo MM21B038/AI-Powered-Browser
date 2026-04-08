@@ -138,6 +138,7 @@ const INTELLIGENT_THEME_IDS = [
   "ocean",
   "ember",
   "neon",
+  "hacker",
   "forest",
   "sunset",
   "lavender",
@@ -161,6 +162,7 @@ function intelligentThemeDisplayName(
   if (t === "dark") return "Void";
   if (t === "ink") return "Ink";
   if (t === "prism") return "Prism";
+  if (t === "hacker") return "Hacker";
   return t[0].toUpperCase() + t.slice(1);
 }
 
@@ -394,6 +396,9 @@ export function SettingsPanel({
   );
   const [intelligentSettings, setIntelligentSettings] =
     useState<IntelligentSettingsState>(() => loadIntelligentSettings());
+  /** Latest settings for close / unload flush (avoids stale effect closure). */
+  const intelligentSettingsLiveRef = useRef(intelligentSettings);
+  intelligentSettingsLiveRef.current = intelligentSettings;
   const intelligentHydratedRef = useRef(false);
   /** Matches last persisted intelligent JSON (disk or explicit save) to avoid debounced save + global events on every open. */
   const intelligentDiskJsonRef = useRef<string>("");
@@ -516,6 +521,19 @@ export function SettingsPanel({
       });
     }
     return () => {
+      /* Runs before the next effect (e.g. open→false). Clear debounced timeout cannot save in time. */
+      if (panel === "intelligent" && intelligentHydratedRef.current) {
+        try {
+          const snap = intelligentSettingsLiveRef.current;
+          const json = JSON.stringify(snap);
+          if (json !== intelligentDiskJsonRef.current) {
+            saveIntelligentSettings(snap);
+            intelligentDiskJsonRef.current = json;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
       intelligentHydratedRef.current = false;
     };
   }, [open, panel]);
@@ -819,16 +837,20 @@ export function SettingsPanel({
   const updateIntelligentSettings = (
     patch: Partial<IntelligentSettingsState>,
   ) => {
+    let persistNow: IntelligentSettingsState | null = null;
     setIntelligentSettings((prev) => {
       const next = { ...prev, ...patch };
       if (
         Object.keys(patch).some((k) => AI_SETTINGS_IMMEDIATE_PERSIST.has(k))
       ) {
-        saveIntelligentSettings(next);
-        intelligentDiskJsonRef.current = JSON.stringify(next);
+        persistNow = next;
       }
       return next;
     });
+    if (persistNow) {
+      saveIntelligentSettings(persistNow);
+      intelligentDiskJsonRef.current = JSON.stringify(persistNow);
+    }
   };
 
   const updateMcp = (id: string, patch: Partial<McpServerConfig>) => {

@@ -501,6 +501,12 @@ function safeDownloadBasename(name: string): string {
   return t || "download.bin";
 }
 
+/** Preserve path uniqueness for sandbox outputs (e.g. `plots/a.png` vs `plots/b.png`). */
+function safePythonOutputDownloadName(name: string): string {
+  const t = name.trim().replace(/[/\\]+/g, "__").replace(/^__+/, "");
+  return t.slice(-180) || "download.bin";
+}
+
 function downloadBase64File(filename: string, dataBase64: string): void {
   try {
     const bin = atob(dataBase64);
@@ -631,7 +637,9 @@ function PythonSandboxResultView({ payload }: { payload: Record<string, unknown>
                     <button
                       type="button"
                       className="ai-chat-tool-python__dl"
-                      onClick={() => downloadBase64File(name, b64)}
+                      onClick={() =>
+                        downloadBase64File(safePythonOutputDownloadName(name), b64)
+                      }
                     >
                       Download
                     </button>

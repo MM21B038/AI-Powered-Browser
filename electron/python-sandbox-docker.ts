@@ -13,6 +13,15 @@ const DEFAULT_IMAGE = "python:3.12-slim-bookworm";
 /** Named volume so pip reuses downloaded wheels across runs (large speedup for pandas/numpy, etc.). */
 const PIP_CACHE_VOLUME = "ab-python-sandbox-pip-cache";
 
+/*
+ * Optional env tuning (Docker path):
+ *   AB_PYTHON_DOCKER=0 — disable Docker, use host venv only.
+ *   AB_PYTHON_SANDBOX_IMAGE — base image (default python:3.12-slim-bookworm).
+ *   AB_PYTHON_SANDBOX_MEMORY — container memory (default 4096m).
+ *   AB_PYTHON_SANDBOX_CPUS — CPU limit (default 4).
+ *   AB_PYTHON_SANDBOX_NO_PIP_CACHE=1 — skip pip cache volume mount.
+ */
+
 /** Set AB_PYTHON_DOCKER=0 to force host venv only. */
 export function isDockerSandboxEnabledByEnv(): boolean {
   return process.env.AB_PYTHON_DOCKER !== "0";

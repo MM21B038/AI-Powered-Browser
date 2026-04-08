@@ -211,6 +211,8 @@ export interface IpcResponse<T = unknown> {
 }
 
 export interface ElectronApi {
+  /** Tint taskbar / window icon to match UI theme accent (see theme-app-icon.ts). */
+  syncAppIconTheme: (themeId: string) => Promise<void>;
   windowMinimize: () => Promise<void>;
   windowMaximize: () => Promise<void>;
   windowClose: () => Promise<void>;
