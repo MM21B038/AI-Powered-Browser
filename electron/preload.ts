@@ -3,6 +3,7 @@ import type {
   ElectronApi,
   ImportBrowserDataOptions,
   PythonSandboxExecuteResult,
+  PythonSandboxReadArtifactResult,
 } from "../src/shared/ipc-types";
 
 const electronApi: ElectronApi = {
@@ -127,6 +128,8 @@ const electronApi: ElectronApi = {
   aiTestChatHi: (payload) => ipcRenderer.invoke("ai-test-chat-hi", payload),
   pythonSandboxExecute: (payload) =>
     ipcRenderer.invoke("python-sandbox-execute", payload) as Promise<PythonSandboxExecuteResult>,
+  pythonSandboxReadArtifact: (payload) =>
+    ipcRenderer.invoke("python-sandbox-read-artifact", payload) as Promise<PythonSandboxReadArtifactResult>,
   userSkillsList: () => ipcRenderer.invoke("user-skills-list"),
   userSkillsRead: (slug) => ipcRenderer.invoke("user-skills-read", slug),
   userSkillsWrite: (payload) => ipcRenderer.invoke("user-skills-write", payload),

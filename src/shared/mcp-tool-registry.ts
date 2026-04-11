@@ -693,6 +693,25 @@ export function automationCommandFromMcpTool(name: string, args: unknown): Autom
 
 const MAX_DATA_URL_CHARS = 120_000;
 
+/** Drop redundant inline base64 when artifactId is present (disk-backed offload). */
+function slimPythonSandboxImageForMcp(im: unknown): unknown {
+  if (!im || typeof im !== "object") return im;
+  const o = im as Record<string, unknown>;
+  const id = typeof o.artifactId === "string" ? o.artifactId.trim() : "";
+  if (!id) return im;
+  const { dataBase64: _d, ...rest } = o;
+  return rest;
+}
+
+function slimPythonSandboxFileForMcp(f: unknown): unknown {
+  if (!f || typeof f !== "object") return f;
+  const o = f as Record<string, unknown>;
+  const id = typeof o.artifactId === "string" ? o.artifactId.trim() : "";
+  if (!id) return f;
+  const { dataBase64: _d, ...rest } = o;
+  return rest;
+}
+
 /**
  * Shrink screenshot data URLs for JSON-RPC / MCP responses.
  */
@@ -750,13 +769,13 @@ export function sanitizeAutomationResultForMcp(result: AutomationResult): unknow
       stderr: String(py.stderr ?? ""),
     };
     if (Array.isArray(py.images)) {
-      out.images = py.images;
+      out.images = py.images.map(slimPythonSandboxImageForMcp);
     }
     if (py.table && typeof py.table === "object") {
       out.table = py.table;
     }
     if (Array.isArray(py.files)) {
-      out.files = py.files;
+      out.files = py.files.map(slimPythonSandboxFileForMcp);
     }
     if (!result.success || !py.success) {
       out.error = String(py.error ?? result.error ?? "python_execute_failed");

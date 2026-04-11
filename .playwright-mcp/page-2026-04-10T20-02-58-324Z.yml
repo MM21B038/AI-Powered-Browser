@@ -1,0 +1,5 @@
+- generic [ref=e3]:
+  - img "Skyscanner" [ref=e5]
+  - heading "Are you a person or a robot?" [level=1] [ref=e10]
+  - generic [ref=e11]: Please don’t take this personally - some scripts and bots are remarkably lifelike these days!
+  - generic [ref=e12]: Still having problems accessing the page? Try checking you have JavaScript and cookies turned on and that your browser isn’t blocking them from loading.
