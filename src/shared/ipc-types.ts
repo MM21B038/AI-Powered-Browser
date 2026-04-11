@@ -147,24 +147,42 @@ export type PythonSandboxPayload = {
   inputFiles?: Array<{ name: string; dataBase64: string }>;
 };
 
+/** Inline or disk-backed; mutually exclusive for LLM-safe payloads after IPC offload. */
+export type PythonSandboxWireImage = {
+  mime: string;
+  dataBase64?: string;
+  artifactId?: string;
+};
+
+export type PythonSandboxWireFile = {
+  name: string;
+  size: number;
+  dataBase64?: string;
+  truncated?: boolean;
+  artifactId?: string;
+};
+
+export type PythonSandboxWireInner = {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  images?: PythonSandboxWireImage[];
+  table?: { columns: string[]; rows: unknown[][] } | null;
+  files?: PythonSandboxWireFile[];
+  error?: string;
+};
+
 export type PythonSandboxExecuteResult =
   | {
       ok: true;
-      python_sandbox: {
-        success: boolean;
-        stdout: string;
-        stderr: string;
-        images?: Array<{ mime: string; dataBase64: string }>;
-        table?: { columns: string[]; rows: unknown[][] } | null;
-        files?: Array<{
-          name: string;
-          size: number;
-          dataBase64?: string;
-          truncated?: boolean;
-        }>;
-        error?: string;
-      };
+      python_sandbox: PythonSandboxWireInner;
     }
+  | { ok: false; error: string };
+
+export type PythonSandboxReadArtifactPayload = { artifactId: string };
+
+export type PythonSandboxReadArtifactResult =
+  | { ok: true; dataBase64: string; mime?: string; name?: string }
   | { ok: false; error: string };
 
 export type AiChatProxyStreamHandlers = {
@@ -361,6 +379,10 @@ export interface ElectronApi {
   aiTestChatHi: (payload: AiTestChatHiPayload) => Promise<{ reply: string }>;
   /** Run Python in ephemeral venv (main process). */
   pythonSandboxExecute: (payload: PythonSandboxPayload) => Promise<PythonSandboxExecuteResult>;
+  /** Load a disk-backed Python sandbox artifact (files/images) by id. */
+  pythonSandboxReadArtifact: (
+    payload: PythonSandboxReadArtifactPayload,
+  ) => Promise<PythonSandboxReadArtifactResult>;
   /** Stream POST body to OpenAI-compatible chat/completions from main. Returns unsubscribe. */
   aiChatProxyStream: (
     payload: {

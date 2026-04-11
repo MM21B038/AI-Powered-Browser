@@ -1,0 +1,58 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - banner [ref=e5]:
+      - img [ref=e6]
+      - generic [ref=e8]: Skyscanner
+    - heading "Page not found" [level=1] [ref=e9]
+    - generic [ref=e10]: With Skyscanner you can go anywhere. But first you need to go back to the homepage.
+    - link "Go back" [ref=e12] [cursor=pointer]:
+      - /url: /
+    - img "Page not found." [ref=e14]
+  - contentinfo [ref=e15]:
+    - contentinfo [ref=e17]:
+      - generic [ref=e18]:
+        - generic [ref=e22]:
+          - text: UK·en-GB·
+          - generic [ref=e23]:
+            - generic [ref=e24]: £
+            - text: GBP
+        - generic [ref=e25]:
+          - link "Help" [ref=e26] [cursor=pointer]:
+            - /url: https://help.skyscanner.net/hc/en-gb?skyCurrency=currency_gbp&skyLanguage=lang_en&skyMarket=uk_skyscanner
+          - link "Privacy Settings" [ref=e27] [cursor=pointer]:
+            - /url: /privacy-settings
+          - link "Log in" [ref=e28] [cursor=pointer]:
+            - /url: /profile
+        - generic [ref=e29]:
+          - link "Cookie policy" [ref=e30] [cursor=pointer]:
+            - /url: https://www.skyscanner.net/media/cookie-policy
+          - link "Privacy policy" [ref=e31] [cursor=pointer]:
+            - /url: https://www.skyscanner.net/media/privacy-policy
+          - link "Terms of service" [ref=e32] [cursor=pointer]:
+            - /url: /terms-of-service
+          - link "Privacy, Trust & Safety" [ref=e33] [cursor=pointer]:
+            - /url: /media/privacy-trust-and-safety-centre
+          - link "Company Details" [ref=e34] [cursor=pointer]:
+            - /url: /company-details
+        - generic [ref=e35]:
+          - button "Explore" [ref=e38] [cursor=pointer]:
+            - generic [ref=e39]:
+              - generic [ref=e40]: Explore
+              - img [ref=e43]
+          - button "Company" [ref=e47] [cursor=pointer]:
+            - generic [ref=e48]:
+              - generic [ref=e49]: Company
+              - img [ref=e52]
+          - button "Partners" [ref=e56] [cursor=pointer]:
+            - generic [ref=e57]:
+              - generic [ref=e58]: Partners
+              - img [ref=e61]
+          - button "Trips" [ref=e65] [cursor=pointer]:
+            - generic [ref=e66]:
+              - generic [ref=e67]: Trips
+              - img [ref=e70]
+          - button "International Sites" [ref=e74] [cursor=pointer]:
+            - generic [ref=e75]:
+              - generic [ref=e76]: International Sites
+              - img [ref=e79]
+      - generic [ref=e82]: © Skyscanner Ltd 2002 – 2026

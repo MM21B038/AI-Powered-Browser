@@ -20,7 +20,13 @@ export type PythonSandboxPayload = {
   inputFiles?: Array<{ name: string; dataBase64: string }>;
 };
 
-export type PythonSandboxImage = { mime: string; dataBase64: string };
+export type PythonSandboxImage = {
+  mime: string;
+  /** Present when payload is inline (before IPC offload). */
+  dataBase64?: string;
+  /** Opaque id for disk-backed blob (see python-sandbox-artifacts). */
+  artifactId?: string;
+};
 
 export type PythonSandboxTable = { columns: string[]; rows: unknown[][] };
 
@@ -29,6 +35,7 @@ export type PythonSandboxFile = {
   size: number;
   dataBase64?: string;
   truncated?: boolean;
+  artifactId?: string;
 };
 
 export type PythonSandboxInner = {

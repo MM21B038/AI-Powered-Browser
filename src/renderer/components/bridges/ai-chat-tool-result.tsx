@@ -1,6 +1,7 @@
 import {
   Fragment,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -8,6 +9,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { getElectronApi } from "../../services/electron-api";
 import { renderChatMarkdownToHtml } from "../../chat/chat-markdown";
 import { highlightCodeBlock } from "../../chat/code-highlight";
 import { parseMarkdownPipeTables } from "../../chat/parse-markdown-pipe-table";
@@ -518,6 +520,96 @@ function downloadBase64File(filename: string, dataBase64: string): void {
   }
 }
 
+async function readArtifactBase64(artifactId: string): Promise<string | null> {
+  const api = getElectronApi();
+  if (!api?.pythonSandboxReadArtifact) return null;
+  const r = await api.pythonSandboxReadArtifact({ artifactId });
+  return r.ok ? r.dataBase64 : null;
+}
+
+function PythonSandboxImageFigure({
+  im,
+  index,
+}: {
+  im: Record<string, unknown>;
+  index: number;
+}): ReactElement {
+  const mime = String(im.mime ?? "image/png");
+  const inlineB64 = typeof im.dataBase64 === "string" ? im.dataBase64 : "";
+  const artifactId = typeof im.artifactId === "string" ? im.artifactId.trim() : "";
+  const [b64, setB64] = useState(inlineB64);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (inlineB64 || !artifactId) return;
+    let cancelled = false;
+    void (async () => {
+      const data = await readArtifactBase64(artifactId);
+      if (cancelled) return;
+      if (data) setB64(data);
+      else setLoadErr("Could not load figure");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [artifactId, inlineB64]);
+
+  const ext = mime.includes("png")
+    ? "png"
+    : mime.includes("jpeg") || mime.includes("jpg")
+      ? "jpg"
+      : mime.includes("webp")
+        ? "webp"
+        : "png";
+  const dlName = `plot-${index + 1}.${ext}`;
+
+  if (!b64 && artifactId && !loadErr) {
+    return (
+      <figure className="ai-chat-tool-python__fig">
+        <div className="ai-chat-tool-python__fig-toolbar">
+          <span className="ai-chat-tool-python__fig-label">Figure {index + 1}</span>
+        </div>
+        <div className="ai-chat-tool-card__muted" role="status">
+          Loading figure…
+        </div>
+      </figure>
+    );
+  }
+
+  if (loadErr || !b64) {
+    return (
+      <figure className="ai-chat-tool-python__fig">
+        <div className="ai-chat-tool-python__fig-toolbar">
+          <span className="ai-chat-tool-python__fig-label">Figure {index + 1}</span>
+        </div>
+        <div className="ai-chat-tool-card__muted" role="status">
+          {loadErr ?? "Figure unavailable"}
+        </div>
+      </figure>
+    );
+  }
+
+  return (
+    <figure className="ai-chat-tool-python__fig">
+      <div className="ai-chat-tool-python__fig-toolbar">
+        <span className="ai-chat-tool-python__fig-label">Figure {index + 1}</span>
+        <button
+          type="button"
+          className="ai-chat-tool-python__dl"
+          onClick={() => downloadBase64File(dlName, b64)}
+        >
+          Download
+        </button>
+      </div>
+      <img
+        className="ai-chat-tool-python__img"
+        alt={`Plot ${index + 1}`}
+        src={`data:${mime};base64,${b64}`}
+      />
+    </figure>
+  );
+}
+
 function PythonSandboxResultView({ payload }: { payload: Record<string, unknown> }): ReactElement {
   const success = Boolean(payload.success);
   const stdout = String(payload.stdout ?? "");
@@ -547,36 +639,11 @@ function PythonSandboxResultView({ payload }: { payload: Record<string, unknown>
       {images.map((im, i) => {
         if (!im || typeof im !== "object") return null;
         const m = im as Record<string, unknown>;
-        const mime = String(m.mime ?? "image/png");
-        const b64 = String(m.dataBase64 ?? "");
-        if (!b64) return null;
-        const ext = mime.includes("png")
-          ? "png"
-          : mime.includes("jpeg") || mime.includes("jpg")
-            ? "jpg"
-            : mime.includes("webp")
-              ? "webp"
-              : "png";
-        const dlName = `plot-${i + 1}.${ext}`;
-        return (
-          <figure key={i} className="ai-chat-tool-python__fig">
-            <div className="ai-chat-tool-python__fig-toolbar">
-              <span className="ai-chat-tool-python__fig-label">Figure {i + 1}</span>
-              <button
-                type="button"
-                className="ai-chat-tool-python__dl"
-                onClick={() => downloadBase64File(dlName, b64)}
-              >
-                Download
-              </button>
-            </div>
-            <img
-              className="ai-chat-tool-python__img"
-              alt={`Plot ${i + 1}`}
-              src={`data:${mime};base64,${b64}`}
-            />
-          </figure>
-        );
+        const hasInline = typeof m.dataBase64 === "string" && m.dataBase64.length > 0;
+        const hasArt =
+          typeof m.artifactId === "string" && (m.artifactId as string).trim().length > 0;
+        if (!hasInline && !hasArt) return null;
+        return <PythonSandboxImageFigure key={i} im={m} index={i} />;
       })}
       {cols.length > 0 && rows.length > 0 ? (
         <NestedFold summary={`DataFrame · ${rows.length} × ${cols.length}`}>
@@ -626,20 +693,31 @@ function PythonSandboxResultView({ payload }: { payload: Record<string, unknown>
               const name = String(fr.name ?? `file_${i}`);
               const sz = Number(fr.size ?? 0);
               const b64 = typeof fr.dataBase64 === "string" ? fr.dataBase64 : null;
+              const artifactId =
+                typeof fr.artifactId === "string" ? fr.artifactId.trim() : "";
               const truncated = fr.truncated === true;
+              const canDownload = (!truncated && b64 && b64.length > 0) || (!!artifactId && !truncated);
               return (
                 <li key={i}>
                   <span className="ai-chat-tool-python__fname">{name}</span>
                   <span className="ai-chat-tool-python__fmeta"> ({sz} bytes)</span>
                   {truncated ? (
                     <span className="ai-chat-tool-card__muted"> — too large to download here</span>
-                  ) : b64 ? (
+                  ) : canDownload ? (
                     <button
                       type="button"
                       className="ai-chat-tool-python__dl"
-                      onClick={() =>
-                        downloadBase64File(safePythonOutputDownloadName(name), b64)
-                      }
+                      onClick={() => {
+                        void (async () => {
+                          let data = b64;
+                          if (!data && artifactId) {
+                            data = await readArtifactBase64(artifactId);
+                          }
+                          if (data) {
+                            downloadBase64File(safePythonOutputDownloadName(name), data);
+                          }
+                        })();
+                      }}
                     >
                       Download
                     </button>

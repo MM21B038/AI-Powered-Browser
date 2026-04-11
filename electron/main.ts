@@ -45,6 +45,10 @@ import {
   externalMcpListTools,
   mcpExternalDisconnect,
 } from "./mcp/mcp-external-pool";
+import {
+  persistPythonSandboxArtifacts,
+  readPythonSandboxArtifact,
+} from "./python-sandbox-artifacts";
 import { executePythonSandbox, type PythonSandboxPayload } from "./python-sandbox";
 import { readChatStateBackup, writeChatStateBackup } from "./chat-backup-store";
 import {
@@ -462,13 +466,31 @@ ipcMain.handle(
   "python-sandbox-execute",
   async (_: IpcMainInvokeEvent, payload: PythonSandboxPayload) => {
     try {
-      return await executePythonSandbox(payload);
+      const r = await executePythonSandbox(payload);
+      if (r.ok && r.python_sandbox) {
+        return {
+          ok: true as const,
+          python_sandbox: persistPythonSandboxArtifacts(
+            r.python_sandbox,
+            app.getPath("userData"),
+          ),
+        };
+      }
+      return r;
     } catch (e) {
       return {
         ok: false,
         error: e instanceof Error ? e.message : String(e),
       };
     }
+  },
+);
+
+ipcMain.handle(
+  "python-sandbox-read-artifact",
+  async (_: IpcMainInvokeEvent, payload: { artifactId?: string }) => {
+    const id = typeof payload?.artifactId === "string" ? payload.artifactId : "";
+    return readPythonSandboxArtifact(id, app.getPath("userData"));
   },
 );
 
