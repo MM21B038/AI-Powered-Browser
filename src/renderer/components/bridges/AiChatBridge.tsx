@@ -98,6 +98,15 @@ import {
   type ChatApiErrorDisplay,
 } from "../../services/api-error-format";
 import { renderChatMarkdownToHtml } from "../../chat/chat-markdown";
+import { isHiddenIntelligentA2uiTool } from "../../chat/a2ui-tool-ux";
+import {
+  collectA2uiJsonlFromToolMessages,
+  mergeA2uiJsonlParts,
+  partitionAssistantTextForA2ui,
+  validateIntelligentA2uiSubmitJsonl,
+} from "../../../shared/a2ui-jsonl";
+import { A2UIProvider } from "@a2ui/react";
+import { A2uiChatSurface } from "../A2uiChatSurface";
 
 const debouncedSave = createDebouncedSaveV2(200);
 
@@ -603,13 +612,29 @@ type StreamSegment =
       content: string;
     }
   | { kind: "api_error"; display: ChatApiErrorDisplay }
-  | { kind: "text"; plain: string };
+  | {
+      kind: "text";
+      plain: string;
+      a2uiJsonl?: string;
+      /** Matches `A2uiChatSurface` / `A2UIRenderer` for this stream wave. */
+      a2uiSurfaceId?: string;
+    };
 
 /** Plain text for copy / footer for the in-flight stream (text + API error segments). */
 function streamSegmentsToPlainText(segments: StreamSegment[]): string {
   const parts: string[] = [];
   for (const s of segments) {
-    if (s.kind === "text" && s.plain.trim()) parts.push(s.plain.trim());
+    if (s.kind === "text") {
+      if (s.plain.trim()) {
+        parts.push(
+          s.a2uiJsonl?.trim()
+            ? [s.plain.trim(), "(A2UI surface)"].filter(Boolean).join("\n\n")
+            : s.plain.trim(),
+        );
+      } else if (s.a2uiJsonl?.trim()) {
+        parts.push("(A2UI surface)");
+      }
+    }
     if (s.kind === "api_error") {
       const { title, detail } = s.display;
       parts.push([title, detail].filter((x) => x.trim()).join("\n\n"));
@@ -657,7 +682,8 @@ function streamScrollSignature(segments: StreamSegment[]): string {
     .map((s) => {
       if (s.kind === "thinking" && s.live) return "thinkL";
       if (s.kind === "thinking") return `thinkD:${s.text.length}`;
-      if (s.kind === "text") return `txt:${s.plain.length}`;
+      if (s.kind === "text")
+        return `txt:${s.plain.length}:a2ui:${s.a2uiJsonl?.length ?? 0}`;
       if (s.kind === "api_error")
         return `api:${s.display.severity}:${s.display.title.length}:${s.display.detail.length}`;
       if (s.kind === "tool_running") return `run:${s.toolCallId}`;
@@ -688,10 +714,12 @@ function buildPersistedMessagesRobust(
     const th = r.thinking.trim();
     const vc = r.visibleContent.trim();
     if (th || vc) {
+      const part = partitionAssistantTextForA2ui(vc);
       out.push({
         id: generateMessageId(),
         role: "assistant",
-        content: vc,
+        content: part.markdown,
+        ...(part.a2uiJsonl ? { a2uiJsonl: part.a2uiJsonl } : {}),
         ...(th ? { thinking: th } : {}),
       });
     }
@@ -706,10 +734,13 @@ function buildPersistedMessagesRobust(
     consumedFromFlat++;
   }
 
-  const outText = assistantBuf.trim();
+  const fromTools = collectA2uiJsonlFromToolMessages(toolMsgs);
+  const outPart = partitionAssistantTextForA2ui(assistantBuf.trim());
+  const mergedA2ui = mergeA2uiJsonlParts(fromTools, outPart.a2uiJsonl);
+  const outText = outPart.markdown;
   const ft = finalRoundThinking.trim();
 
-  if (!outText && !ft) {
+  if (!outText && !mergedA2ui && !ft) {
     if (apiErrorPersist) {
       out.push({
         id: generateMessageId(),
@@ -740,6 +771,7 @@ function buildPersistedMessagesRobust(
     id: generateMessageId(),
     role: "assistant",
     content: outText,
+    ...(mergedA2ui ? { a2uiJsonl: mergedA2ui } : {}),
     ...(apiErrorPersist
       ? {
           apiError: {
@@ -762,6 +794,7 @@ async function runChatPipelineRound(
   onSegmentUpdate: (segments: StreamSegment[]) => void,
   toolAllowlist?: string[] | null,
   onNewThinkingRound?: () => void,
+  onStreamStart?: () => void,
   abortSignal?: AbortSignal,
 ): Promise<PipelineResult> {
   const toolMsgs: ChatMessageV2[] = [];
@@ -772,18 +805,45 @@ async function runChatPipelineRound(
   /** Concatenated thinking for fallback persistence (never dropped). */
   let thinkingBufAll = "";
   let assistantBuf = "";
+  /** Fresh id per provider `stream_start` so each model wave has a stable A2UI surface. */
+  let currentStreamA2uiSurfaceId = "";
   let segments: StreamSegment[] = [];
   let apiErrorPersist: {
     display: ChatApiErrorDisplay;
     assistantPrefix: string;
   } | null = null;
 
+  const textSegmentFromAssistantBuf = (
+    previousText?: Extract<StreamSegment, { kind: "text" }>,
+  ): Extract<StreamSegment, { kind: "text" }> => {
+    const part = partitionAssistantTextForA2ui(assistantBuf);
+    const base: Extract<StreamSegment, { kind: "text" }> = {
+      kind: "text",
+      plain: part.markdown,
+    };
+    if (part.a2uiJsonl?.trim()) {
+      base.a2uiJsonl = part.a2uiJsonl;
+      base.a2uiSurfaceId = currentStreamA2uiSurfaceId;
+    } else if (
+      previousText?.a2uiJsonl?.trim() &&
+      previousText?.a2uiSurfaceId?.trim()
+    ) {
+      /** Tool-only or earlier-segment A2UI: keep it while the model adds prose without repeating JSONL. */
+      base.a2uiJsonl = previousText.a2uiJsonl;
+      base.a2uiSurfaceId = previousText.a2uiSurfaceId;
+    }
+    return base;
+  };
+
   /** Replace trailing text segment(s) with full `assistantBuf` (used on done); keep `api_error` segments. */
   const flushAssistantBufToTextTail = () => {
+    let previousTailText: Extract<StreamSegment, { kind: "text" }> | undefined;
     while (
       segments.length > 0 &&
       segments[segments.length - 1]?.kind === "text"
     ) {
+      const t = segments[segments.length - 1];
+      if (t?.kind === "text") previousTailText = t;
       segments = segments.slice(0, -1);
     }
     const last = segments[segments.length - 1];
@@ -791,9 +851,8 @@ async function runChatPipelineRound(
       pushSegmentSnapshot(segments, onSegmentUpdate);
       return;
     }
-    const tail = assistantBuf.trim();
-    if (tail) {
-      segments = [...segments, { kind: "text", plain: tail }];
+    if (assistantBuf.trim()) {
+      segments = [...segments, textSegmentFromAssistantBuf(previousTailText)];
     }
     pushSegmentSnapshot(segments, onSegmentUpdate);
   };
@@ -802,18 +861,20 @@ async function runChatPipelineRound(
     switch (e.type) {
       case "stream_start":
         assistantBuf = "";
+        currentStreamA2uiSurfaceId = generateMessageId();
+        onStreamStart?.();
         break;
       case "assistant_delta": {
         if (!e.text) break;
         assistantBuf += e.text;
         const last = segments[segments.length - 1];
+        const seg = textSegmentFromAssistantBuf(
+          last?.kind === "text" ? last : undefined,
+        );
         if (last?.kind === "text") {
-          segments = [
-            ...segments.slice(0, -1),
-            { kind: "text", plain: last.plain + e.text },
-          ];
+          segments = [...segments.slice(0, -1), seg];
         } else {
-          segments = [...segments, { kind: "text", plain: e.text }];
+          segments = [...segments, seg];
         }
         pushSegmentSnapshot(segments, onSegmentUpdate);
         break;
@@ -878,6 +939,27 @@ async function runChatPipelineRound(
             ...segments.slice(idx + 1),
           ];
         }
+        if (e.name === "intelligent_a2ui_submit") {
+          try {
+            const parsed = JSON.parse(e.arguments || "{}") as Record<string, unknown>;
+            const jsonl = typeof parsed.jsonl === "string" ? parsed.jsonl : "";
+            const v = validateIntelligentA2uiSubmitJsonl(jsonl);
+            if (v.ok) {
+              segments = [
+                ...segments,
+                {
+                  kind: "text",
+                  plain: "",
+                  a2uiJsonl: v.normalized,
+                  a2uiSurfaceId:
+                    currentStreamA2uiSurfaceId.trim() || generateMessageId(),
+                },
+              ];
+            }
+          } catch {
+            /* ignore */
+          }
+        }
         pushSegmentSnapshot(segments, onSegmentUpdate);
         break;
       }
@@ -905,7 +987,18 @@ async function runChatPipelineRound(
         while (i > 0 && segments[i - 1]?.kind === "text") i--;
         segments = segments.slice(0, i);
         if (prior.trim()) {
-          segments = [...segments, { kind: "text", plain: prior.trim() }];
+          const part = partitionAssistantTextForA2ui(prior);
+          const seg: Extract<StreamSegment, { kind: "text" }> = {
+            kind: "text",
+            plain: part.markdown,
+            ...(part.a2uiJsonl?.trim()
+              ? {
+                  a2uiJsonl: part.a2uiJsonl,
+                  a2uiSurfaceId: currentStreamA2uiSurfaceId,
+                }
+              : {}),
+          };
+          segments = [...segments, seg];
         }
         segments = [...segments, { kind: "api_error", display }];
         pushSegmentSnapshot(segments, onSegmentUpdate);
@@ -1548,6 +1641,7 @@ function AiChatPanel(): ReactElement {
           () => {
             thinkingStartRef.current = Date.now();
           },
+          undefined,
           pipelineAc.signal,
         );
 
@@ -1642,6 +1736,7 @@ function AiChatPanel(): ReactElement {
           () => {
             thinkingStartRef.current = Date.now();
           },
+          undefined,
           pipelineAc.signal,
         );
 
@@ -3005,6 +3100,15 @@ function AiChatPanel(): ReactElement {
                 : "ai-chat-messages-column"
             }
           >
+            <A2UIProvider
+              onAction={(msg) => {
+                void window.electronAPI?.debugLog?.({
+                  source: "a2ui",
+                  message: "A2UI user action",
+                  data: msg as unknown,
+                });
+              }}
+            >
             <div
               className="ai-chat-messages-scroll"
               ref={messagesScrollRef}
@@ -3027,6 +3131,7 @@ function AiChatPanel(): ReactElement {
             if (m.role === "system") return null;
             if (m.role === "tool") {
               const toolName = m.name?.trim() || "Tool result";
+              if (isHiddenIntelligentA2uiTool(toolName)) return null;
               return (
                 <div key={m.id} className="ai-chat-msg ai-chat-msg--tool">
                   {isCalculatorToolName(toolName) ? (
@@ -3156,9 +3261,14 @@ function AiChatPanel(): ReactElement {
               );
             }
             const isWelcomeSpotlight = m.id === welcomeSpotlightMessageId;
+            const hasA2ui =
+              m.role === "assistant" &&
+              "a2uiJsonl" in m &&
+              typeof (m as { a2uiJsonl?: string }).a2uiJsonl === "string" &&
+              (m as { a2uiJsonl?: string }).a2uiJsonl!.trim().length > 0;
             const canRetryAssistant =
               !isWelcomeSpotlight &&
-              (m.content || "").trim().length > 0 &&
+              ((m.content || "").trim().length > 0 || hasA2ui) &&
               findUserIndexBeforeAssistant(active?.messages ?? [], msgIdx) >= 0;
             return (
               <div
@@ -3296,17 +3406,29 @@ function AiChatPanel(): ReactElement {
                           retryDisabled={scopeBusy || retryExitAssistantId != null}
                         />
                       </>
-                    ) : (m.content || "").trim() ? (
+                    ) : (m.content || "").trim() || hasA2ui ? (
                       <>
-                        <div
-                          className="ai-chat-bubble"
-                          dangerouslySetInnerHTML={{
-                            __html: renderAiChatMd(m.content),
-                          }}
-                        />
+                        {(m.content || "").trim() ? (
+                          <div
+                            className="ai-chat-bubble"
+                            dangerouslySetInnerHTML={{
+                              __html: renderAiChatMd(m.content),
+                            }}
+                          />
+                        ) : null}
+                        {hasA2ui ? (
+                          <A2uiChatSurface
+                            surfaceId={`a2ui-${m.id}`}
+                            jsonl={(m as { a2uiJsonl: string }).a2uiJsonl}
+                          />
+                        ) : null}
                         <AiChatMsgFooter
                           align="start"
-                          plainText={m.content}
+                          plainText={
+                            hasA2ui
+                              ? [m.content, "(A2UI surface)"].filter(Boolean).join("\n\n")
+                              : m.content
+                          }
                           onRetry={
                             canRetryAssistant
                               ? () => setRetryExitAssistantId(m.id)
@@ -3347,8 +3469,10 @@ function AiChatPanel(): ReactElement {
                         <AiChatThoughtBlock key={key} thinking={seg.text} />
                       );
                     case "tool_running":
+                      if (isHiddenIntelligentA2uiTool(seg.name)) return null;
                       return <AiChatToolRunning key={key} name={seg.name} />;
                     case "tool_done":
+                      if (isHiddenIntelligentA2uiTool(seg.name)) return null;
                       return isCalculatorToolName(seg.name) ? (
                         <AiChatCalculatorToolRow
                           key={key}
@@ -3380,14 +3504,22 @@ function AiChatPanel(): ReactElement {
                     }
                     case "text": {
                       const isLast = i === streamSegments.length - 1;
+                      const hasMd = (seg.plain || "").trim().length > 0;
+                      const a2ui = seg.a2uiJsonl?.trim();
+                      const sid = seg.a2uiSurfaceId?.trim();
                       return (
                         <Fragment key={key}>
-                          <div
-                            className="ai-chat-bubble"
-                            dangerouslySetInnerHTML={{
-                              __html: renderAiChatMd(seg.plain),
-                            }}
-                          />
+                          {hasMd ? (
+                            <div
+                              className="ai-chat-bubble"
+                              dangerouslySetInnerHTML={{
+                                __html: renderAiChatMd(seg.plain),
+                              }}
+                            />
+                          ) : null}
+                          {a2ui && sid ? (
+                            <A2uiChatSurface surfaceId={sid} jsonl={a2ui} />
+                          ) : null}
                           {isLast ? (
                             <AiChatMsgFooter
                               align="start"
@@ -3405,6 +3537,7 @@ function AiChatPanel(): ReactElement {
             </div>
           ) : null}
           </div>
+            </A2UIProvider>
         </div>
         <div
           className={`ai-chat-composer${useUnifiedComposer ? " ai-chat-composer--unified" : ""}${isBrowserAgent && !intelligentWorkspaceShell ? " ai-chat-composer--browser-elevated" : ""}`}

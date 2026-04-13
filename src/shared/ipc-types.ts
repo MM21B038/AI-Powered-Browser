@@ -192,6 +192,15 @@ export type AiChatProxyStreamHandlers = {
   onError: (message: string, httpStatus?: number) => void;
 };
 
+/** Main-process A2A inbound HTTP server (localhost). */
+export type A2aInboundIpcState = {
+  enabled: boolean;
+  port: number;
+  token: string;
+  /** Base URL when listening (e.g. http://127.0.0.1:18765). */
+  listeningUrl: string | null;
+};
+
 export interface McpBridgeState {
   enabled: boolean;
   port: number;
@@ -412,4 +421,35 @@ export interface ElectronApi {
   /** Full chat JSON backup when localStorage quota is exceeded (`userData/chat-backup/conversations-v2.json`). */
   chatStateBackupWrite: (json: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   chatStateBackupRead: () => Promise<string | null>;
+  /** A2A: localhost inbound server configuration and status. */
+  a2aInboundGetState: () => Promise<A2aInboundIpcState>;
+  a2aInboundApply: (config: {
+    enabled: boolean;
+    port: number;
+    token: string;
+  }) => Promise<
+    | { ok: true; port: number; url: string }
+    | { ok: false; error: string }
+  >;
+  /** Fetch remote agent card (main process; avoids CORS). */
+  a2aFetchAgentCard: (payload: {
+    baseUrl: string;
+    agentCardPath?: string;
+    headers?: Record<string, string>;
+  }) => Promise<{ ok: true; card: unknown } | { ok: false; error: string }>;
+  /** Send one user message to a remote A2A agent. */
+  a2aSendMessage: (payload: {
+    baseUrl: string;
+    text: string;
+    agentCardPath?: string;
+    headers?: Record<string, string>;
+  }) => Promise<{ ok: true; text: string } | { ok: false; error: string }>;
+  /** Subscribe to inbound A2A prompts (main forwards tasks from the HTTP server). */
+  a2aOnInboundRequest: (handler: (p: { id: string; prompt: string }) => void) => () => void;
+  /** Reply to an inbound A2A request (paired with `a2aOnInboundRequest`). */
+  a2aInboundReply: (
+    payload:
+      | { id: string; ok: true; text: string }
+      | { id: string; ok: false; error: string },
+  ) => void;
 }

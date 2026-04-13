@@ -254,6 +254,48 @@ export const MCP_TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
+    name: "intelligent_a2a_delegate",
+    description:
+      "Send a prompt to a remote A2A (Agent2Agent) agent. Resolves the agent card at /.well-known/agent-card.json unless agentCardPath is set. Optional headersJson for Authorization.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        baseUrl: {
+          type: "string",
+          description: "Agent root URL (e.g. https://example.com or http://127.0.0.1:4000)",
+        },
+        message: { type: "string", description: "User message to send to the remote agent" },
+        agentCardPath: {
+          type: "string",
+          description: "Optional path or full URL for the agent card",
+        },
+        headersJson: {
+          type: "string",
+          description: 'Optional JSON object of HTTP headers, e.g. {"Authorization":"Bearer token"}',
+        },
+      },
+      required: ["baseUrl", "message"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "intelligent_a2ui_submit",
+    description:
+      "**Use for in-chat interactive UI (A2UI v0.8).** When the user asks for a panel, sliders, forms, or structured UI in this chat (not browser automation), pass a `jsonl` string. Accepted forms: (1) newline-delimited JSON; (2) one pretty-printed JSON object or several `{...}` objects concatenated; (3) a JSON array of messages. Messages may use v0.8 keys (`surfaceUpdate`, `beginRendering`, …) **or** `{ \"type\": \"surfaceUpdate\", ... }` (the host normalizes). Order: surface updates first, then `beginRendering` with `root` id. For a bitmap chart image, use `intelligent_python_execute`. No executable code in `jsonl`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        jsonl: {
+          type: "string",
+          description:
+            "Newline-delimited A2UI v0.8 server-to-client JSON objects (e.g. surfaceUpdate with components, dataModelUpdate, then beginRendering with root id).",
+        },
+      },
+      required: ["jsonl"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "intelligent_skill_list",
     description:
       "List user-defined skills (SKILL.md under app user data): slug, display name, description from frontmatter, updated time. Use to see what persisted instructions exist before reading or editing.",

@@ -9,6 +9,6 @@
     "types": ["node"],
     "esModuleInterop": true
   },
-  "include": ["electron/**/*.ts", "src/shared/**/*.ts"],
+  "include": ["electron/**/*.ts", "src/shared/**/*.ts", "src/types/**/*.d.ts"],
   "exclude": ["node_modules", "dist", "**/test-*.ts"]
 }

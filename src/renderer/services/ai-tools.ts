@@ -19,6 +19,36 @@ import {
 import type { ChatScope } from "../chat/conversation-store";
 import type { ElectronApi } from "../../shared/ipc-types";
 
+/** Remote A2A agent delegation (main-process HTTP; uses configured transport). */
+export async function executeA2aDelegate(api: ElectronApi, args: unknown): Promise<string> {
+  const o = args as Record<string, unknown>;
+  const baseUrl = typeof o.baseUrl === "string" ? o.baseUrl.trim() : "";
+  const message = typeof o.message === "string" ? o.message : "";
+  if (!baseUrl) return JSON.stringify({ error: "baseUrl is required" });
+  if (!message.trim()) return JSON.stringify({ error: "message is required" });
+  const agentCardPath = typeof o.agentCardPath === "string" ? o.agentCardPath.trim() : undefined;
+  let headers: Record<string, string> | undefined;
+  if (typeof o.headersJson === "string" && o.headersJson.trim()) {
+    try {
+      const parsed = JSON.parse(o.headersJson) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return JSON.stringify({ error: "headersJson must be a JSON object" });
+      }
+      headers = parsed as Record<string, string>;
+    } catch {
+      return JSON.stringify({ error: "headersJson must be valid JSON" });
+    }
+  }
+  const r = await api.a2aSendMessage({
+    baseUrl,
+    text: message,
+    ...(agentCardPath ? { agentCardPath } : {}),
+    ...(headers ? { headers } : {}),
+  });
+  if (!r.ok) return JSON.stringify({ error: r.error });
+  return JSON.stringify({ result: r.text });
+}
+
 export type OpenAiToolDef = {
   type: "function";
   function: {

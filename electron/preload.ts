@@ -140,6 +140,20 @@ const electronApi: ElectronApi = {
   chatStateBackupWrite: (json: string) =>
     ipcRenderer.invoke("chat-state-backup-write", json) as Promise<{ ok: true } | { ok: false; error: string }>,
   chatStateBackupRead: () => ipcRenderer.invoke("chat-state-backup-read") as Promise<string | null>,
+  a2aInboundGetState: () => ipcRenderer.invoke("a2a-inbound-get-state"),
+  a2aInboundApply: (config) => ipcRenderer.invoke("a2a-inbound-apply", config),
+  a2aFetchAgentCard: (payload) => ipcRenderer.invoke("a2a-fetch-agent-card", payload),
+  a2aSendMessage: (payload) => ipcRenderer.invoke("a2a-send-message", payload),
+  a2aOnInboundRequest: (handler) => {
+    const fn = (_: Electron.IpcRendererEvent, p: { id: string; prompt: string }) => {
+      handler(p);
+    };
+    ipcRenderer.on("a2a-inbound-request", fn);
+    return () => ipcRenderer.removeListener("a2a-inbound-request", fn);
+  },
+  a2aInboundReply: (payload) => {
+    ipcRenderer.send("a2a-inbound-response", payload);
+  },
   aiChatProxyStream: (payload, handlers) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     const channel = `ai-chat-proxy:${id}`;

@@ -46,6 +46,8 @@ export type ChatMessageV2 =
       id: string;
       role: "assistant";
       content: string;
+      /** A2UI JSONL lines extracted from the model reply (rendered natively when set). */
+      a2uiJsonl?: string;
       thinking?: string;
       /** Wall-clock duration of the thinking stream, for “Thought · 2.1s” UI. */
       thinkingDurationMs?: number;

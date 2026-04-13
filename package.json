@@ -94,10 +94,17 @@
     "wait-on": "^8.0.5"
   },
   "dependencies": {
+    "@a2a-js/sdk": "^0.3.13",
+    "@a2ui/react": "^0.9.0-alpha.0",
+    "@a2ui/web_core": "0.9.1-alpha.0",
+    "@ag-ui/client": "^0.0.52",
+    "@ag-ui/core": "^0.0.52",
     "@fontsource/exo-2": "^5.2.8",
     "@fontsource/orbitron": "^5.2.8",
     "@modelcontextprotocol/sdk": "^1.28.0",
+    "@types/express": "^5.0.6",
     "dompurify": "^3.3.3",
+    "express": "^5.2.1",
     "highlight.js": "^11.11.1",
     "marked": "^17.0.5",
     "mathjs": "^15.1.1",

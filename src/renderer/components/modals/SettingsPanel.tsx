@@ -128,6 +128,12 @@ const INTELLIGENT_SETTINGS_SECTIONS: readonly {
     hint: "MCP servers and tools",
     icon: "mcp-tools",
   },
+  {
+    id: "iw-settings-a2a",
+    label: "A2A",
+    hint: "Agent-to-Agent inbound",
+    icon: "mcp-intelligent-bridge",
+  },
 ];
 
 /** Theme IDs shown first in intelligent Appearance; order matches presets. */
@@ -422,6 +428,14 @@ export function SettingsPanel({
   const [reloadingMcpServerIds, setReloadingMcpServerIds] = useState<
     Set<string>
   >(() => new Set());
+  const [a2aInbound, setA2aInbound] = useState<{
+    enabled: boolean;
+    port: number;
+    token: string;
+    listeningUrl: string | null;
+  } | null>(null);
+  const [a2aPortDraft, setA2aPortDraft] = useState("");
+  const [a2aTokenDraft, setA2aTokenDraft] = useState("");
 
   /** Scroll container for intelligent suite (`.settings-dashboard`, the element that scrolls). */
   const intelligentScrollRootRef = useRef<HTMLDivElement>(null);
@@ -518,6 +532,11 @@ export function SettingsPanel({
         setMcpBridge(s);
         setMcpPortDraft(String(s.port));
         setMcpIntelligentPortDraft(String(s.intelligentPort));
+      });
+      void api.a2aInboundGetState?.().then((s) => {
+        setA2aInbound(s);
+        setA2aPortDraft(String(s.port));
+        setA2aTokenDraft(s.token);
       });
     }
     return () => {
@@ -2213,6 +2232,113 @@ export function SettingsPanel({
                     </>
                   ) : (
                     <p className="settings-muted">Loading bridge…</p>
+                  )}
+                </div>
+              </div>
+
+              <div
+                className="settings-card settings-card--mcp settings-intelligent-section-anchor"
+                id="iw-settings-a2a"
+              >
+                <div className="settings-card-head">
+                  <div className="settings-card-title">A2A (Agent-to-Agent)</div>
+                  <div className="settings-card-sub">
+                    Inbound JSON-RPC on localhost — other A2A agents can delegate tasks into this app
+                  </div>
+                </div>
+                <div className="settings-section">
+                  {a2aInbound ? (
+                    <>
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={a2aInbound.enabled}
+                          onChange={(e) =>
+                            setA2aInbound((s) =>
+                              s ? { ...s, enabled: e.target.checked } : s,
+                            )
+                          }
+                        />
+                        <span>Enable inbound A2A server (127.0.0.1 only)</span>
+                      </label>
+                      <label className="settings-label settings-label-mt" htmlFor="a2aPortDraft">
+                        Port
+                      </label>
+                      <input
+                        id="a2aPortDraft"
+                        type="number"
+                        min={1024}
+                        max={65535}
+                        className="settings-input settings-input--mono"
+                        value={a2aPortDraft}
+                        onChange={(e) => setA2aPortDraft(e.target.value)}
+                      />
+                      <label className="settings-label settings-label-mt" htmlFor="a2aTokenDraft">
+                        Optional bearer token (required on /a2a/jsonrpc when set)
+                      </label>
+                      <input
+                        id="a2aTokenDraft"
+                        type="password"
+                        className="settings-input settings-input--mono"
+                        value={a2aTokenDraft}
+                        onChange={(e) => setA2aTokenDraft(e.target.value)}
+                        placeholder="(empty = no auth)"
+                        autoComplete="off"
+                      />
+                      <p className="settings-hint settings-hint--compact">
+                        Agent card:{" "}
+                        <code className="settings-code-inline">
+                          {(a2aInbound.listeningUrl ?? "").replace(/\/$/, "") || "—"}
+                          /.well-known/agent-card.json
+                        </code>
+                        {" · "}
+                        JSON-RPC:{" "}
+                        <code className="settings-code-inline">
+                          {(a2aInbound.listeningUrl ?? "").replace(/\/$/, "") || "—"}
+                          /a2a/jsonrpc
+                        </code>
+                      </p>
+                      <div className="import-actions" style={{ marginTop: 12 }}>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          onClick={() => {
+                            void (async () => {
+                              const api = getElectronApi();
+                              if (!api?.a2aInboundApply) return;
+                              const n = parseInt(a2aPortDraft, 10);
+                              const res = await api.a2aInboundApply({
+                                enabled: a2aInbound.enabled,
+                                port:
+                                  Number.isFinite(n) && n > 0 && n < 65536
+                                    ? n
+                                    : a2aInbound.port,
+                                token: a2aTokenDraft,
+                              });
+                              if (res.ok) {
+                                const st = await api.a2aInboundGetState();
+                                setA2aInbound(st);
+                                setA2aPortDraft(String(st.port));
+                                setA2aTokenDraft(st.token);
+                                window.legacyBrowser?.showToast?.(
+                                  `A2A: ${st.listeningUrl ?? "off"}`,
+                                  4500,
+                                );
+                              } else {
+                                window.legacyBrowser?.showToast?.(
+                                  `A2A error: ${res.error}`,
+                                  6000,
+                                );
+                              }
+                            })();
+                          }}
+                        >
+                          Apply A2A server
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="settings-muted">Loading A2A…</p>
                   )}
                 </div>
               </div>

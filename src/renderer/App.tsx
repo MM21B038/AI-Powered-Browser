@@ -12,10 +12,12 @@ import { ToastBridge } from "./components/bridges/ToastBridge";
 import { ToolsHubBridge } from "./components/bridges/ToolsHubBridge";
 import { WebviewShellBridge } from "./components/bridges/WebviewShellBridge";
 import { BrowserSettingsSideBridge } from "./components/bridges/BrowserSettingsSideBridge";
+import { A2aInboundBridge } from "./components/bridges/A2aInboundBridge";
 
 export default function App(): ReactElement {
   return (
     <>
+      <A2aInboundBridge />
       <WebviewShellBridge />
       <BrowserSettingsSideBridge />
       <TabsBridge />

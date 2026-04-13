@@ -24,6 +24,7 @@ import {
 } from "../state/session-settings-store";
 import {
   buildToolDispatchMap,
+  executeA2aDelegate,
   executeButcherTool,
   executeExternalTool,
   filterButcherTools,
@@ -43,6 +44,25 @@ import {
 import type { ElectronApi } from "../../shared/ipc-types";
 import { formatChatApiErrorMessage } from "./api-error-format";
 import { systemPromptForWorkspace } from "./ai-system-prompts";
+import {
+  type AgUiEventRecord,
+  chatStreamEventToAgUiEvents,
+  createAgUiRunContext,
+} from "./ag-ui-bridge";
+import { validateIntelligentA2uiSubmitJsonl } from "../../shared/a2ui-jsonl";
+
+function runIntelligentA2uiSubmit(args: unknown): string {
+  const o = args as Record<string, unknown>;
+  const jsonl = typeof o.jsonl === "string" ? o.jsonl : "";
+  const v = validateIntelligentA2uiSubmitJsonl(jsonl);
+  if (!v.ok) return JSON.stringify({ ok: false, error: v.error });
+  return JSON.stringify({
+    ok: true,
+    lineCount: v.normalized.split("\n").length,
+    message:
+      "A2UI JSONL accepted; the host merges it into the chat surface. Continue with markdown if needed.",
+  });
+}
 
 /** Default max Chat Completions rounds (each may include tool calls). Bounded to avoid runaway loops. */
 export const DEFAULT_MAX_TOOL_ROUNDS = 32;
@@ -621,6 +641,8 @@ export async function runAiChatPipeline(opts: {
   toolAllowlist?: string[] | null;
   /** When aborted, streaming stops and `done` is emitted (partial assistant text may be kept). */
   abortSignal?: AbortSignal;
+  /** Optional: AG-UI-shaped events mirroring the same stream (for debugging / future UI). */
+  onAgUiEvent?: (e: AgUiEventRecord) => void;
 }): Promise<void> {
   const maxRounds = opts.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
   const modelId = selectedModelIdForChatScope(opts.settings, opts.scope).trim();
@@ -656,7 +678,12 @@ export async function runAiChatPipeline(opts: {
   }
 
   await runOpenAiCompatible(
-    { ...opts, api: opts.api, settings: opts.settings },
+    {
+      ...opts,
+      api: opts.api,
+      settings: opts.settings,
+      onAgUiEvent: opts.onAgUiEvent,
+    },
     modelId,
     baseUrl,
     apiKey,
@@ -767,6 +794,7 @@ async function runOpenAiCompatible(
     api: ElectronApi;
     settings: IntelligentSettingsState;
     abortSignal?: AbortSignal;
+    onAgUiEvent?: (e: AgUiEventRecord) => void;
   },
   modelId: string,
   baseUrl: string,
@@ -805,11 +833,24 @@ async function runOpenAiCompatible(
   let toolsOmittedForSession = false;
 
   let rounds = 0;
+  const agCtxRef = { current: createAgUiRunContext() };
+  const emitStream = (e: ChatStreamEvent) => {
+    if (e.type === "stream_start") {
+      agCtxRef.current = createAgUiRunContext();
+    }
+    const ag = opts.onAgUiEvent;
+    if (ag) {
+      for (const g of chatStreamEventToAgUiEvents(e, agCtxRef.current)) {
+        ag(g);
+      }
+    }
+    opts.onEvent(e);
+  };
   while (rounds < maxRounds) {
     rounds++;
 
     if (opts.abortSignal?.aborted) {
-      opts.onEvent({ type: "done" });
+      emitStream({ type: "done" });
       return;
     }
 
@@ -819,7 +860,7 @@ async function runOpenAiCompatible(
     let toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
 
     streamAttempt: while (true) {
-      opts.onEvent({ type: "stream_start" });
+      emitStream({ type: "stream_start" });
       let buffer = "";
       fullAssistant = "";
       toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
@@ -827,9 +868,9 @@ async function runOpenAiCompatible(
       const { feed: feedAssistantContent, flush: flushAssistantThinkBuffer } = createThinkTagSplitter(
         (text) => {
           fullAssistant += text;
-          opts.onEvent({ type: "assistant_delta", text });
+          emitStream({ type: "assistant_delta", text });
         },
-        (t) => opts.onEvent({ type: "thinking", text: t }),
+        (t) => emitStream({ type: "thinking", text: t }),
       );
 
       const processSseLine = (lineRaw: string) => {
@@ -856,7 +897,7 @@ async function runOpenAiCompatible(
             // Emit reasoning before visible content when both appear in one delta, so the UI
             // keeps thinking above the answer (matches provider intent and legacy layout).
             const thinkingPart = extractThinkingDelta(d);
-            if (thinkingPart) opts.onEvent({ type: "thinking", text: thinkingPart });
+            if (thinkingPart) emitStream({ type: "thinking", text: thinkingPart });
             const visible = extractVisibleDeltaText(d as Record<string, unknown>);
             if (visible.length) {
               feedAssistantContent(visible);
@@ -957,28 +998,28 @@ async function runOpenAiCompatible(
           if (outcome === "aborted") {
             feedSseChunk("\n");
             flushAssistantThinkBuffer();
-            opts.onEvent({ type: "done" });
+            emitStream({ type: "done" });
             return;
           }
           if (outcome === "retry") continue streamAttempt;
         } catch (e) {
           const raw = e instanceof Error ? e.message : String(e);
-          opts.onEvent({
+          emitStream({
             type: "error",
             message: formatChatApiErrorMessage(raw, proxyHttpStatus),
             ...(proxyHttpStatus != null ? { httpStatus: proxyHttpStatus } : {}),
           });
-          opts.onEvent({ type: "done" });
+          emitStream({ type: "done" });
           return;
         }
       } else {
         if (tlsCaPem) {
-          opts.onEvent({
+          emitStream({
             type: "error",
             message:
               "Custom TLS CA requires the desktop app (chat is proxied through the main process). Cannot use renderer fetch with a private CA.",
           });
-          opts.onEvent({ type: "done" });
+          emitStream({ type: "done" });
           return;
         }
         try {
@@ -995,19 +1036,19 @@ async function runOpenAiCompatible(
               toolsOmittedForSession = true;
               continue streamAttempt;
             }
-            opts.onEvent({
+            emitStream({
               type: "error",
               message: formatChatApiErrorMessage(t || "", res.status),
               httpStatus: res.status,
             });
-            opts.onEvent({ type: "done" });
+            emitStream({ type: "done" });
             return;
           }
 
           const reader = res.body?.getReader();
           if (!reader) {
-            opts.onEvent({ type: "error", message: "No response stream" });
-            opts.onEvent({ type: "done" });
+            emitStream({ type: "error", message: "No response stream" });
+            emitStream({ type: "done" });
             return;
           }
 
@@ -1022,26 +1063,26 @@ async function runOpenAiCompatible(
             if (e instanceof DOMException && e.name === "AbortError") {
               feedSseChunk("\n");
               flushAssistantThinkBuffer();
-              opts.onEvent({ type: "done" });
+              emitStream({ type: "done" });
               return;
             }
             const raw =
               e instanceof Error ? e.message : `Stream read failed: ${String(e)}`;
-            opts.onEvent({ type: "error", message: formatChatApiErrorMessage(raw) });
-            opts.onEvent({ type: "done" });
+            emitStream({ type: "error", message: formatChatApiErrorMessage(raw) });
+            emitStream({ type: "done" });
             return;
           }
         } catch (e) {
           if (e instanceof DOMException && e.name === "AbortError") {
             feedSseChunk("\n");
             flushAssistantThinkBuffer();
-            opts.onEvent({ type: "done" });
+            emitStream({ type: "done" });
             return;
           }
           const raw =
             e instanceof Error ? e.message : `Request failed: ${String(e)}`;
-          opts.onEvent({ type: "error", message: formatChatApiErrorMessage(raw) });
-          opts.onEvent({ type: "done" });
+          emitStream({ type: "error", message: formatChatApiErrorMessage(raw) });
+          emitStream({ type: "done" });
           return;
         }
       }
@@ -1058,16 +1099,16 @@ async function runOpenAiCompatible(
 
     if (toolCalls.length) {
       if (opts.abortSignal?.aborted) {
-        opts.onEvent({ type: "done" });
+        emitStream({ type: "done" });
         return;
       }
       const valid = toolCalls.filter((t) => (t.name || "").trim().length > 0);
       if (valid.length === 0) {
-        opts.onEvent({
+        emitStream({
           type: "error",
           message: "Model returned tool calls without function names; cannot run tools.",
         });
-        opts.onEvent({ type: "done" });
+        emitStream({ type: "done" });
         return;
       }
       oaMessages.push({
@@ -1082,11 +1123,11 @@ async function runOpenAiCompatible(
 
       for (const tc of valid) {
         if (opts.abortSignal?.aborted) {
-          opts.onEvent({ type: "done" });
+          emitStream({ type: "done" });
           return;
         }
         const apiToolName = nonEmptyToolName(tc.name);
-        opts.onEvent({ type: "tool_start", name: apiToolName, toolCallId: tc.id });
+        emitStream({ type: "tool_start", name: apiToolName, toolCallId: tc.id });
         let args: unknown = {};
         try {
           args = JSON.parse(tc.arguments || "{}");
@@ -1098,17 +1139,23 @@ async function runOpenAiCompatible(
         try {
           if (!ref) throw new Error("Unknown tool");
           if (ref.kind === "butcher") {
-            resultText = await executeButcherTool(ref.name, args, runAutomationSafe, {
-              pythonInputFiles:
-                pythonInputFilesFromChat.length > 0 ? pythonInputFilesFromChat : undefined,
-            });
+            if (ref.name === "intelligent_a2a_delegate") {
+              resultText = await executeA2aDelegate(opts.api, args);
+            } else if (ref.name === "intelligent_a2ui_submit") {
+              resultText = runIntelligentA2uiSubmit(args);
+            } else {
+              resultText = await executeButcherTool(ref.name, args, runAutomationSafe, {
+                pythonInputFiles:
+                  pythonInputFilesFromChat.length > 0 ? pythonInputFilesFromChat : undefined,
+              });
+            }
           } else {
             resultText = await executeExternalTool(opts.api, ref.server, ref.toolName, args);
           }
         } catch (e) {
           resultText = JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
         }
-        opts.onEvent({
+        emitStream({
           type: "tool_end",
           name: apiToolName,
           toolCallId: tc.id,
@@ -1123,9 +1170,9 @@ async function runOpenAiCompatible(
           content: resultText,
         });
       }
-      opts.onEvent({ type: "round_end" });
+      emitStream({ type: "round_end" });
       if (rounds >= maxRounds) {
-        opts.onEvent({
+        emitStream({
           type: "error",
           message: `Maximum agent tool rounds (${maxRounds}) reached for this reply. Continue in a new message or simplify the task.`,
         });
@@ -1139,7 +1186,7 @@ async function runOpenAiCompatible(
     break;
   }
 
-  opts.onEvent({ type: "done" });
+  emitStream({ type: "done" });
 }
 
 export function appendUserMessage(

@@ -68,6 +68,16 @@ import {
   cancelAiChatProxyByChannel,
   proxyOpenAiChatCompletionsStream,
 } from "./ai-chat-proxy";
+import {
+  a2aFetchAgentCardMain,
+  a2aSendMessageMain,
+  applyA2aInboundConfig,
+  getA2aInboundConfig,
+  getA2aInboundIpcStatePayload,
+  loadA2aInboundConfigFromDisk,
+  resolveA2aInboundRequest,
+  stopA2aInboundServer,
+} from "./a2a/a2a-service";
 import { testGoogleHiMain, testOpenAiHiMain } from "./ai-test-hi";
 import {
   normalizeAppThemeId,
@@ -305,6 +315,12 @@ app.whenReady().then(async () => {
     appendStartupTrace(`[main] network capture disabled ${String(e)}`);
   }
   createWindow();
+  loadA2aInboundConfigFromDisk();
+  void applyA2aInboundConfig(() => mainWindow, getA2aInboundConfig()).then((r) => {
+    if (!r.ok) {
+      traceMain("a2a inbound server failed to start", { error: r.error });
+    }
+  });
   mcpBridgeConfig = loadMcpBridgeConfig(app.getPath("userData"));
   applyMcpBridgeFromConfig();
   app.on("activate", () => {
@@ -338,6 +354,7 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   flushRendererDomStorage();
   stopAllMcpBridges();
+  void stopA2aInboundServer();
 });
 
 function getStdioServerPath(): string {
@@ -1263,3 +1280,85 @@ ipcMain.handle("ai-chat-proxy-abort", (_event: IpcMainInvokeEvent, channel: stri
     cancelAiChatProxyByChannel(channel);
   }
 });
+
+ipcMain.handle("a2a-inbound-get-state", () => getA2aInboundIpcStatePayload());
+
+ipcMain.handle(
+  "a2a-inbound-apply",
+  async (
+    _: IpcMainInvokeEvent,
+    cfg: { enabled?: boolean; port?: number; token?: string },
+  ) => {
+    return applyA2aInboundConfig(() => mainWindow, {
+      enabled: Boolean(cfg?.enabled),
+      port:
+        typeof cfg?.port === "number" && cfg.port > 0 && cfg.port < 65536
+          ? Math.floor(cfg.port)
+          : 18765,
+      token: typeof cfg?.token === "string" ? cfg.token : "",
+    });
+  },
+);
+
+ipcMain.handle(
+  "a2a-fetch-agent-card",
+  async (
+    _: IpcMainInvokeEvent,
+    payload: { baseUrl?: string; agentCardPath?: string; headers?: Record<string, string> },
+  ) => {
+    const baseUrl = String(payload?.baseUrl ?? "").trim();
+    if (!baseUrl) return { ok: false as const, error: "baseUrl required" };
+    return a2aFetchAgentCardMain(
+      baseUrl,
+      typeof payload.agentCardPath === "string" ? payload.agentCardPath : undefined,
+      payload.headers,
+    );
+  },
+);
+
+ipcMain.handle(
+  "a2a-send-message",
+  async (
+    _: IpcMainInvokeEvent,
+    payload: {
+      baseUrl?: string;
+      text?: string;
+      agentCardPath?: string;
+      headers?: Record<string, string>;
+    },
+  ) => {
+    const baseUrl = String(payload?.baseUrl ?? "").trim();
+    const text = String(payload?.text ?? "");
+    if (!baseUrl) return { ok: false as const, error: "baseUrl required" };
+    if (!text.trim()) return { ok: false as const, error: "text required" };
+    return a2aSendMessageMain({
+      baseUrl,
+      text,
+      agentCardPath:
+        typeof payload.agentCardPath === "string" ? payload.agentCardPath : undefined,
+      headers: payload.headers,
+    });
+  },
+);
+
+ipcMain.on(
+  "a2a-inbound-response",
+  (
+    _e,
+    payload: { id?: string; ok?: boolean; text?: string; error?: string },
+  ) => {
+    const id = typeof payload?.id === "string" ? payload.id : "";
+    if (!id) return;
+    if (payload.ok) {
+      resolveA2aInboundRequest(id, {
+        ok: true,
+        text: typeof payload.text === "string" ? payload.text : "",
+      });
+    } else {
+      resolveA2aInboundRequest(id, {
+        ok: false,
+        error: typeof payload.error === "string" ? payload.error : "Unknown error",
+      });
+    }
+  },
+);
