@@ -48,6 +48,8 @@ export type ChatMessageV2 =
       content: string;
       /** A2UI JSONL lines extracted from the model reply (rendered natively when set). */
       a2uiJsonl?: string;
+      /** A2UI v0.9 JSONL lines extracted from the model reply (preferred when set). */
+      a2uiV09Jsonl?: string;
       thinking?: string;
       /** Wall-clock duration of the thinking stream, for “Thought · 2.1s” UI. */
       thinkingDurationMs?: number;

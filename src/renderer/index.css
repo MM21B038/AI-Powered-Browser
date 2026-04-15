@@ -13,4 +13,6 @@
 @import "./styles/style-chat-code-syntax.css";
 @import "./styles/style-screenshot-library.css";
 @import "./styles/style-ai-chat-tool-mentions.css";
+@import "./styles/style-a2ui-chat-surface.css";
+@import "./styles/style-a2ui-host-tokens.css";
 @import "./styles/style-calculator-widget.css";

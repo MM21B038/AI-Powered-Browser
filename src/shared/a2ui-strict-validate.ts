@@ -35,3 +35,43 @@ export function validateA2uiJsonlLinesStrict(
   }
   return { ok: true, messages };
 }
+
+/**
+ * Validates NDJSON **line-by-line** and returns the longest **valid prefix** of messages.
+ * - **Incomplete tail:** last line is not yet valid JSON (streaming) — `incompleteTail` is true; `messages` are all complete lines before it.
+ * - **Hard error:** JSON parse fails on a non-last line, or schema fails on any line — `hardError` is set; `messages` are the valid prefix **before** the bad line (may be empty).
+ */
+export function validateA2uiJsonlStrictPrefix(jsonl: string): {
+  messages: A2uiValidatedMessage[];
+  incompleteTail: boolean;
+  hardError: string | null;
+} {
+  const lines = jsonl.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+  const messages: A2uiValidatedMessage[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const lineNo = i + 1;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(lines[i]!);
+    } catch (e) {
+      if (i === lines.length - 1) {
+        return { messages, incompleteTail: true, hardError: null };
+      }
+      return {
+        messages,
+        incompleteTail: false,
+        hardError: formatParseError(lineNo, e),
+      };
+    }
+    try {
+      messages.push(A2uiMessageSchema.parse(raw));
+    } catch (e) {
+      return {
+        messages,
+        incompleteTail: false,
+        hardError: formatParseError(lineNo, e),
+      };
+    }
+  }
+  return { messages, incompleteTail: false, hardError: null };
+}

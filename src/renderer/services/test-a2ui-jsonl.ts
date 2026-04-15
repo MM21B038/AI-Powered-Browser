@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { validateA2uiJsonlLinesStrict } from "../../shared/a2ui-strict-validate";
 import {
+  assistantChatMarkdownWithoutA2ui,
   coerceLlmShortcutsInA2uiJsonl,
-  collectA2uiJsonlFromToolMessages,
   ensureBeginRenderingForJsonl,
+  explainA2uiMissingComponentTree,
   mergeA2uiJsonlParts,
+  normalizeIntelligentA2uiSubmitJsonlInput,
   normalizeAlternateA2uiShape,
   orderA2uiJsonlServerMessages,
+  isLikelyIncompleteStreamingA2uiJsonl,
   partitionAssistantTextForA2ui,
   pickRenderingRootFromComponents,
   repairSurfaceUpdateLayout,
@@ -18,6 +21,32 @@ import {
 const textComp = (id: string, text: string) => ({
   id,
   component: { Text: { text: { literalString: text } } },
+});
+
+describe("isLikelyIncompleteStreamingA2uiJsonl", () => {
+  it("is true when the last line is not yet valid JSON", () => {
+    expect(isLikelyIncompleteStreamingA2uiJsonl('{"a":1}\n{"b":')).toBe(true);
+  });
+
+  it("is false when every line parses", () => {
+    expect(
+      isLikelyIncompleteStreamingA2uiJsonl(
+        '{"surfaceUpdate":{"surfaceId":"x","components":[]}}\n{"beginRendering":{"surfaceId":"x","root":"r"}}',
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("assistantChatMarkdownWithoutA2ui", () => {
+  it("matches partition markdown (no duplicate JSON in chat bubble)", () => {
+    const line = JSON.stringify({
+      surfaceUpdate: { surfaceId: "x", components: [] },
+    });
+    const full = `Here you go\n\n\`\`\`jsonl\n${line}\n\`\`\`\n`;
+    const part = partitionAssistantTextForA2ui(full);
+    expect(part.a2uiJsonl).toBeDefined();
+    expect(assistantChatMarkdownWithoutA2ui(full)).toBe(part.markdown);
+  });
 });
 
 describe("partitionAssistantTextForA2ui", () => {
@@ -74,6 +103,72 @@ describe("partitionAssistantTextForA2ui", () => {
     );
     expect(r.markdown).toContain("Text between.");
   });
+
+  it("preserves fenced blocks that are not A2UI (e.g. HTML/CSS)", () => {
+    const fence = "```html\n<div>hi</div>\n```";
+    const r = partitionAssistantTextForA2ui(`Intro\n\n${fence}\n\nOutro`);
+    expect(r.markdown).toContain("```html");
+    expect(r.markdown).toContain("<div>hi</div>");
+    expect(r.markdown).toContain("Outro");
+    expect(r.a2uiJsonl).toBeUndefined();
+  });
+
+  it("preserves a standalone HTML fence when it is the whole message", () => {
+    const r = partitionAssistantTextForA2ui("```css\n.box { color: red; }\n```");
+    expect(r.markdown).toContain("```css");
+    expect(r.markdown).toContain(".box");
+    expect(r.a2uiJsonl).toBeUndefined();
+  });
+
+  it("extracts NDJSON from an unclosed trailing ```json fence (streaming)", () => {
+    const line = JSON.stringify({
+      surfaceUpdate: { surfaceId: "s", components: [] },
+    });
+    const partial = `Here is UI:\n\n\`\`\`json\n${line}`;
+    const r = partitionAssistantTextForA2ui(partial);
+    expect(r.markdown.trim()).toBe("Here is UI:");
+    expect(r.a2uiJsonl).toContain("surfaceUpdate");
+  });
+
+  it("uses the last open ```jsonl fence when multiple json fences exist", () => {
+    const a = JSON.stringify({
+      surfaceUpdate: { surfaceId: "x", components: [textComp("root", "x")] },
+    });
+    const b = JSON.stringify({
+      beginRendering: { surfaceId: "x", root: "root" },
+    });
+    const full = `intro\n\n\`\`\`json\n${a}\n\`\`\`\n\nmore\n\n\`\`\`jsonl\n${b}`;
+    const r = partitionAssistantTextForA2ui(full);
+    expect(r.markdown).toContain("more");
+    expect(r.a2uiJsonl).toContain("surfaceUpdate");
+    expect(r.a2uiJsonl).toContain("beginRendering");
+  });
+});
+
+describe("explainA2uiMissingComponentTree", () => {
+  it("detects missing beginRendering", () => {
+    const msg = {
+      surfaceUpdate: {
+        surfaceId: "main",
+        components: [textComp("a", "x")],
+      },
+    };
+    expect(explainA2uiMissingComponentTree([msg])).toContain("beginRendering");
+  });
+
+  it("detects root id mismatch", () => {
+    const messages = [
+      {
+        surfaceUpdate: {
+          surfaceId: "main",
+          components: [textComp("onlyId", "x")],
+        },
+      },
+      { beginRendering: { surfaceId: "main", root: "wrong" } },
+    ];
+    expect(explainA2uiMissingComponentTree(messages)).toContain("wrong");
+    expect(explainA2uiMissingComponentTree(messages)).toContain("onlyId");
+  });
 });
 
 describe("validateA2uiJsonlLinesStrict", () => {
@@ -116,7 +211,53 @@ describe("validateA2uiJsonlLinesStrict", () => {
   });
 });
 
+describe("normalizeIntelligentA2uiSubmitJsonlInput", () => {
+  it("joins an array of JSON strings into NDJSON", () => {
+    const a = JSON.stringify({ surfaceUpdate: { surfaceId: "x", components: [textComp("root", "a")] } });
+    const b = JSON.stringify({ beginRendering: { surfaceId: "x", root: "root" } });
+    const s = normalizeIntelligentA2uiSubmitJsonlInput([a, b]);
+    expect(s.split("\n")).toHaveLength(2);
+    const v = validateIntelligentA2uiSubmitJsonl(s);
+    expect(v.ok).toBe(true);
+  });
+
+  it("serializes an array of objects into NDJSON", () => {
+    const s = normalizeIntelligentA2uiSubmitJsonlInput([
+      { surfaceUpdate: { surfaceId: "y", components: [textComp("root", "b")] } },
+      { beginRendering: { surfaceId: "y", root: "root" } },
+    ]);
+    const v = validateIntelligentA2uiSubmitJsonl(s);
+    expect(v.ok).toBe(true);
+  });
+
+  it("turns literal \\\\n between objects into a real newline", () => {
+    const su = JSON.stringify({
+      surfaceUpdate: { surfaceId: "lit", components: [textComp("root", "u")] },
+    });
+    const br = JSON.stringify({
+      beginRendering: { surfaceId: "lit", root: "root" },
+    });
+    const s = normalizeIntelligentA2uiSubmitJsonlInput(`${su}\\n${br}`);
+    expect(s.includes("\n")).toBe(true);
+    const v = validateIntelligentA2uiSubmitJsonl(s);
+    expect(v.ok).toBe(true);
+  });
+});
+
 describe("validateIntelligentA2uiSubmitJsonl", () => {
+  it("reports line number when compact NDJSON has a syntax error on line 1", () => {
+    const line1 = '{"surfaceUpdate":{"surfaceId":"main","components":[]}}}}'; // extra }
+    const line2 = JSON.stringify({
+      beginRendering: { surfaceId: "main", root: "root" },
+    });
+    const v = validateIntelligentA2uiSubmitJsonl(`${line1}\n${line2}`);
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      expect(v.error).toContain("Line 1");
+      expect(v.error).not.toBe("Invalid JSON in multi-object payload.");
+    }
+  });
+
   it("accepts alternate type-keyed messages on one line each", () => {
     const jsonl = [
       JSON.stringify({
@@ -176,29 +317,164 @@ describe("validateIntelligentA2uiSubmitJsonl", () => {
     if (v.ok) expect(v.normalized.split("\n")).toHaveLength(2);
   });
 
+  it("accepts two root objects glued on one line inside multi-line NDJSON", () => {
+    const su = JSON.stringify({
+      surfaceUpdate: { surfaceId: "glue2", components: [textComp("root", "u")] },
+    });
+    const br = JSON.stringify({
+      beginRendering: { surfaceId: "glue2", root: "root" },
+    });
+    const del = JSON.stringify({ deleteSurface: { surfaceId: "glue2" } });
+    const jsonl = `${su}${br}\n${del}`;
+    const v = validateIntelligentA2uiSubmitJsonl(jsonl);
+    expect(v.ok).toBe(true);
+  });
+
+  it("parses dataModelUpdate.contents entries that are JSON strings", () => {
+    const su = JSON.stringify({
+      surfaceUpdate: { surfaceId: "dm", components: [textComp("root", "u")] },
+    });
+    const dm = JSON.stringify({
+      dataModelUpdate: {
+        surfaceId: "dm",
+        path: "/",
+        contents: [JSON.stringify({ key: "k", valueString: "v" })],
+      },
+    });
+    const br = JSON.stringify({
+      beginRendering: { surfaceId: "dm", root: "root" },
+    });
+    const v = validateIntelligentA2uiSubmitJsonl([su, dm, br].join("\n"));
+    expect(v.ok).toBe(true);
+  });
+
   it("rejects invalid lines", () => {
     const v = validateIntelligentA2uiSubmitJsonl("{ not json");
     expect(v.ok).toBe(false);
   });
-});
 
-describe("collectA2uiJsonlFromToolMessages", () => {
-  it("collects jsonl from intelligent_a2ui_submit tool messages", () => {
-    const line = JSON.stringify({
+  it("coerces Checkbox valueBoolean mistakes into schema value.literalBoolean", () => {
+    const surfaceUpdate = {
       surfaceUpdate: {
-        surfaceId: "s",
-        components: [textComp("t", "ok")],
+        surfaceId: "todo",
+        components: [
+          {
+            id: "root",
+            component: {
+              Column: {
+                children: { explicitList: ["c1"] },
+                distribution: "start",
+                alignment: "stretch",
+              },
+            },
+          },
+          {
+            id: "c1",
+            component: {
+              Checkbox: {
+                label: { literalString: "" },
+                valueBoolean: { literalString: "false" },
+              },
+            },
+          },
+        ],
       },
+    };
+    const br = { beginRendering: { surfaceId: "todo", root: "root" } };
+    const v = validateIntelligentA2uiSubmitJsonl(
+      `${JSON.stringify(surfaceUpdate)}\n${JSON.stringify(br)}`,
+    );
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.normalized).toContain('"literalBoolean":false');
+      expect(v.normalized.includes("valueBoolean")).toBe(false);
+    }
+  });
+
+  it("repairs an extra } before ,{\"id\":… between surfaceUpdate components (common LLM typo)", () => {
+    const validMsg = {
+      surfaceUpdate: {
+        surfaceId: "m",
+        components: [
+          {
+            id: "r",
+            component: {
+              Column: {
+                children: { explicitList: ["a"] },
+                distribution: "start",
+                alignment: "stretch",
+              },
+            },
+          },
+          {
+            id: "a",
+            component: {
+              Text: { text: { literalString: "x" }, usageHint: "body" },
+            },
+          },
+        ],
+      },
+    };
+    const good = JSON.stringify(validMsg);
+    const breakAt = good.indexOf(',{"id":"a"');
+    expect(breakAt).toBeGreaterThan(0);
+    const bad = `${good.slice(0, breakAt)}}${good.slice(breakAt)}`;
+    expect(() => JSON.parse(bad)).toThrow();
+    const v = validateIntelligentA2uiSubmitJsonl(
+      `${bad}\n${JSON.stringify({ beginRendering: { surfaceId: "m", root: "r" } })}`,
+    );
+    expect(v.ok).toBe(true);
+  });
+
+  it("splits surfaceUpdate+beginRendering in one JSON object and coerces common LLM shortcut shapes", () => {
+    const one = JSON.stringify({
+      surfaceUpdate: {
+        surfaceId: "todoSurface",
+        components: [
+          {
+            id: "root",
+            component: {
+              Column: {
+                children: { explicitList: ["tf1", "b1"] },
+                distribution: "start",
+                alignment: "stretch",
+              },
+            },
+          },
+          {
+            id: "tf1",
+            component: {
+              TextField: {
+                label: { literalString: "Task" },
+                textFieldType: { literalString: "shortText" },
+              },
+            },
+          },
+          {
+            id: "b1",
+            component: {
+              Button: {
+                primary: true,
+                label: { literalString: "Go" },
+                action: {
+                  name: { literalString: "go" },
+                  context: { taskId: { literalString: "t1" } },
+                },
+              },
+            },
+          },
+        ],
+      },
+      beginRendering: { surfaceId: "todoSurface", root: "root" },
     });
-    const merged = collectA2uiJsonlFromToolMessages([
-      {
-        role: "tool",
-        name: "intelligent_a2ui_submit",
-        arguments: JSON.stringify({ jsonl: line }),
-      },
-    ]);
-    expect(merged).toBeDefined();
-    expect(merged!).toContain("surfaceUpdate");
+    const v = validateIntelligentA2uiSubmitJsonl(one);
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.normalized.split("\n").length).toBe(2);
+      expect(v.normalized).toContain('"textFieldType":"shortText"');
+      expect(v.normalized).toContain('"name":"go"');
+      expect(v.normalized).toContain('"key":"taskId"');
+    }
   });
 });
 
@@ -446,6 +722,165 @@ describe("coerceLlmShortcutsInA2uiJsonl", () => {
     expect(img.url.literalString).toBe("https://x.test/i.png");
     const synthetic = comps.find((c) => c.id === btn.child);
     expect(synthetic?.component).toBeDefined();
+  });
+
+  it("coerces Text.usageHint aliases and drops unknown hints", () => {
+    const line = JSON.stringify({
+      surfaceUpdate: {
+        surfaceId: "s",
+        components: [
+          {
+            id: "t1",
+            component: {
+              Text: { text: { literalString: "A" }, usageHint: "title" },
+            },
+          },
+          {
+            id: "t2",
+            component: {
+              Text: { text: { literalString: "B" }, usageHint: "button" },
+            },
+          },
+          {
+            id: "t3",
+            component: {
+              Text: { text: { literalString: "C" }, usageHint: "notARealUsage" },
+            },
+          },
+        ],
+      },
+    });
+    const out = coerceLlmShortcutsInA2uiJsonl(line);
+    const obj = JSON.parse(out) as {
+      surfaceUpdate: {
+        components: Array<{ id: string; component: { Text: { usageHint?: string } } }>;
+      };
+    };
+    const c = obj.surfaceUpdate.components;
+    expect(c[0]!.component.Text.usageHint).toBe("h3");
+    expect(c[1]!.component.Text.usageHint).toBe("body");
+    expect(c[2]!.component.Text.usageHint).toBeUndefined();
+    expect(validateA2uiJsonlLinesStrict(out).ok).toBe(true);
+  });
+
+  it("coerces Row children.template.dataBinding from { path } to string", () => {
+    const line = JSON.stringify({
+      surfaceUpdate: {
+        surfaceId: "s",
+        components: [
+          {
+            id: "r1",
+            component: {
+              Row: {
+                children: {
+                  template: {
+                    componentId: "cell",
+                    dataBinding: { path: "/rows" },
+                  },
+                },
+              },
+            },
+          },
+          {
+            id: "cell",
+            component: {
+              Text: { text: { literalString: "item" } },
+            },
+          },
+        ],
+      },
+    });
+    const out = coerceLlmShortcutsInA2uiJsonl(line);
+    const obj = JSON.parse(out) as {
+      surfaceUpdate: {
+        components: Array<{
+          component: {
+            Row: { children: { template: { dataBinding: string } } };
+          };
+        }>;
+      };
+    };
+    expect(obj.surfaceUpdate.components[0]!.component.Row.children.template.dataBinding).toBe(
+      "/rows",
+    );
+    expect(validateA2uiJsonlLinesStrict(out).ok).toBe(true);
+  });
+
+  it("coerces Card.content / Card.childId into Card.child", () => {
+    const line = JSON.stringify({
+      surfaceUpdate: {
+        surfaceId: "s",
+        components: [
+          {
+            id: "c1",
+            component: {
+              Card: { content: "inner1" },
+            },
+          },
+          {
+            id: "c2",
+            component: {
+              Card: { childId: "inner2" },
+            },
+          },
+          {
+            id: "inner1",
+            component: { Text: { text: { literalString: "A" }, usageHint: "body" } },
+          },
+          {
+            id: "inner2",
+            component: { Text: { text: { literalString: "B" }, usageHint: "body" } },
+          },
+        ],
+      },
+    });
+    const out = coerceLlmShortcutsInA2uiJsonl(line);
+    const obj = JSON.parse(out) as {
+      surfaceUpdate: {
+        components: Array<{ id: string; component: { Card?: { child: string } } }>;
+      };
+    };
+    const byId = new Map(obj.surfaceUpdate.components.map((x) => [x.id, x]));
+    expect(byId.get("c1")!.component.Card!.child).toBe("inner1");
+    expect(byId.get("c2")!.component.Card!.child).toBe("inner2");
+    expect(validateA2uiJsonlLinesStrict(out).ok).toBe(true);
+  });
+});
+
+describe("dataModelUpdate valueMap wire shape (v0.8)", () => {
+  it("rejects valueMap as a plain object (common LLM mistake)", () => {
+    const bad = JSON.stringify({
+      dataModelUpdate: {
+        surfaceId: "x",
+        path: "/",
+        contents: [
+          {
+            key: "todo1",
+            valueMap: { title: "Buy", done: false },
+          },
+        ],
+      },
+    });
+    expect(validateA2uiJsonlLinesStrict(bad).ok).toBe(false);
+  });
+
+  it("accepts valueMap as an array of keyed rows", () => {
+    const good = JSON.stringify({
+      dataModelUpdate: {
+        surfaceId: "x",
+        path: "/",
+        contents: [
+          {
+            key: "todo1",
+            valueMap: [
+              { key: "title", valueString: "Buy milk" },
+              { key: "done", valueBoolean: false },
+            ],
+          },
+        ],
+      },
+    });
+    expect(validateA2uiJsonlLinesStrict(good).ok).toBe(true);
   });
 });
 

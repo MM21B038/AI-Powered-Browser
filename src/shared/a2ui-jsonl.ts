@@ -8,11 +8,11 @@ import { validateA2uiJsonlLinesStrict } from "./a2ui-strict-validate";
  * When true, apply LLM shortcut coercion, column layout repair, and inferred `beginRendering`.
  * Default false: strict v0.8 only (Zod-valid messages; see A2UI quickstart).
  */
-export const A2UI_HOST_LLM_COMPAT = false;
+export const A2UI_HOST_LLM_COMPAT = true;
 
 export type PartitionedAssistant = {
   markdown: string;
-  /** Joined JSONL lines for @a2ui/react MessageProcessor, or undefined if none. */
+  /** Joined JSONL lines for `@a2ui/react/v0_8` MessageProcessor, or undefined if none. */
   a2uiJsonl?: string;
 };
 
@@ -72,6 +72,60 @@ export function normalizeAlternateA2uiShape(
   return null;
 }
 
+/**
+ * Fixes common transport mistakes before parsing:
+ * - Two JSON objects concatenated with a **literal** `\n` (backslash + `n`) instead of a real newline.
+ */
+function preprocessA2uiToolJsonlString(s: string): string {
+  return s.replace(/\}\s*\\n\s*\{/g, "}\n{");
+}
+
+/**
+ * Models often emit **one extra `}`** after the first `Column` / `Row` in `surfaceUpdate.components`,
+ * yielding `...}}}},{"id":` instead of `...}}}},{"id":` — `JSON.parse` then fails with
+ * "Expected ',' or ']' after array element" around column ~250.
+ * Repeatedly fold `}}}}` → `}}}` immediately before `,{"id":` (with optional whitespace).
+ */
+function tryParseJsonLineWithExtraBraceRepair(line: string): Record<string, unknown> | null {
+  let s = line;
+  for (let k = 0; k < 64; k++) {
+    try {
+      return JSON.parse(s) as Record<string, unknown>;
+    } catch {
+      const re = /\}\}\}\}(\s*,\s*\{\s*"id"\s*:)/;
+      const next = s.replace(re, "}}}$1");
+      if (next === s) break;
+      s = next;
+    }
+  }
+  try {
+    return JSON.parse(s) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when the **last non-empty line** is not yet valid JSON (common while NDJSON is still streaming).
+ * The UI should show a “building” state instead of flashing a validation error mid-stream.
+ */
+export function isLikelyIncompleteStreamingA2uiJsonl(jsonl: string): boolean {
+  const t = jsonl.trim();
+  if (!t) return false;
+  const lines = t
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (lines.length === 0) return false;
+  const last = lines[lines.length - 1]!;
+  try {
+    JSON.parse(last);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 /** Split top-level `{...}` JSON objects (handles pretty-printed multi-object blobs). */
 function splitTopLevelJsonObjects(text: string): string[] {
   const out: string[] = [];
@@ -108,10 +162,157 @@ function splitTopLevelJsonObjects(text: string): string[] {
   return out;
 }
 
+/**
+ * When one physical line contains **multiple** top-level `{...}{...}` objects (no newline between them),
+ * split and validate each. Returns null if this is not a glued multi-object line.
+ */
+function tryParseGluedJsonObjectsLine(line: string): Record<string, unknown>[] | null {
+  const chunks = splitTopLevelJsonObjects(line);
+  if (chunks.length < 2) return null;
+  const out: Record<string, unknown>[] = [];
+  for (const ch of chunks) {
+    let rec: Record<string, unknown>;
+    try {
+      rec = JSON.parse(ch) as Record<string, unknown>;
+    } catch {
+      const repaired = tryParseJsonLineWithExtraBraceRepair(ch);
+      if (repaired === null) return null;
+      rec = repaired;
+    }
+    const n =
+      normalizeAlternateA2uiShape(rec) ?? (isA2uiServerMessage(rec) ? rec : null);
+    if (!n || !isA2uiServerMessage(n)) return null;
+    out.push(n);
+  }
+  return out;
+}
+
+/** If `dataModelUpdate.contents` has JSON strings where objects are required, parse them in place. */
+function repairDataModelUpdateContentsInMessage(msg: Record<string, unknown>): void {
+  const dmu = msg.dataModelUpdate;
+  if (!dmu || typeof dmu !== "object" || Array.isArray(dmu)) return;
+  const dm = dmu as Record<string, unknown>;
+  const contents = dm.contents;
+  if (!Array.isArray(contents)) return;
+  const next: unknown[] = [];
+  for (const item of contents) {
+    if (typeof item === "string") {
+      const t = item.trim();
+      if (t.startsWith("{") && t.endsWith("}")) {
+        try {
+          const parsed = JSON.parse(t) as unknown;
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            next.push(parsed);
+            continue;
+          }
+        } catch {
+          /* keep string */
+        }
+      }
+    }
+    next.push(item);
+  }
+  dm.contents = next;
+}
+
+/**
+ * True when the payload looks like **compact NDJSON**: multiple lines, each a single top-level `{...}` object.
+ * This path runs before `splitTopLevelJsonObjects` so we parse each line with `JSON.parse` independently —
+ * the brace splitter can mis-cut or fail opaquely when a line has invalid JSON (e.g. extra `}`).
+ */
+/**
+ * v0.8 requires **exactly one** of surfaceUpdate | dataModelUpdate | beginRendering | deleteSurface per message.
+ * Models sometimes emit a **single JSON object** with two or more of those keys — split into ordered messages.
+ */
+function splitCombinedA2uiRootMessage(rec: Record<string, unknown>): Record<string, unknown>[] {
+  const order = [
+    "surfaceUpdate",
+    "dataModelUpdate",
+    "beginRendering",
+    "deleteSurface",
+  ] as const;
+  const present = order.filter(
+    (k) => rec[k] != null && typeof rec[k] === "object",
+  );
+  if (present.length <= 1) return [rec];
+  return present.map((k) => ({ [k]: rec[k] }) as Record<string, unknown>);
+}
+
+function expandRecordToNormalizedMessages(
+  rec: Record<string, unknown>,
+): Record<string, unknown>[] | null {
+  const parts = splitCombinedA2uiRootMessage(rec);
+  const out: Record<string, unknown>[] = [];
+  for (const p of parts) {
+    const n =
+      normalizeAlternateA2uiShape(p) ?? (isA2uiServerMessage(p) ? p : null);
+    if (!n || !isA2uiServerMessage(n)) return null;
+    out.push(n);
+  }
+  return out;
+}
+
+function tryCoerceNdjsonCompactLines(
+  t: string,
+):
+  | { ok: true; messages: Record<string, unknown>[] }
+  | { ok: false; error: string }
+  | null {
+  const lines = t
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (lines.length < 2) return null;
+  if (!lines.every((l) => l.startsWith("{") && l.endsWith("}"))) return null;
+
+  const msgs: Record<string, unknown>[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    let rec: Record<string, unknown>;
+    try {
+      rec = JSON.parse(line) as Record<string, unknown>;
+    } catch (e) {
+      const repaired = tryParseJsonLineWithExtraBraceRepair(line);
+      if (repaired !== null) {
+        rec = repaired;
+      } else {
+        const glued = tryParseGluedJsonObjectsLine(line);
+        if (glued !== null && glued.length > 0) {
+          for (const g of glued) {
+            const expanded = expandRecordToNormalizedMessages(g);
+            if (!expanded) {
+              return {
+                ok: false,
+                error: `Line ${i + 1}: not a valid A2UI v0.8 message (or alternate { type: surfaceUpdate | beginRendering | ... } shape).`,
+              };
+            }
+            msgs.push(...expanded);
+          }
+          continue;
+        }
+        const detail = e instanceof SyntaxError ? e.message : String(e);
+        return {
+          ok: false,
+          error: `Line ${i + 1}: invalid JSON (${detail}). Fix the JSON on this line (often an extra or missing brace, or two root objects on one line without a newline).`,
+        };
+      }
+    }
+    const expanded = expandRecordToNormalizedMessages(rec);
+    if (!expanded) {
+      return {
+        ok: false,
+        error: `Line ${i + 1}: not a valid A2UI v0.8 message (or alternate { type: surfaceUpdate | beginRendering | ... } shape).`,
+      };
+    }
+    msgs.push(...expanded);
+  }
+  return { ok: true, messages: msgs };
+}
+
 function coerceToA2uiMessages(
   raw: string,
 ): { ok: true; messages: Record<string, unknown>[] } | { ok: false; error: string } {
-  const t = raw.trim();
+  const t = preprocessA2uiToolJsonlString(raw.trim());
   if (!t) return { ok: false, error: "jsonl is empty" };
 
   try {
@@ -122,52 +323,73 @@ function coerceToA2uiMessages(
         if (!item || typeof item !== "object" || Array.isArray(item)) {
           return { ok: false, error: "JSON array must contain only objects." };
         }
-        const rec = item as Record<string, unknown>;
-        const n = normalizeAlternateA2uiShape(rec) ?? (isA2uiServerMessage(rec) ? rec : null);
-        if (!n || !isA2uiServerMessage(n)) {
+        const expanded = expandRecordToNormalizedMessages(item as Record<string, unknown>);
+        if (!expanded) {
           return {
             ok: false,
             error:
               "Each array element must be an A2UI v0.8 message (or { type: surfaceUpdate | beginRendering | ... }).",
           };
         }
-        msgs.push(n);
+        msgs.push(...expanded);
       }
       return { ok: true, messages: msgs };
     }
     if (j && typeof j === "object" && !Array.isArray(j)) {
-      const rec = j as Record<string, unknown>;
-      const n = normalizeAlternateA2uiShape(rec) ?? (isA2uiServerMessage(rec) ? rec : null);
-      if (!n || !isA2uiServerMessage(n)) {
+      const expanded = expandRecordToNormalizedMessages(j as Record<string, unknown>);
+      if (!expanded) {
         return {
           ok: false,
           error:
             "JSON must be an A2UI v0.8 message or use type: surfaceUpdate | beginRendering | dataModelUpdate | deleteSurface.",
         };
       }
-      return { ok: true, messages: [n] };
+      return { ok: true, messages: expanded };
     }
   } catch {
     /* try multi-object split or NDJSON */
   }
 
+  const compactNdjson = tryCoerceNdjsonCompactLines(t);
+  if (compactNdjson !== null) {
+    return compactNdjson;
+  }
+
   const chunks = splitTopLevelJsonObjects(t);
   if (chunks.length > 0) {
     const msgs: Record<string, unknown>[] = [];
-    for (const ch of chunks) {
+    for (let ci = 0; ci < chunks.length; ci++) {
+      const ch = chunks[ci]!;
       try {
         const rec = JSON.parse(ch) as Record<string, unknown>;
-        const n = normalizeAlternateA2uiShape(rec) ?? (isA2uiServerMessage(rec) ? rec : null);
-        if (!n || !isA2uiServerMessage(n)) {
+        const expanded = expandRecordToNormalizedMessages(rec);
+        if (!expanded) {
           return {
             ok: false,
             error:
               "Each JSON object must be A2UI v0.8 (or alternate { type: surfaceUpdate | ... } shape).",
           };
         }
-        msgs.push(n);
-      } catch {
-        return { ok: false, error: "Invalid JSON in multi-object payload." };
+        msgs.push(...expanded);
+      } catch (e) {
+        const repaired = tryParseJsonLineWithExtraBraceRepair(ch);
+        if (repaired !== null) {
+          const expanded = expandRecordToNormalizedMessages(repaired);
+          if (!expanded) {
+            return {
+              ok: false,
+              error:
+                "Each JSON object must be A2UI v0.8 (or alternate { type: surfaceUpdate | ... } shape).",
+            };
+          }
+          msgs.push(...expanded);
+          continue;
+        }
+        const detail = e instanceof SyntaxError ? e.message : String(e);
+        return {
+          ok: false,
+          error: `Invalid JSON in multi-object payload (segment ${ci + 1} of ${chunks.length}): ${detail}`,
+        };
       }
     }
     return { ok: true, messages: msgs };
@@ -179,16 +401,29 @@ function coerceToA2uiMessages(
     if (!line) continue;
     try {
       const rec = JSON.parse(line) as Record<string, unknown>;
-      const n = normalizeAlternateA2uiShape(rec) ?? (isA2uiServerMessage(rec) ? rec : null);
-      if (!n || !isA2uiServerMessage(n)) {
+      const expanded = expandRecordToNormalizedMessages(rec);
+      if (!expanded) {
         return {
           ok: false,
           error:
             "Each line must be A2UI v0.8 JSON (or { type: surfaceUpdate | ... }); or send one pretty-printed JSON / multiple { ... }{...} objects.",
         };
       }
-      msgs.push(n);
+      msgs.push(...expanded);
     } catch {
+      const repaired = tryParseJsonLineWithExtraBraceRepair(line);
+      if (repaired !== null) {
+        const expanded = expandRecordToNormalizedMessages(repaired);
+        if (!expanded) {
+          return {
+            ok: false,
+            error:
+              "Each line must be A2UI v0.8 JSON (or { type: surfaceUpdate | ... }); or send one pretty-printed JSON / multiple { ... }{...} objects.",
+          };
+        }
+        msgs.push(...expanded);
+        continue;
+      }
       return {
         ok: false,
         error:
@@ -202,6 +437,29 @@ function coerceToA2uiMessages(
 
 /** GitHub-style fenced code blocks; group 1 is inner body (no trailing fence line). */
 const FENCE_RE = /```([a-zA-Z0-9_-]*)\s*\r?\n([\s\S]*?)\r?\n```/g;
+
+/**
+ * If the **last** ` ```json` / ` ```jsonl` fence in `full` has no closing ``` line yet, returns
+ * markdown before that fence line and the inner body after the opening fence header.
+ */
+function findTrailingOpenJsonOrJsonlFence(
+  full: string,
+): { markdownPrefix: string; inner: string } | null {
+  const openRe = /(?:^|\n)(```\s*(?:jsonl|json)\s*\r?\n)/g;
+  let lastMatch: RegExpExecArray | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = openRe.exec(full)) !== null) {
+    lastMatch = m;
+  }
+  if (!lastMatch) return null;
+  const innerStart = lastMatch.index + lastMatch[0].length;
+  const inner = full.slice(innerStart);
+  if (/(?:^|\r?\n)\s*```\s*(?:\r?\n|$)/.test(inner)) return null;
+  const fenceLineStart =
+    lastMatch.index + (lastMatch[0].startsWith("\n") ? 1 : 0);
+  const markdownPrefix = full.slice(0, fenceLineStart);
+  return { markdownPrefix, inner };
+}
 
 function tryPushA2uiObject(obj: unknown, a2uiOrdered: string[]): boolean {
   if (!obj || typeof obj !== "object" || Array.isArray(obj)) return false;
@@ -259,7 +517,17 @@ function partitionLineBlock(block: string, a2uiOrdered: string[]): string {
       const j = JSON.parse(t) as unknown;
       if (tryPushA2uiObject(j, a2uiOrdered)) continue;
     } catch {
-      /* not JSON */
+      /**
+       * Streaming UX: models often stream partial JSONL lines (not yet parseable).
+       * If the line looks like an A2UI server message, hide it from markdown so users
+       * see the panel building instead of raw JSON tokens.
+       */
+      if (
+        t.startsWith("{") &&
+        /"(surfaceUpdate|dataModelUpdate|beginRendering|deleteSurface)"\s*:/.test(t)
+      ) {
+        continue;
+      }
     }
     otherLines.push(line);
   }
@@ -268,24 +536,47 @@ function partitionLineBlock(block: string, a2uiOrdered: string[]): string {
 
 /**
  * Split streamed assistant text into markdown vs A2UI JSONL lines.
- * Whole-line JSON objects, plus complete fenced ``` / ```json blocks containing JSON or NDJSON.
+ * Whole-line JSON objects, complete fenced blocks, and **open** trailing ` ```json` / ` ```jsonl`
+ * fences (streaming) containing JSON or NDJSON.
  */
+/**
+ * Markdown-only view of assistant text after removing lines/fences ingested as A2UI.
+ * Use when `a2uiJsonl` is stored separately so the chat bubble does not duplicate raw NDJSON.
+ */
+export function assistantChatMarkdownWithoutA2ui(body: string): string {
+  return partitionAssistantTextForA2ui(body).markdown.trim();
+}
+
 export function partitionAssistantTextForA2ui(full: string): PartitionedAssistant {
   const trimmed = full.trim();
   if (!trimmed) return { markdown: "" };
 
   const a2uiOrdered: string[] = [];
+  const open = findTrailingOpenJsonOrJsonlFence(full);
+  const core = open?.markdownPrefix ?? full;
+  if (open) {
+    extractA2uiFromFenceInner(open.inner, a2uiOrdered);
+  }
+
   const mdParts: string[] = [];
   let last = 0;
   FENCE_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
-  while ((m = FENCE_RE.exec(full)) !== null) {
-    const before = full.slice(last, m.index);
+  while ((m = FENCE_RE.exec(core)) !== null) {
+    const before = core.slice(last, m.index);
     mdParts.push(partitionLineBlock(before, a2uiOrdered));
+    const a2uiCountBeforeFence = a2uiOrdered.length;
     extractA2uiFromFenceInner(m[2] ?? "", a2uiOrdered);
+    /** If the fence was not valid A2UI, keep the full ```…``` block in markdown (HTML/CSS/etc.). */
+    if (a2uiOrdered.length === a2uiCountBeforeFence) {
+      const idx = mdParts.length - 1;
+      const fenceText = m[0] ?? "";
+      const prev = mdParts[idx] ?? "";
+      mdParts[idx] = [prev, fenceText].filter((x) => String(x).length > 0).join("\n\n");
+    }
     last = m.index + m[0].length;
   }
-  mdParts.push(partitionLineBlock(full.slice(last), a2uiOrdered));
+  mdParts.push(partitionLineBlock(core.slice(last), a2uiOrdered));
 
   const markdown = mdParts
     .map((p) => p.replace(/\n{3,}/g, "\n\n").trimEnd())
@@ -592,6 +883,159 @@ function allocSyntheticId(base: string, ids: Set<string>): string {
   return id;
 }
 
+const A2UI_TEXT_FIELD_TYPES = new Set(["shortText", "number", "date", "longText"]);
+
+/** v0.8 `action.context` is `{ key, value }[]`; models often send a single object map. */
+function coerceButtonActionContext(ctx: unknown): unknown[] | undefined {
+  if (ctx === undefined || ctx === null) return undefined;
+  if (Array.isArray(ctx)) return ctx;
+  if (typeof ctx === "object" && !Array.isArray(ctx)) {
+    const out: Record<string, unknown>[] = [];
+    for (const [key, val] of Object.entries(ctx as Record<string, unknown>)) {
+      if (val && typeof val === "object" && !Array.isArray(val)) {
+        out.push({ key, value: val });
+      }
+    }
+    return out;
+  }
+  return undefined;
+}
+
+function stringFromMaybeLiteralLabel(v: unknown): string | undefined {
+  if (typeof v === "string" && v.trim()) return v;
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>;
+    if (typeof o.literalString === "string") return o.literalString;
+  }
+  return undefined;
+}
+
+/** Models often send `"true"` / `"false"` strings or nested `valueBoolean` instead of `value.literalBoolean`. */
+function parseLooseBoolean(v: unknown): boolean {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number") return v !== 0;
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    if (s === "true" || s === "1" || s === "yes") return true;
+    if (s === "false" || s === "0" || s === "no" || s === "") return false;
+  }
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>;
+    if (typeof o.literalString === "string") return parseLooseBoolean(o.literalString);
+    if (typeof o.literalBoolean === "boolean") return o.literalBoolean;
+    if (o.valueBoolean !== undefined) return parseLooseBoolean(o.valueBoolean);
+  }
+  return false;
+}
+
+/**
+ * v0.8 `Checkbox` requires `label` (StringValue) and `value` (`{ path }` or `{ literalBoolean }` only).
+ * LLMs often emit `valueBoolean`, `value: { valueBoolean: … }`, or `valueBoolean` nested under `literalString`.
+ */
+function coerceCheckboxShape(cb: Record<string, unknown>): void {
+  if (cb.label === undefined) {
+    cb.label = { literalString: "" };
+  } else if (typeof cb.label === "string") {
+    cb.label = coerceStringValue(cb.label);
+  }
+
+  if (cb.value === undefined && cb.valueBoolean !== undefined) {
+    cb.value = { literalBoolean: parseLooseBoolean(cb.valueBoolean) };
+    delete cb.valueBoolean;
+  }
+
+  if (cb.value && typeof cb.value === "object" && !Array.isArray(cb.value)) {
+    const val = cb.value as Record<string, unknown>;
+    if (typeof val.path === "string") {
+      cb.value = { path: val.path };
+    } else if (typeof val.literalBoolean === "boolean") {
+      cb.value = { literalBoolean: val.literalBoolean };
+    } else if (val.valueBoolean !== undefined) {
+      cb.value = { literalBoolean: parseLooseBoolean(val.valueBoolean) };
+      delete val.valueBoolean;
+    } else if (
+      typeof val.literalString === "string" &&
+      val.path === undefined &&
+      val.literalBoolean === undefined
+    ) {
+      cb.value = { literalBoolean: parseLooseBoolean(val.literalString) };
+    } else if (Object.keys(val).length === 0) {
+      cb.value = { literalBoolean: false };
+    }
+  }
+
+  if (cb.checked !== undefined && cb.value === undefined) {
+    if (typeof cb.checked === "boolean") {
+      cb.value = { literalBoolean: cb.checked };
+    }
+    delete cb.checked;
+  }
+
+  if (cb.value === undefined) {
+    cb.value = { literalBoolean: false };
+  }
+
+  delete cb.valueBoolean;
+}
+
+/** Matches \`TextSchema.usageHint\` in \`@a2ui/web_core\` v0.8. */
+const COERCE_TEXT_USAGE_HINT_ALLOWED = new Set([
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "caption",
+  "body",
+]);
+
+const COERCE_TEXT_USAGE_HINT_ALIASES: Record<string, string> = {
+  title: "h3",
+  header: "h2",
+  heading: "h2",
+  subtitle: "caption",
+  subheading: "h4",
+  label: "caption",
+  fine: "caption",
+  button: "body",
+  btn: "body",
+  cta: "body",
+  paragraph: "body",
+  p: "body",
+  text: "body",
+};
+
+function normalizeCoercedTextUsageHint(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string") return undefined;
+  const t = raw.trim();
+  if (!t) return undefined;
+  if (COERCE_TEXT_USAGE_HINT_ALLOWED.has(t)) return t;
+  const mapped = COERCE_TEXT_USAGE_HINT_ALIASES[t.toLowerCase()];
+  if (mapped) return mapped;
+  return undefined;
+}
+
+/** \`children.template.dataBinding\` must be a string; models often send \`{ path: "…" }\`. */
+function coerceLayoutChildrenTemplateBinding(layout: Record<string, unknown>): void {
+  const ch = layout.children;
+  if (!ch || typeof ch !== "object" || Array.isArray(ch)) return;
+  const children = ch as Record<string, unknown>;
+  const tpl = children.template;
+  if (!tpl || typeof tpl !== "object" || Array.isArray(tpl)) return;
+  const t = tpl as Record<string, unknown>;
+  const db = t.dataBinding;
+  if (typeof db === "string") return;
+  if (
+    db &&
+    typeof db === "object" &&
+    !Array.isArray(db) &&
+    typeof (db as { path?: unknown }).path === "string"
+  ) {
+    t.dataBinding = (db as { path: string }).path;
+  }
+}
+
 /**
  * Coerces common LLM “shortcut” component shapes into strict A2UI v0.8 (Zod) shapes.
  * Mutates component objects in place and may append synthetic Text nodes for Button labels.
@@ -608,6 +1052,25 @@ function coerceComponentInstance(
   if (!inner || typeof inner !== "object" || Array.isArray(inner)) return;
   const comp = inner as Record<string, unknown>;
 
+  if (comp.CheckBox && typeof comp.CheckBox === "object" && !Array.isArray(comp.CheckBox)) {
+    comp.Checkbox = comp.CheckBox;
+    delete comp.CheckBox;
+  }
+
+  /** v0.8 `Card` is `{ child: string }` only; models often send `content` / `childId`. */
+  if (comp.Card && typeof comp.Card === "object" && !Array.isArray(comp.Card)) {
+    const card = comp.Card as Record<string, unknown>;
+    if (typeof card.child !== "string" || !card.child.trim()) {
+      const alt =
+        (typeof card.childId === "string" && card.childId.trim() && card.childId) ||
+        (typeof card.content === "string" && card.content.trim() && card.content) ||
+        undefined;
+      if (alt) card.child = alt;
+      delete card.childId;
+      delete card.content;
+    }
+  }
+
   if (typeof comp.Text !== "undefined") {
     if (typeof comp.Text === "string") {
       comp.Text = { text: { literalString: comp.Text } };
@@ -619,6 +1082,18 @@ function coerceComponentInstance(
         T.text = coerceStringValue(T.text);
       }
       if (T.content !== undefined) delete T.content;
+      if (T.usageHint !== undefined) {
+        const n = normalizeCoercedTextUsageHint(T.usageHint);
+        if (n === undefined) delete T.usageHint;
+        else T.usageHint = n;
+      }
+    }
+  }
+
+  for (const k of ["Row", "Column", "List"] as const) {
+    const lay = comp[k];
+    if (lay && typeof lay === "object" && !Array.isArray(lay)) {
+      coerceLayoutChildrenTemplateBinding(lay as Record<string, unknown>);
     }
   }
 
@@ -685,6 +1160,16 @@ function coerceComponentInstance(
     }
     if (typeof tf.label === "string") tf.label = coerceStringValue(tf.label);
     if (typeof tf.text === "string") tf.text = coerceStringValue(tf.text);
+    const tft = tf.textFieldType;
+    if (tft && typeof tft === "object" && !Array.isArray(tft)) {
+      const o = tft as Record<string, unknown>;
+      if (
+        typeof o.literalString === "string" &&
+        A2UI_TEXT_FIELD_TYPES.has(o.literalString)
+      ) {
+        tf.textFieldType = o.literalString;
+      }
+    }
   }
 
   if (
@@ -731,25 +1216,41 @@ function coerceComponentInstance(
   }
 
   if (comp.Checkbox && typeof comp.Checkbox === "object" && !Array.isArray(comp.Checkbox)) {
-    const cb = comp.Checkbox as Record<string, unknown>;
-    if (typeof cb.label === "string") cb.label = coerceStringValue(cb.label);
+    coerceCheckboxShape(comp.Checkbox as Record<string, unknown>);
   }
 
   if (comp.Button && typeof comp.Button === "object" && !Array.isArray(comp.Button)) {
     const b = comp.Button as Record<string, unknown>;
+    if (b.action && typeof b.action === "object" && !Array.isArray(b.action)) {
+      const act = b.action as Record<string, unknown>;
+      if (
+        act.name &&
+        typeof act.name === "object" &&
+        act.name !== null &&
+        !Array.isArray(act.name)
+      ) {
+        const nm = act.name as Record<string, unknown>;
+        if (typeof nm.literalString === "string") {
+          act.name = nm.literalString;
+        }
+      }
+      if (act.context !== undefined) {
+        act.context = coerceButtonActionContext(act.context);
+      }
+    }
     const needsChild =
       typeof b.child !== "string" || !String(b.child).trim();
     if (needsChild) {
       const labelText =
-        typeof b.label === "string"
-          ? b.label
-          : typeof b.text === "string"
-            ? b.text
-            : "Button";
+        stringFromMaybeLiteralLabel(b.label) ??
+        stringFromMaybeLiteralLabel(b.text) ??
+        "Button";
       const tid = allocSyntheticId(id, ids);
       extras.push({
         id: tid,
-        component: { Text: { text: { literalString: labelText } } },
+        component: {
+          Text: { text: { literalString: labelText }, usageHint: "body" },
+        },
       });
       b.child = tid;
       delete b.label;
@@ -807,7 +1308,70 @@ export function coerceLlmShortcutsInA2uiJsonl(jsonl: string): string {
   return lines.join("\n");
 }
 
+/**
+ * Human-readable hint when `getSurface(id).componentTree` is still null after `processMessages`
+ * (missing `beginRendering`, wrong `root`, etc.).
+ */
+export function explainA2uiMissingComponentTree(
+  messages: ReadonlyArray<Record<string, unknown>>,
+): string {
+  const ids = new Set<string>();
+  let hasBegin = false;
+  let root: string | undefined;
+  for (const raw of messages) {
+    if (!raw || typeof raw !== "object") continue;
+    const br = raw.beginRendering as { root?: unknown } | undefined;
+    if (br && typeof br === "object") {
+      hasBegin = true;
+      if (typeof br.root === "string") root = br.root.trim();
+    }
+    const su = raw.surfaceUpdate as { components?: Array<{ id?: unknown }> } | undefined;
+    if (su?.components && Array.isArray(su.components)) {
+      for (const c of su.components) {
+        if (c && typeof c === "object" && typeof (c as { id?: unknown }).id === "string") {
+          ids.add((c as { id: string }).id);
+        }
+      }
+    }
+  }
+  if (!hasBegin) {
+    return "The A2UI stream is missing a final beginRendering line. After surfaceUpdate (and optional dataModelUpdate), add one JSONL object: {\"beginRendering\":{\"surfaceId\":\"<same as above>\",\"root\":\"<id of a component from surfaceUpdate.components>\"}}.";
+  }
+  if (root !== undefined && root.length === 0) {
+    return "beginRendering.root is empty. Set root to the id of your top-level component (often a Column or Row that lists children in explicitList).";
+  }
+  if (root && ids.size > 0 && !ids.has(root)) {
+    const sample = [...ids].slice(0, 10).join(", ");
+    return `beginRendering.root is "${root}" but no component has that id. Use one of these ids: ${sample}${ids.size > 10 ? " …" : ""}.`;
+  }
+  return "The UI tree could not be built. Confirm every component matches the v0.8 catalog, surfaceId matches on every line, and component properties use literal/path shapes from the schema.";
+}
+
 const MAX_A2UI_SUBMIT_CHARS = 512_000;
+
+/**
+ * Coerces structured `jsonl` input (string, array of lines, or objects) to one NDJSON string.
+ * Used for tests and any caller that still receives structured JSONL payloads.
+ */
+export function normalizeIntelligentA2uiSubmitJsonlInput(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return preprocessA2uiToolJsonlString(value);
+  if (Array.isArray(value)) {
+    const lines: string[] = [];
+    for (const item of value) {
+      if (typeof item === "string") {
+        lines.push(item);
+      } else if (item && typeof item === "object" && !Array.isArray(item)) {
+        lines.push(JSON.stringify(item));
+      }
+    }
+    return lines.join("\n");
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return JSON.stringify(value as Record<string, unknown>);
+  }
+  return "";
+}
 
 /** Merge non-empty JSONL blobs (e.g. tool submit + model text) into one newline-delimited string. */
 export function mergeA2uiJsonlParts(
@@ -820,7 +1384,7 @@ export function mergeA2uiJsonlParts(
   return merged.length > 0 ? merged : undefined;
 }
 
-/** Validates JSONL for `intelligent_a2ui_submit` (v0.8 keys or alternate `{ type }` shapes). */
+/** Validates NDJSON for inline assistant A2UI (v0.8 keys or alternate `{ type }` shapes). */
 export function validateIntelligentA2uiSubmitJsonl(
   jsonl: string,
 ): { ok: true; normalized: string } | { ok: false; error: string } {
@@ -831,34 +1395,15 @@ export function validateIntelligentA2uiSubmitJsonl(
   }
   const coerced = coerceToA2uiMessages(t);
   if (!coerced.ok) return coerced;
-  let joined = coerced.messages.map((m) => JSON.stringify(m)).join("\n");
-  if (A2UI_HOST_LLM_COMPAT) {
-    joined = coerceLlmShortcutsInA2uiJsonl(joined);
+  for (const m of coerced.messages) {
+    repairDataModelUpdateContentsInMessage(m);
   }
+  let joined = coerced.messages.map((m) => JSON.stringify(m)).join("\n");
+  joined = coerceLlmShortcutsInA2uiJsonl(joined);
   joined = orderA2uiJsonlServerMessages(joined);
   const strict = validateA2uiJsonlLinesStrict(joined);
   if (!strict.ok) {
     return { ok: false, error: strict.error };
   }
   return { ok: true, normalized: joined };
-}
-
-/** Collect normalized JSONL from persisted `intelligent_a2ui_submit` tool messages. */
-export function collectA2uiJsonlFromToolMessages(
-  toolMsgs: ReadonlyArray<{ role?: string; name?: string; arguments?: string }>,
-): string | undefined {
-  const chunks: string[] = [];
-  for (const m of toolMsgs) {
-    if (m.role !== "tool" || m.name !== "intelligent_a2ui_submit") continue;
-    let args: Record<string, unknown> = {};
-    try {
-      args = JSON.parse(m.arguments || "{}") as Record<string, unknown>;
-    } catch {
-      continue;
-    }
-    const raw = typeof args.jsonl === "string" ? args.jsonl : "";
-    const v = validateIntelligentA2uiSubmitJsonl(raw);
-    if (v.ok) chunks.push(v.normalized);
-  }
-  return mergeA2uiJsonlParts(...chunks);
 }

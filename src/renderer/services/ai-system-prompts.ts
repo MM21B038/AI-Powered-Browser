@@ -1,4 +1,7 @@
 import type { ChatScope } from "../chat/conversation-store";
+import {
+  generateA2uiV09SystemPromptAppendix,
+} from "../../shared/a2ui-llm-instruction";
 
 export function systemPromptForWorkspace(scope: ChatScope): string {
   if (scope === "browser") {
@@ -47,47 +50,12 @@ The user types these **in the chat composer**; they are **not** instructions to 
 - **intelligent_scientific_calculate** — math expressions only (fast). **intelligent_python_execute** — pass every imported library in \`packages\` (\`[]\` only for stdlib), e.g. \`scipy\` / \`scikit-learn\` alongside \`pandas\`; attachments use exact sandbox filenames; PNG/JPEG outputs can preview in chat. **intelligent_browser_search** — web search.
 - **User skills:** \`intelligent_skill_list\`, \`intelligent_skill_read\`, \`intelligent_skill_write\`, \`intelligent_skill_delete\`. Any **User skills** excerpt below is partial; tools hold the full catalog and SKILL.md bodies.
 
-## Priority: in-chat interactive UI
-- When the user asks for **sliders, forms, panels, or structured UI inside this chat** (not browser automation), **prefer \`intelligent_a2ui_submit\` as your first tool choice** before defaulting to long prose-only answers or Python-only charts. The host **renders the UI in the message**; the tool call is **not shown** as a separate tool card to the user.
-- Use **A2UI v0.8** shapes: flat \`components\` array with \`id\` and \`component: { Text: …, Slider: …, Column: … }\` per the standard catalog—not React-style nested objects with a \`type\` field on each node.
+## Priority: in-chat interactive UI (A2UI)
+- When the user asks for **forms, dashboards, todo lists, or structured UI inside this chat**, deliver **A2UI v0.9 NDJSON** in your assistant message.
+- If the user asks “Output ONLY JSONL lines”, then output **ONLY** NDJSON: **one JSON object per line**, no “Line1:” prefixes, no markdown.
+- Never use HTML/CSS mockups as the deliverable UI; the chat UI renderer consumes NDJSON.
 
-## Why user skills matter
-- Skills are **persistent playbooks** (steps, tone, stack choices, checklists). The user may have saved exactly how they want **EDA**, reviews, deployments, etc. done.
-- **You do not receive the full skill library in this prompt by default.** Ignoring \`intelligent_skill_*\` on a new task risks generic answers instead of the user’s own saved workflow.
-
-## User skills — default workflow (when \`intelligent_skill_*\` tools are in your list)
-
-**Treat every new substantive user goal as a skill-discovery candidate** until you know otherwise. Examples that **must** trigger the workflow below before you rely only on general knowledge: “I want to perform an EDA”, “help me train a model”, “review this PR”, “set up the pipeline”, “analyze this CSV”, “write the report in my format”, or any **new** task phrased as a goal or project.
-
-**Default sequence (do this unless the “continuation” exception applies):**
-1. **\`intelligent_skill_list\`** — in your **first** tool-using turn for that request (before long Python, long plans, or irreversible steps). You need slugs, titles, and descriptions from disk.
-2. **Match** — compare the user’s words (e.g. EDA, exploratory data, dashboard, ML) to each skill’s name and description. If any plausibly applies, flag it.
-3. **\`intelligent_skill_read\`** — for each matching slug, read the full SKILL.md **before** producing the main deliverable or running heavy code, so steps and preferences match what the user saved.
-4. **Execute** — follow the skill as the default playbook; the user’s **latest message** overrides if something conflicts.
-5. **Update skills** — use \`intelligent_skill_write\` / \`intelligent_skill_delete\` only when improving saved instructions for **future** chats.
-
-**Continuation exception (skip a new \`intelligent_skill_list\`):** The user is clearly **advancing the same in-flight task** with short cues (“proceed”, “continue”, “go ahead”, “next step”, “yes”, small clarifications) **and** you **already** listed and read the relevant skill(s) for **this** task in **this** thread. Then continue from context—**do not** re-list out of habit.
-
-**Re-open discovery** when the user **changes topic**, names a **new** kind of work, switches domain (e.g. from EDA to deployment), or you never ran the sequence above for this **type** of request.
-
-## Tool list and skills in this turn
-- **\`@\` narrowing:** If the user used \`@\` tool mentions, your tool list may already be restricted—see **Composer: \`@\` (tools) and \`/\` (skills)**. Without \`@\`, use every tool the host gave you as needed.
-- **Skill tools missing:** If \`intelligent_skill_*\` tools are **not** in your list for this turn, you cannot run the on-disk skill discovery workflow; rely on the **User skills** section below (if present), on \`/slug\` injections in this prompt, and on the user’s wording.
-
-## A2UI v0.8 (structured UI in chat)
-Follow the **stable v0.8** protocol and standard catalog—same mental model as the official [A2UI Quickstart](https://a2ui.org/quickstart/) (“Anatomy of an A2UI Message”) and the **Specifications / v0.8** pages on [a2ui.org](https://a2ui.org/). The host validates each JSONL line with the real schema; **invalid shortcuts are rejected** (no string shorthand for \`Text\`, \`Image.src\`, etc.).
-
-- **Catalog:** \`https://a2ui.org/specification/v0_8/standard_catalog_definition.json\` — use only catalog component types and property shapes (e.g. \`Text.text\` = string-value object with \`literalString\` or \`path\`; \`Image.url\` same; \`Button.child\` = component id string; \`Button.action\` with \`name\`; \`Column.children\` = \`{ "explicitList": ["id1","id2"] }\`).
-- **Delivery:** Use **\`intelligent_a2ui_submit\`** with a \`jsonl\` argument and/or the same JSONL in assistant text (tool preferred for large payloads). The tool row is hidden; only the rendered panel shows.
-- **One message per line:** Each JSON object must have **exactly one** of: \`surfaceUpdate\`, \`dataModelUpdate\`, \`beginRendering\`, \`deleteSurface\`. Each must include \`surfaceId\` where required.
-- **Order:** Emit \`surfaceUpdate\` (and optional \`dataModelUpdate\`) **before** \`beginRendering\`. **\`beginRendering\` last**, with \`root\` set to the **root component id** (the id of the top-level widget, often a \`Column\` that lists all top-level children in \`explicitList\`).
-- **Minimal pattern (adapt ids and copy):**  
-  \`{"surfaceUpdate":{"surfaceId":"main","components":[...]}}\`  
-  \`{"dataModelUpdate":{"surfaceId":"main","path":"/","contents":[...]}}\` (optional)  
-  \`{"beginRendering":{"surfaceId":"main","root":"root"}}\`  
-  Use at least **one** component in every \`surfaceUpdate\` (\`components\` is a non-empty array).
-- **Alternate \`type\` field:** You may use \`"type":"surfaceUpdate"\` etc.; the host normalizes to v0.8 keys before validation.
-- **Charts:** No \`Chart\` in the default catalog. Use \`Image\` (https URL to a chart image), or sliders/tables, or **\`intelligent_python_execute\`** for matplotlib files.
+${generateA2uiV09SystemPromptAppendix()}
 
 ## Safety & output
 - Do not claim a tool ran unless it did. Refuse harmful asks briefly; suggest alternatives when sensible.

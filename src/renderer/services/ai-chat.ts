@@ -49,21 +49,6 @@ import {
   chatStreamEventToAgUiEvents,
   createAgUiRunContext,
 } from "./ag-ui-bridge";
-import { validateIntelligentA2uiSubmitJsonl } from "../../shared/a2ui-jsonl";
-
-function runIntelligentA2uiSubmit(args: unknown): string {
-  const o = args as Record<string, unknown>;
-  const jsonl = typeof o.jsonl === "string" ? o.jsonl : "";
-  const v = validateIntelligentA2uiSubmitJsonl(jsonl);
-  if (!v.ok) return JSON.stringify({ ok: false, error: v.error });
-  return JSON.stringify({
-    ok: true,
-    lineCount: v.normalized.split("\n").length,
-    message:
-      "A2UI JSONL accepted; the host merges it into the chat surface. Continue with markdown if needed.",
-  });
-}
-
 /** Default max Chat Completions rounds (each may include tool calls). Bounded to avoid runaway loops. */
 export const DEFAULT_MAX_TOOL_ROUNDS = 32;
 
@@ -657,7 +642,11 @@ export async function runAiChatPipeline(opts: {
     opts.scope === "browser" ? [] : await loadExternalToolGroups(opts.api, opts.settings, opts.scope);
   let { openAiTools, dispatch } = buildToolDispatchMap(butcherDefs, externalGroups);
   const allow = opts.toolAllowlist;
-  if (opts.scope === "intelligent" && allow != null && allow.length > 0) {
+  if (
+    opts.scope === "intelligent" &&
+    allow != null &&
+    allow.length > 0
+  ) {
     const narrowed = filterToolsByAllowlist(openAiTools, dispatch, allow);
     openAiTools = narrowed.openAiTools;
     dispatch = narrowed.dispatch;
@@ -763,7 +752,7 @@ async function buildSystemPromptForApi(
   api: ElectronApi,
   mentionedSlugsFromMessage: string[] = [],
 ): Promise<string> {
-  const base = systemPromptForWorkspace(scope);
+  let text = systemPromptForWorkspace(scope);
   const normalizedMentioned = mentionedSlugsFromMessage
     .map((s) => validateSkillSlug(s))
     .filter((s): s is string => s != null);
@@ -772,18 +761,18 @@ async function buildSystemPromptForApi(
   const useSkills =
     slugs.length > 0 &&
     (scope === "intelligent" || (scope === "browser" && settings.skillsApplyToBrowserAgent));
-  if (!useSkills) return base;
+  if (!useSkills) return text;
   const build = api.userSkillsBuildPromptAppend;
-  if (typeof build !== "function") return base;
+  if (typeof build !== "function") return text;
   try {
     const append = await build({ slugs });
     if (append?.text?.trim()) {
-      return base + append.text;
+      return text + append.text;
     }
   } catch {
     /* IPC or disk errors — chat must still run without skill injection */
   }
-  return base;
+  return text;
 }
 
 async function runOpenAiCompatible(
@@ -1141,8 +1130,6 @@ async function runOpenAiCompatible(
           if (ref.kind === "butcher") {
             if (ref.name === "intelligent_a2a_delegate") {
               resultText = await executeA2aDelegate(opts.api, args);
-            } else if (ref.name === "intelligent_a2ui_submit") {
-              resultText = runIntelligentA2uiSubmit(args);
             } else {
               resultText = await executeButcherTool(ref.name, args, runAutomationSafe, {
                 pythonInputFiles:

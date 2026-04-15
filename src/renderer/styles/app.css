@@ -12380,6 +12380,24 @@ kbd {
   max-height: min(160px, 28vh);
 }
 
+.ai-chat-tool-a2ui-args {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ai-chat-tool-a2ui-args__code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.95em;
+}
+
+.ai-chat-tool-a2ui-args__pre {
+  max-height: min(280px, 45vh);
+  overflow: auto;
+  white-space: pre;
+}
+
 .ai-chat-tool-py-args {
   display: flex;
   flex-direction: column;

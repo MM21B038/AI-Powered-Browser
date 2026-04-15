@@ -98,15 +98,42 @@ import {
   type ChatApiErrorDisplay,
 } from "../../services/api-error-format";
 import { renderChatMarkdownToHtml } from "../../chat/chat-markdown";
-import { isHiddenIntelligentA2uiTool } from "../../chat/a2ui-tool-ux";
 import {
-  collectA2uiJsonlFromToolMessages,
+  assistantChatMarkdownWithoutA2ui,
   mergeA2uiJsonlParts,
   partitionAssistantTextForA2ui,
-  validateIntelligentA2uiSubmitJsonl,
 } from "../../../shared/a2ui-jsonl";
-import { A2UIProvider } from "@a2ui/react";
+import {
+  assistantChatMarkdownWithoutA2uiV09,
+  partitionAssistantTextForA2uiV09,
+} from "../../../shared/a2ui-v0_9-jsonl";
+import {
+  extractUserActionFromClientMessage,
+  formatA2uiUserActionMessageLine,
+  planA2uiActionFollowUp,
+} from "../../../shared/format-a2ui-user-action";
+import {
+  A2UI_HOST_ACTION_APPEND_HINT,
+  A2UI_HOST_ACTION_FOLLOW_UP_OFF_HINT,
+  emitA2uiHostActionHint,
+  handleA2uiHostLocalAction,
+} from "../../../shared/a2ui-host-local-actions";
+import {
+  isA2uiLocalPatchOptIn,
+  tryBuildLocalPatchMessages,
+} from "../../../shared/a2ui-local-action-patch";
+import type { A2UIClientEventMessage, ServerToClientMessage } from "@a2ui/react/v0_8";
+import { A2uiHostProvider } from "../a2ui/a2ui-host-provider";
+import { handleHostLocalA2uiAction } from "../a2ui/a2ui-host-local-registry";
+import type { A2uiClientAction } from "@a2ui/web_core/v0_9/schema/client-to-server.js";
+import { handleA2uiV09HostLocalAction } from "../../../shared/a2ui-v0_9-host-local-actions";
+import { getA2uiV09Runtime } from "../../services/a2ui-v0_9-runtime";
+import {
+  A2uiHostProcessorBridge,
+  type A2uiHostProcessorApi,
+} from "../A2uiHostProcessorBridge";
 import { A2uiChatSurface } from "../A2uiChatSurface";
+import { A2uiV09ChatSurface } from "../a2ui/v0_9/A2uiV09ChatSurface";
 
 const debouncedSave = createDebouncedSaveV2(200);
 
@@ -616,6 +643,7 @@ type StreamSegment =
       kind: "text";
       plain: string;
       a2uiJsonl?: string;
+      a2uiV09Jsonl?: string;
       /** Matches `A2uiChatSurface` / `A2UIRenderer` for this stream wave. */
       a2uiSurfaceId?: string;
     };
@@ -626,13 +654,16 @@ function streamSegmentsToPlainText(segments: StreamSegment[]): string {
   for (const s of segments) {
     if (s.kind === "text") {
       if (s.plain.trim()) {
-        parts.push(
-          s.a2uiJsonl?.trim()
-            ? [s.plain.trim(), "(A2UI surface)"].filter(Boolean).join("\n\n")
-            : s.plain.trim(),
-        );
-      } else if (s.a2uiJsonl?.trim()) {
-        parts.push("(A2UI surface)");
+        const prose = s.a2uiV09Jsonl?.trim()
+          ? assistantChatMarkdownWithoutA2uiV09(s.plain)
+          : s.a2uiJsonl?.trim()
+            ? assistantChatMarkdownWithoutA2ui(s.plain)
+            : s.plain.trim();
+        if (prose) parts.push(prose);
+        else if (s.a2uiV09Jsonl?.trim() || s.a2uiJsonl?.trim())
+          parts.push("(Generated in-chat panel)");
+      } else if (s.a2uiV09Jsonl?.trim() || s.a2uiJsonl?.trim()) {
+        parts.push("(Generated in-chat panel)");
       }
     }
     if (s.kind === "api_error") {
@@ -714,12 +745,14 @@ function buildPersistedMessagesRobust(
     const th = r.thinking.trim();
     const vc = r.visibleContent.trim();
     if (th || vc) {
-      const part = partitionAssistantTextForA2ui(vc);
+      const part09 = partitionAssistantTextForA2uiV09(vc);
+      const part = partitionAssistantTextForA2ui(part09.markdown);
       out.push({
         id: generateMessageId(),
         role: "assistant",
-        content: part.markdown,
+        content: part09.markdown,
         ...(part.a2uiJsonl ? { a2uiJsonl: part.a2uiJsonl } : {}),
+        ...(part09.a2uiV09Jsonl ? { a2uiV09Jsonl: part09.a2uiV09Jsonl } : {}),
         ...(th ? { thinking: th } : {}),
       });
     }
@@ -734,10 +767,10 @@ function buildPersistedMessagesRobust(
     consumedFromFlat++;
   }
 
-  const fromTools = collectA2uiJsonlFromToolMessages(toolMsgs);
-  const outPart = partitionAssistantTextForA2ui(assistantBuf.trim());
-  const mergedA2ui = mergeA2uiJsonlParts(fromTools, outPart.a2uiJsonl);
-  const outText = outPart.markdown;
+  const outPart09 = partitionAssistantTextForA2uiV09(assistantBuf.trim());
+  const outPart = partitionAssistantTextForA2ui(outPart09.markdown);
+  const mergedA2ui = mergeA2uiJsonlParts(outPart.a2uiJsonl);
+  const outText = outPart09.markdown;
   const ft = finalRoundThinking.trim();
 
   if (!outText && !mergedA2ui && !ft) {
@@ -772,6 +805,7 @@ function buildPersistedMessagesRobust(
     role: "assistant",
     content: outText,
     ...(mergedA2ui ? { a2uiJsonl: mergedA2ui } : {}),
+    ...(outPart09.a2uiV09Jsonl ? { a2uiV09Jsonl: outPart09.a2uiV09Jsonl } : {}),
     ...(apiErrorPersist
       ? {
           apiError: {
@@ -816,11 +850,26 @@ async function runChatPipelineRound(
   const textSegmentFromAssistantBuf = (
     previousText?: Extract<StreamSegment, { kind: "text" }>,
   ): Extract<StreamSegment, { kind: "text" }> => {
-    const part = partitionAssistantTextForA2ui(assistantBuf);
+    const part09 = partitionAssistantTextForA2uiV09(assistantBuf);
+    const part = partitionAssistantTextForA2ui(part09.markdown);
     const base: Extract<StreamSegment, { kind: "text" }> = {
       kind: "text",
-      plain: part.markdown,
+      plain: part09.markdown,
     };
+    if (part09.a2uiV09Jsonl?.trim()) {
+      base.a2uiV09Jsonl = part09.a2uiV09Jsonl;
+      base.a2uiSurfaceId = currentStreamA2uiSurfaceId;
+      return base;
+    }
+    if (
+      previousText?.a2uiV09Jsonl?.trim() &&
+      previousText?.a2uiSurfaceId?.trim()
+    ) {
+      /** Keep prior v0.9 surface while the model adds prose without repeating JSONL. */
+      base.a2uiV09Jsonl = previousText.a2uiV09Jsonl;
+      base.a2uiSurfaceId = previousText.a2uiSurfaceId;
+      return base;
+    }
     if (part.a2uiJsonl?.trim()) {
       base.a2uiJsonl = part.a2uiJsonl;
       base.a2uiSurfaceId = currentStreamA2uiSurfaceId;
@@ -938,27 +987,6 @@ async function runChatPipelineRound(
             },
             ...segments.slice(idx + 1),
           ];
-        }
-        if (e.name === "intelligent_a2ui_submit") {
-          try {
-            const parsed = JSON.parse(e.arguments || "{}") as Record<string, unknown>;
-            const jsonl = typeof parsed.jsonl === "string" ? parsed.jsonl : "";
-            const v = validateIntelligentA2uiSubmitJsonl(jsonl);
-            if (v.ok) {
-              segments = [
-                ...segments,
-                {
-                  kind: "text",
-                  plain: "",
-                  a2uiJsonl: v.normalized,
-                  a2uiSurfaceId:
-                    currentStreamA2uiSurfaceId.trim() || generateMessageId(),
-                },
-              ];
-            }
-          } catch {
-            /* ignore */
-          }
         }
         pushSegmentSnapshot(segments, onSegmentUpdate);
         break;
@@ -1105,6 +1133,8 @@ function AiChatPanel(): ReactElement {
     scope: ChatScope;
     controller: AbortController;
   } | null>(null);
+  /** Set by {@link A2uiHostProcessorBridge} under {@link A2UIProvider} for opt-in local `processMessages`. */
+  const a2uiHostProcessorApiRef = useRef<A2uiHostProcessorApi | null>(null);
   /** Assistant message id currently playing the “retry” exit animation. */
   const [retryExitAssistantId, setRetryExitAssistantId] = useState<string | null>(
     null,
@@ -1690,6 +1720,288 @@ function AiChatPanel(): ReactElement {
       }
     },
     [api, active, busyByScope, scope, settings],
+  );
+
+  useEffect(() => {
+    const onV09 = (ev: Event) => {
+      const action = (ev as CustomEvent<A2uiClientAction>).detail;
+      if (!action || typeof (action as any).name !== "string") return;
+      void (async () => {
+        const name = String((action as any).name ?? "").trim();
+        const local = await handleA2uiV09HostLocalAction(action);
+        if (local.handled && local.kind === "openUrl") {
+          notifyComposerUser(
+            local.success ? "Opened link" : `Could not open link: ${local.message}`,
+            local.success ? 2600 : 5200,
+          );
+          return;
+        }
+
+        // Host-local todo helpers (no assistant round-trip).
+        if (name === "todo.add") {
+          const rt = getA2uiV09Runtime();
+          const s = rt.getSurface((action as any).surfaceId) as any;
+          if (!s?.dataModel) {
+            notifyComposerUser("Todo surface is not ready yet.", 3200);
+            return;
+          }
+          const title = String(s?.dataModel?.get("/draftTitle") ?? "").trim();
+          const tag = String(s?.dataModel?.get("/draftTag") ?? "").trim();
+          if (!title) {
+            notifyComposerUser("Type a task title first.", 2600);
+            return;
+          }
+          const tasks = s?.dataModel?.get("/tasks");
+          const arr = Array.isArray(tasks) ? tasks.slice() : [];
+          arr.unshift({
+            id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+            title,
+            tag,
+            tagDisplay: tag ? `#${tag}` : "",
+            done: false,
+          });
+          s?.dataModel?.set("/tasks", arr);
+          s?.dataModel?.set("/draftTitle", "");
+          s?.dataModel?.set("/draftTag", "");
+          notifyComposerUser("Task added", 1800);
+          return;
+        }
+        if (name === "todo.delete") {
+          const rawId = (action as any).context?.id ?? (action as any).context?.taskId;
+          const id = typeof rawId === "string" ? rawId.trim() : "";
+          if (!id) {
+            notifyComposerUser("Delete failed: missing task id.", 3200);
+            return;
+          }
+          const rt = getA2uiV09Runtime();
+          const s = rt.getSurface((action as any).surfaceId) as any;
+          const tasks = s?.dataModel?.get("/tasks");
+          const arr = Array.isArray(tasks) ? tasks : [];
+          s?.dataModel?.set(
+            "/tasks",
+            arr.filter((t: any) => String(t?.id ?? "") !== id),
+          );
+          notifyComposerUser("Task deleted", 1800);
+          return;
+        }
+
+        // Host-local Kanban helpers.
+        if (name === "kanban.add") {
+          const rt = getA2uiV09Runtime();
+          const s = rt.getSurface((action as any).surfaceId) as any;
+          if (!s?.dataModel) {
+            notifyComposerUser("Kanban surface is not ready yet.", 3200);
+            return;
+          }
+          const title = String(s.dataModel.get("/draftTitle") ?? "").trim();
+          const tag = String(s.dataModel.get("/draftTag") ?? "").trim();
+          const pointsRaw = s.dataModel.get("/draftPoints");
+          const points = Number.isFinite(pointsRaw)
+            ? Number(pointsRaw)
+            : typeof pointsRaw === "string"
+              ? Number.parseFloat(pointsRaw.trim())
+              : 0;
+          const lane = String((action as any).context?.lane ?? "Backlog").trim() || "Backlog";
+          if (!title) {
+            notifyComposerUser("Type a card title first.", 2600);
+            return;
+          }
+          const cards = s.dataModel.get("/cards");
+          const arr = Array.isArray(cards) ? cards.slice() : [];
+          arr.unshift({
+            id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+            title,
+            tag,
+            tagDisplay: tag ? `#${tag}` : "",
+            points: Number.isFinite(points) ? points : 0,
+            lane,
+            done: lane.toLowerCase() === "done",
+          });
+          s.dataModel.set("/cards", arr);
+          s.dataModel.set("/draftTitle", "");
+          s.dataModel.set("/draftTag", "");
+          s.dataModel.set("/draftPoints", "");
+          notifyComposerUser("Card added", 1800);
+          return;
+        }
+
+        if (
+          name === "kanban.delete" ||
+          name === "kanban.moveLeft" ||
+          name === "kanban.moveRight"
+        ) {
+          const rawId = (action as any).context?.id ?? (action as any).context?.cardId;
+          const id = typeof rawId === "string" ? rawId.trim() : "";
+          if (!id) {
+            notifyComposerUser("Action failed: missing card id.", 3200);
+            return;
+          }
+          const rt = getA2uiV09Runtime();
+          const s = rt.getSurface((action as any).surfaceId) as any;
+          const cards = s?.dataModel?.get("/cards");
+          const arr = Array.isArray(cards) ? cards.slice() : [];
+          const idx = arr.findIndex((c: any) => String(c?.id ?? "") === id);
+          if (idx < 0) return;
+          if (name === "kanban.delete") {
+            arr.splice(idx, 1);
+            s?.dataModel?.set("/cards", arr);
+            notifyComposerUser("Card deleted", 1800);
+            return;
+          }
+          const lanes = s?.dataModel?.get("/lanes");
+          const laneList = Array.isArray(lanes) && lanes.length > 0 ? lanes.map(String) : ["Backlog", "Doing", "Done"];
+          const cur = String(arr[idx]?.lane ?? "Backlog");
+          const curIdx = Math.max(0, laneList.indexOf(cur));
+          const nextIdx = name === "kanban.moveLeft" ? curIdx - 1 : curIdx + 1;
+          const lane = laneList[Math.min(laneList.length - 1, Math.max(0, nextIdx))] ?? cur;
+          arr[idx] = { ...arr[idx], lane, done: lane.toLowerCase() === "done" };
+          s?.dataModel?.set("/cards", arr);
+          notifyComposerUser("Card moved", 1400);
+          return;
+        }
+
+        const line = `[A2UI v0.9 action] name=${name || "(unknown)"} surface=${(action as any).surfaceId} source=${(action as any).sourceComponentId}`;
+        const { appendComposer, autoSend, useBusyComposerToast } =
+          planA2uiActionFollowUp(settings.a2uiActionFollowUp, busyByScope[scope]);
+
+        if (autoSend) {
+          notifyComposerUser(`Sent “${(action as any).name}” to the assistant…`, 2400);
+        } else if (appendComposer) {
+          if (useBusyComposerToast) {
+            notifyComposerUser(
+              `“${(action as any).name}”: wait for the reply to finish — action text was added to the composer.`,
+              4200,
+            );
+          } else {
+            notifyComposerUser(
+              `Added “${(action as any).name}” to your message — press Send`,
+              3600,
+            );
+          }
+          window.dispatchEvent(
+            new CustomEvent("ai-chat-append-composer", { detail: { text: line } }),
+          );
+        } else {
+          notifyComposerUser(`A2UI action “${(action as any).name}” (not forwarded)`, 4200);
+        }
+
+        if (autoSend) void runSendWithText(line);
+      })();
+    };
+    window.addEventListener("a2ui-v0_9-action", onV09);
+    return () => window.removeEventListener("a2ui-v0_9-action", onV09);
+  }, [busyByScope, runSendWithText, scope, settings]);
+
+  const onA2uiProviderAction = useCallback(
+    async (msg: A2UIClientEventMessage) => {
+      const ua = extractUserActionFromClientMessage(msg);
+      if (!ua) {
+        notifyComposerUser(
+          "A2UI interaction received (missing or invalid action data).",
+        );
+        return;
+      }
+
+      const localFn = await handleA2uiHostLocalAction(ua);
+      if (localFn.handled && localFn.kind === "openUrl") {
+        if (localFn.success) {
+          notifyComposerUser("Opened link", 2600);
+          emitA2uiHostActionHint({ surfaceId: ua.surfaceId, hint: null });
+          return;
+        }
+        notifyComposerUser(
+          `Could not open link: ${localFn.message}`,
+          5200,
+        );
+      }
+
+      /**
+       * Host-local UI interactions: make common controls update instantly (no model round-trip).
+       * This runs before host.patch.v1 parsing and before forwarding the action to the assistant.
+       */
+      if (
+        handleHostLocalA2uiAction(
+          ua,
+          a2uiHostProcessorApiRef.current,
+          notifyComposerUser,
+        )
+      ) {
+        emitA2uiHostActionHint({ surfaceId: ua.surfaceId, hint: null });
+        return;
+      }
+
+      const patch = tryBuildLocalPatchMessages(ua);
+      let skipGenericAckToast = false;
+      if (patch.ok) {
+        const api = a2uiHostProcessorApiRef.current;
+        if (api) {
+          try {
+            api.processMessages(patch.messages as ServerToClientMessage[]);
+            skipGenericAckToast = true;
+            notifyComposerUser(`A2UI panel updated (${ua.name})`);
+            emitA2uiHostActionHint({ surfaceId: ua.surfaceId, hint: null });
+            return;
+          } catch (e) {
+            const err = e instanceof Error ? e.message : String(e);
+            notifyComposerUser(`A2UI local patch failed: ${err}`);
+          }
+        } else {
+          notifyComposerUser(
+            "A2UI local patch could not run (panel bridge not ready).",
+          );
+        }
+      } else if (
+        isA2uiLocalPatchOptIn(ua) &&
+        patch.reason !== "not_opt_in"
+      ) {
+        skipGenericAckToast = true;
+        notifyComposerUser(`A2UI local patch invalid: ${patch.reason}`);
+      }
+
+      const line = formatA2uiUserActionMessageLine(ua);
+      const { appendComposer, autoSend, useBusyComposerToast } =
+        planA2uiActionFollowUp(settings.a2uiActionFollowUp, busyByScope[scope]);
+
+      if (autoSend) {
+        emitA2uiHostActionHint({ surfaceId: ua.surfaceId, hint: null });
+        if (!skipGenericAckToast) {
+          notifyComposerUser(`Sent “${ua.name}” to the assistant…`, 2400);
+        }
+      } else if (appendComposer) {
+        emitA2uiHostActionHint({
+          surfaceId: ua.surfaceId,
+          hint: A2UI_HOST_ACTION_APPEND_HINT,
+        });
+        if (useBusyComposerToast) {
+          notifyComposerUser(
+            `“${ua.name}”: wait for the reply to finish — action text was added to the composer.`,
+            4200,
+          );
+        } else if (!skipGenericAckToast) {
+          notifyComposerUser(`Added “${ua.name}” to your message — press Send`, 3600);
+        }
+      } else {
+        emitA2uiHostActionHint({
+          surfaceId: ua.surfaceId,
+          hint: A2UI_HOST_ACTION_FOLLOW_UP_OFF_HINT,
+        });
+        if (!skipGenericAckToast) {
+          notifyComposerUser(`A2UI action “${ua.name}” (not forwarded — see panel note)`, 5200);
+        }
+      }
+
+      if (appendComposer) {
+        window.dispatchEvent(
+          new CustomEvent("ai-chat-append-composer", {
+            detail: { text: line },
+          }),
+        );
+      }
+      if (autoSend) {
+        void runSendWithText(line);
+      }
+    },
+    [busyByScope, runSendWithText, scope, settings],
   );
 
   const runPipelineAfterEdit = useCallback(
@@ -3100,15 +3412,8 @@ function AiChatPanel(): ReactElement {
                 : "ai-chat-messages-column"
             }
           >
-            <A2UIProvider
-              onAction={(msg) => {
-                void window.electronAPI?.debugLog?.({
-                  source: "a2ui",
-                  message: "A2UI user action",
-                  data: msg as unknown,
-                });
-              }}
-            >
+            <A2uiHostProvider onAction={onA2uiProviderAction}>
+            <A2uiHostProcessorBridge apiRef={a2uiHostProcessorApiRef} />
             <div
               className="ai-chat-messages-scroll"
               ref={messagesScrollRef}
@@ -3131,7 +3436,6 @@ function AiChatPanel(): ReactElement {
             if (m.role === "system") return null;
             if (m.role === "tool") {
               const toolName = m.name?.trim() || "Tool result";
-              if (isHiddenIntelligentA2uiTool(toolName)) return null;
               return (
                 <div key={m.id} className="ai-chat-msg ai-chat-msg--tool">
                   {isCalculatorToolName(toolName) ? (
@@ -3261,6 +3565,11 @@ function AiChatPanel(): ReactElement {
               );
             }
             const isWelcomeSpotlight = m.id === welcomeSpotlightMessageId;
+            const hasA2uiV09 =
+              m.role === "assistant" &&
+              "a2uiV09Jsonl" in m &&
+              typeof (m as { a2uiV09Jsonl?: string }).a2uiV09Jsonl === "string" &&
+              (m as { a2uiV09Jsonl?: string }).a2uiV09Jsonl!.trim().length > 0;
             const hasA2ui =
               m.role === "assistant" &&
               "a2uiJsonl" in m &&
@@ -3268,7 +3577,7 @@ function AiChatPanel(): ReactElement {
               (m as { a2uiJsonl?: string }).a2uiJsonl!.trim().length > 0;
             const canRetryAssistant =
               !isWelcomeSpotlight &&
-              ((m.content || "").trim().length > 0 || hasA2ui) &&
+              ((m.content || "").trim().length > 0 || hasA2uiV09 || hasA2ui) &&
               findUserIndexBeforeAssistant(active?.messages ?? [], msgIdx) >= 0;
             return (
               <div
@@ -3406,27 +3715,50 @@ function AiChatPanel(): ReactElement {
                           retryDisabled={scopeBusy || retryExitAssistantId != null}
                         />
                       </>
-                    ) : (m.content || "").trim() || hasA2ui ? (
+                    ) : (m.content || "").trim() || hasA2uiV09 || hasA2ui ? (
                       <>
-                        {(m.content || "").trim() ? (
-                          <div
-                            className="ai-chat-bubble"
-                            dangerouslySetInnerHTML={{
-                              __html: renderAiChatMd(m.content),
-                            }}
+                        {hasA2uiV09 ? (
+                          <A2uiV09ChatSurface
+                            surfaceId={`a2ui9-${m.id}`}
+                            jsonl={(m as { a2uiV09Jsonl: string }).a2uiV09Jsonl}
                           />
-                        ) : null}
-                        {hasA2ui ? (
+                        ) : hasA2ui ? (
                           <A2uiChatSurface
                             surfaceId={`a2ui-${m.id}`}
                             jsonl={(m as { a2uiJsonl: string }).a2uiJsonl}
                           />
                         ) : null}
+                        {(m.content || "").trim() ? (
+                          <div
+                            className="ai-chat-bubble"
+                            dangerouslySetInnerHTML={{
+                              __html: renderAiChatMd(
+                                hasA2uiV09
+                                  ? assistantChatMarkdownWithoutA2uiV09(m.content)
+                                  : hasA2ui
+                                  ? assistantChatMarkdownWithoutA2ui(m.content)
+                                  : m.content,
+                              ),
+                            }}
+                          />
+                        ) : null}
                         <AiChatMsgFooter
                           align="start"
                           plainText={
-                            hasA2ui
-                              ? [m.content, "(A2UI surface)"].filter(Boolean).join("\n\n")
+                            hasA2uiV09
+                              ? [
+                                  assistantChatMarkdownWithoutA2uiV09(m.content),
+                                  "(Generated in-chat panel)",
+                                ]
+                                  .filter((x) => x.trim().length > 0)
+                                  .join("\n\n")
+                              : hasA2ui
+                              ? [
+                                  assistantChatMarkdownWithoutA2ui(m.content),
+                                  "(Generated in-chat panel)",
+                                ]
+                                  .filter((x) => x.trim().length > 0)
+                                  .join("\n\n")
                               : m.content
                           }
                           onRetry={
@@ -3469,10 +3801,8 @@ function AiChatPanel(): ReactElement {
                         <AiChatThoughtBlock key={key} thinking={seg.text} />
                       );
                     case "tool_running":
-                      if (isHiddenIntelligentA2uiTool(seg.name)) return null;
                       return <AiChatToolRunning key={key} name={seg.name} />;
                     case "tool_done":
-                      if (isHiddenIntelligentA2uiTool(seg.name)) return null;
                       return isCalculatorToolName(seg.name) ? (
                         <AiChatCalculatorToolRow
                           key={key}
@@ -3506,19 +3836,28 @@ function AiChatPanel(): ReactElement {
                       const isLast = i === streamSegments.length - 1;
                       const hasMd = (seg.plain || "").trim().length > 0;
                       const a2ui = seg.a2uiJsonl?.trim();
+                      const a2ui9 = seg.a2uiV09Jsonl?.trim();
                       const sid = seg.a2uiSurfaceId?.trim();
                       return (
                         <Fragment key={key}>
+                          {a2ui9 && sid ? (
+                            <A2uiV09ChatSurface surfaceId={sid} jsonl={a2ui9} />
+                          ) : a2ui && sid ? (
+                            <A2uiChatSurface surfaceId={sid} jsonl={a2ui} />
+                          ) : null}
                           {hasMd ? (
                             <div
                               className="ai-chat-bubble"
                               dangerouslySetInnerHTML={{
-                                __html: renderAiChatMd(seg.plain),
+                                __html: renderAiChatMd(
+                                  seg.a2uiV09Jsonl?.trim()
+                                    ? assistantChatMarkdownWithoutA2uiV09(seg.plain)
+                                    : seg.a2uiJsonl?.trim()
+                                      ? assistantChatMarkdownWithoutA2ui(seg.plain)
+                                    : seg.plain,
+                                ),
                               }}
                             />
-                          ) : null}
-                          {a2ui && sid ? (
-                            <A2uiChatSurface surfaceId={sid} jsonl={a2ui} />
                           ) : null}
                           {isLast ? (
                             <AiChatMsgFooter
@@ -3537,7 +3876,7 @@ function AiChatPanel(): ReactElement {
             </div>
           ) : null}
           </div>
-            </A2UIProvider>
+            </A2uiHostProvider>
         </div>
         <div
           className={`ai-chat-composer${useUnifiedComposer ? " ai-chat-composer--unified" : ""}${isBrowserAgent && !intelligentWorkspaceShell ? " ai-chat-composer--browser-elevated" : ""}`}

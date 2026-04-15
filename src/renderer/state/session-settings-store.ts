@@ -8,6 +8,9 @@ import type {
   McpServerConnectionMode,
 } from "../../shared/mcp-external-types";
 import type { ChatScope } from "../chat/conversation-store";
+import type { A2uiActionFollowUp } from "../../shared/format-a2ui-user-action";
+
+export type { A2uiActionFollowUp };
 
 export const INTELLIGENT_SETTINGS_KEY = "butcher.intelligent-settings.v1";
 /** @deprecated legacy key — migrated once on load */
@@ -190,6 +193,11 @@ export type IntelligentSettingsState = {
   enabledSkillSlugs: string[];
   /** When true, enabled skills also append to the Browser Agent system prompt. */
   skillsApplyToBrowserAgent: boolean;
+  /**
+   * When the user triggers an A2UI action (e.g. button), how the host follows up in chat:
+   * toast only, append a structured line to the composer, or send it as the next user message.
+   */
+  a2uiActionFollowUp: A2uiActionFollowUp;
 };
 
 function newMcpId(): string {
@@ -245,6 +253,7 @@ export function defaultIntelligentSettings(): IntelligentSettingsState {
     mcpTogglesIntelligent: defaultWorkspaceMcpToggles(),
     enabledSkillSlugs: [],
     skillsApplyToBrowserAgent: false,
+    a2uiActionFollowUp: "send",
   };
 }
 
@@ -271,6 +280,11 @@ export function optionalCustomTlsCaPem(settings: IntelligentSettingsState): stri
 
 function isRecord(x: unknown): x is Record<string, unknown> {
   return x !== null && typeof x === "object" && !Array.isArray(x);
+}
+
+function parseA2uiActionFollowUp(raw: unknown): A2uiActionFollowUp {
+  if (raw === "off" || raw === "append" || raw === "send") return raw;
+  return "append";
 }
 
 function isRemoteTransportString(x: unknown): x is McpRemoteTransport {
@@ -389,6 +403,7 @@ function parseIntelligentPayload(parsed: Record<string, unknown>): IntelligentSe
     : [];
   const skillsApplyToBrowserAgent =
     typeof parsed.skillsApplyToBrowserAgent === "boolean" ? parsed.skillsApplyToBrowserAgent : false;
+  const a2uiActionFollowUp = parseA2uiActionFollowUp(parsed.a2uiActionFollowUp);
   return {
     aiProvider,
     googleApiKey: typeof parsed.googleApiKey === "string" ? parsed.googleApiKey : "",
@@ -405,6 +420,7 @@ function parseIntelligentPayload(parsed: Record<string, unknown>): IntelligentSe
     mcpTogglesIntelligent: parseWorkspaceMcpToggles(parsed.mcpTogglesIntelligent),
     enabledSkillSlugs,
     skillsApplyToBrowserAgent,
+    a2uiActionFollowUp,
   };
 }
 

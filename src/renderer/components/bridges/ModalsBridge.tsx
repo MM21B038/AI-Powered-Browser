@@ -4,6 +4,7 @@ import { FirstRunModal } from "../modals/FirstRunModal";
 import { ImportWizardModal } from "../modals/ImportWizardModal";
 import { ProfileModal } from "../modals/ProfileModal";
 import { SettingsPanel } from "../modals/SettingsPanel";
+import { A2uiModalSurface } from "../a2ui/v0_9/A2uiModalSurface";
 
 const POLL_MS = 400;
 
@@ -28,6 +29,7 @@ export function ModalsBridge(): ReactElement | null {
   const [firstRunOpen, setFirstRunOpen] = useState(false);
   const [importWizardOpen, setImportWizardOpen] = useState(false);
   const [intelligentSettingsModalOpen, setIntelligentSettingsModalOpen] = useState(false);
+  const [a2uiModal, setA2uiModal] = useState<{ open: boolean; surfaceId: string } | null>(null);
   /** Increment on each intelligent-assistant-settings-open so SettingsPanel re-runs layout if React `open` was already true (kernel cleared DOM). */
   const [intelligentSettingsDomEpoch, setIntelligentSettingsDomEpoch] = useState(0);
   /** Ignore outside mousedown briefly after open so the same gesture cannot close the modal (capture runs after React commits). */
@@ -41,6 +43,21 @@ export function ModalsBridge(): ReactElement | null {
     sync();
     const id = window.setInterval(sync, POLL_MS);
     return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const open = (ev: Event) => {
+      const d = (ev as CustomEvent<{ surfaceId?: string }>).detail;
+      const surfaceId = (d?.surfaceId || "").trim() || "main";
+      setA2uiModal({ open: true, surfaceId });
+    };
+    const close = () => setA2uiModal(null);
+    window.addEventListener("a2ui-modal-open", open);
+    window.addEventListener("a2ui-modal-close", close);
+    return () => {
+      window.removeEventListener("a2ui-modal-open", open);
+      window.removeEventListener("a2ui-modal-close", close);
+    };
   }, []);
 
   useEffect(() => {
@@ -135,6 +152,11 @@ export function ModalsBridge(): ReactElement | null {
       <ProfileModal open={profileOpen} onComplete={onProfileComplete} />
       <FirstRunModal open={firstRunOpen} onDismiss={closeFirstRun} />
       <ImportWizardModal open={importWizardOpen} onSkip={skipImportWizard} />
+      <A2uiModalSurface
+        open={!!a2uiModal?.open}
+        surfaceId={a2uiModal?.surfaceId ?? "main"}
+        onClose={() => setA2uiModal(null)}
+      />
       {/* Keep mounted so closing runs layout effect that clears data-settings-open / webview overlay hit-target */}
       <SettingsPanel
         open={intelligentSettingsModalOpen}

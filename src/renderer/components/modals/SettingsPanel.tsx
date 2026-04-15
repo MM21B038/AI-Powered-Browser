@@ -76,6 +76,7 @@ import {
   parseAiProvider,
   resolveOpenAiCompatibleBaseUrl,
   saveIntelligentSettings,
+  type A2uiActionFollowUp,
   type IntelligentSettingsState,
   type McpServerConfig,
 } from "../../state/session-settings-store";
@@ -851,6 +852,7 @@ export function SettingsPanel({
     "intelligentSelectedModelId",
     "cachedModelIds",
     "aiProvider",
+    "a2uiActionFollowUp",
   ]);
 
   const updateIntelligentSettings = (
@@ -2018,6 +2020,37 @@ export function SettingsPanel({
                       spellCheck={false}
                       autoComplete="off"
                     />
+                    <label
+                      className="settings-label settings-label-mt"
+                      htmlFor="a2uiActionFollowUpReact"
+                    >
+                      A2UI button actions
+                    </label>
+                    <select
+                      id="a2uiActionFollowUpReact"
+                      className="settings-input"
+                      value={intelligentSettings.a2uiActionFollowUp}
+                      onChange={(e) => {
+                        const v = e.target.value as A2uiActionFollowUp;
+                        if (v === "off" || v === "append" || v === "send") {
+                          updateIntelligentSettings({ a2uiActionFollowUp: v });
+                        }
+                      }}
+                    >
+                      <option value="send">Send as next message (recommended)</option>
+                      <option value="append">
+                        Append to composer (review before send)
+                      </option>
+                      <option value="off">Toast only (no assistant follow-up)</option>
+                    </select>
+                    <p className="settings-muted settings-hint--compact">
+                      Clicks on A2UI buttons emit an action line. <strong>Send</strong> forwards
+                      it to the model so it can answer with new JSONL or tools.{" "}
+                      <strong>Append</strong> inserts the line into the composer for you to
+                      edit and send. <strong>Toast only</strong> acknowledges the click but
+                      does not contact the assistant. If a reply is still streaming, send
+                      falls back to append.
+                    </p>
                   </div>
                   {aiModelActionFeedback ? (
                     <p
