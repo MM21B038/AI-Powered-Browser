@@ -6,6 +6,11 @@
     "types": ["vite/client", "vitest/globals", "node"],
     "noEmit": true
   },
-  "include": ["src/renderer/**/test-*.ts", "electron/**/test-*.ts", "src/types/**/*.d.ts"],
+  "include": [
+    "src/renderer/**/test-*.ts",
+    "electron/**/test-*.ts",
+    "src/shared/**/*.d.ts",
+    "src/types/**/*.d.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { A2UI_V09_HOST_CATALOG_JSON_URL } from "./a2ui-v0_9-constants";
 import { partitionAssistantTextForA2uiV09 } from "./a2ui-v0_9-jsonl";
 
 describe("partitionAssistantTextForA2uiV09", () => {
@@ -6,7 +7,7 @@ describe("partitionAssistantTextForA2uiV09", () => {
     const text = [
       "Hello",
       "",
-      '{"version":"v0.9","createSurface":{"surfaceId":"s","catalogId":"https://a2ui.org/specification/v0_9/basic_catalog.json"}}',
+      `{"version":"v0.9","createSurface":{"surfaceId":"s","catalogId":"${A2UI_V09_HOST_CATALOG_JSON_URL}"}}`,
       "",
       "More text",
     ].join("\n");
@@ -34,8 +35,7 @@ describe("partitionAssistantTextForA2uiV09", () => {
   });
 
   it("extracts multiple v0.9 JSON objects from one line", () => {
-    const oneLine =
-      '{"version":"v0.9","createSurface":{"surfaceId":"main","catalogId":"https://a2ui.org/specification/v0_9/basic_catalog.json"}} {"version":"v0.9","updateComponents":{"surfaceId":"main","components":[]}}';
+    const oneLine = `{"version":"v0.9","createSurface":{"surfaceId":"main","catalogId":"${A2UI_V09_HOST_CATALOG_JSON_URL}"}} {"version":"v0.9","updateComponents":{"surfaceId":"main","components":[]}}`;
     const out = partitionAssistantTextForA2uiV09(oneLine);
     expect(out.a2uiV09Jsonl?.split("\n").length).toBe(2);
     expect(out.a2uiV09Jsonl).toContain('"createSurface"');
@@ -43,8 +43,7 @@ describe("partitionAssistantTextForA2uiV09", () => {
   });
 
   it("extracts v0.9 JSON objects even with prefixes", () => {
-    const text =
-      'Line1: {"version":"v0.9","createSurface":{"surfaceId":"main","catalogId":"https://a2ui.org/specification/v0_9/basic_catalog.json"}}\nLine2: {"version":"v0.9","updateComponents":{"surfaceId":"main","components":[]}}';
+    const text = `Line1: {"version":"v0.9","createSurface":{"surfaceId":"main","catalogId":"${A2UI_V09_HOST_CATALOG_JSON_URL}"}}\nLine2: {"version":"v0.9","updateComponents":{"surfaceId":"main","components":[]}}`;
     const out = partitionAssistantTextForA2uiV09(text);
     expect(out.a2uiV09Jsonl?.split("\n").length).toBe(2);
   });

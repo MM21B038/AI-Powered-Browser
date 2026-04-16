@@ -10,6 +10,7 @@ import {
 import { hostCatalogPolicyPromptSupplement } from "./a2ui-host-catalog-policy";
 import { hostCatalogSupportPromptSection } from "./a2ui-host-catalog";
 import { hostA2uiSecurityPromptOneLiner } from "./a2ui-host-security";
+import { A2UI_V09_HOST_CATALOG_JSON_URL } from "./a2ui-v0_9-constants";
 import a2uiV09CatalogSpecMarkdown from "./a2ui-v0_9-catalog-spec.md?raw";
 
 export { A2UI_V08_STANDARD_CATALOG_JSON_URL, A2UI_V08_STANDARD_COMPONENT_KEYS };
@@ -191,30 +192,47 @@ function v09NonNegotiableRulesBlock(): string {
 - **No prefixes / no comments:** Do not output \`Line1:\`, \`[Loading root...]\`, \`//\` comments, or \`/* ... */\` comments.
 - **Wire message types (server→client):** \`createSurface\` → \`updateComponents\` → optional \`updateDataModel\` (repeat \`update* \` as needed). No \`beginRendering\` in v0.9.
 - **\`updateDataModel\`:** use \`{ "surfaceId", "path", "value" }\` only — **not** \`data\`, \`model\`, or arbitrary keys beside \`surfaceId\`. To set several fields, emit **multiple lines** (or \`updates: [{path,value},...]\` if you use that pattern). Initialize numbers/strings your controls bind to.
-- **Catalog:** use \`catalogId: "https://a2ui.org/specification/v0_9/basic_catalog.json"\` unless told otherwise.
+- **Catalog:** use \`catalogId: "${A2UI_V09_HOST_CATALOG_JSON_URL}"\` exactly (host interactive catalog — not the upstream basic URL).
+- **Renderers:** layout/media (\`Text\`, \`Row\`, \`Column\`, …), \`Spacer\`, all interactive inputs (\`TextField\`, \`Slider\`, \`CheckBox\`, \`ChoicePicker\`, \`DateTimeInput\`), \`Button\`, and \`Dropdown\` are **host-rendered** (theme-aligned, shared spacing tokens). JSON props still match the upstream basic catalog schemas (plus \`Spacer\` — see spec).
+- **Density:** do not invent margins or CSS in NDJSON; use \`Row\`/\`Column\`, \`Card\`, and \`Spacer\` for alignment.
 - **\`updateComponents.components\`:** each component row is \`{ "id": "...", "component": "Column", ...props }\`. Component props live at the same level (passthrough), not nested under \`component:{...}\` like v0.8.
-- **Layout props (basic catalog):** \`Column\` / \`Row\` use \`children: ["id1","id2"]\`, plus \`justify\` and \`align\` (not \`distribution\`/ \`alignment\`).
+- **Layout props (schemas match basic catalog):** \`Column\` / \`Row\` use \`children: ["id1","id2"]\`, plus \`justify\` and \`align\` (not \`distribution\`/ \`alignment\`).
 - **Text:** \`variant\` not \`usageHint\` (e.g. \`"h2"\`, \`"body"\`, \`"caption"\`). \`text\` may be a string or \`{ "path": "key" }\`.
-- **Button:** uses \`child: "componentId"\` and \`action: { "event": { "name": "...", "context": { ... } } }\` (not \`label\`, not \`action.name\`).`;
+- **Button:** uses \`child: "componentId"\` and \`action: { "event": { "name": "...", "context": { ... } } }\` (not \`label\`, not \`action.name\`). Set \`variant\`: \`primary\` for the main call-to-action, \`default\` for secondary actions, \`borderless\` for link-style / tertiary (no custom colors).
+- **Icon:** use \`name\` (catalog enum strings like \`"menu"\`, \`"settings"\`, or \`{ "path": "/..." }\`) — **not** \`iconName\`. Do **not** add \`size\` or other undocumented props; the catalog rejects extra keys. Use \`Row\` / \`Column\` / \`Spacer\` for spacing. Optional: \`rounded:\`, \`sharp:\`, \`outlined:\` prefixes on the name string, or \`host:autonomous\` / \`host:agent\` / \`host:browser\` for host SVG icons (see spec).`;
 }
 
 /** This host registers extra catalog functions beyond section 4 of the spec above. */
 function v09HostExtendedCatalogBlock(): string {
-  return `### This host — extra catalog functions (not in basic_catalog.json list)
-The renderer also registers these **expression** helpers: \`toString\`, \`concat\`, \`array_length\`, \`count_where\`, \`sum_by_key\`, \`group_count\`, \`clamp\`, \`format_currency\`, \`format_percent\`, \`moving_average\`, \`sparkline_svg\`.
+  return `### This host — extra catalog functions (beyond upstream basic catalog list)
+These are registered on the **host** v0.9 catalog (\`${A2UI_V09_HOST_CATALOG_JSON_URL}\`): \`toString\`, \`concat\`, \`array_length\`, \`count_where\`, \`sum_by_key\`, \`group_count\`, \`clamp\`, \`format_currency\`, \`format_compact_currency\`, \`format_percent\`, \`moving_average\`, \`sparkline_svg\`, \`math_eval\`, \`series_expr\`.
 
-**Charts:** There is no \`LineChart\` component. Use \`Image\` with \`url\` from \`sparkline_svg\` (data URL) when you need a sparkline.
+**Layout & actions:** \`Text\`, \`Image\`, \`Icon\`, \`Row\`, \`Column\`, \`Spacer\`, and other layout/media types, plus all interactive inputs and \`Button\` (use \`variant\`: \`primary\` for main CTAs, \`default\` for secondary, \`borderless\` for link-style), are implemented by the Autonomous Browser renderer; **prop shapes match** the basic catalog (and \`Spacer\` as documented in the spec).
+
+**Charts:** The host catalog includes \`LineChart\`, \`BarChart\`, \`AreaChart\`, \`PieChart\`, \`Histogram\`, and \`DensityPlot\` (themed; no arbitrary colors in NDJSON). For a **tiny** sparkline image only, you may still use \`Image\` with \`url\` from the \`sparkline_svg\` catalog function.
+
+**KPI amounts:** For large currency values in \`Text\`, use \`format_compact_currency\` (short labels like \`$48K\`) instead of \`format_currency\` when full precision strings would overflow or wrap badly; optional \`locale\`: \`en-US\` keeps output stable.
+
+**Reactive formulas:** Use \`math_eval\` (numeric) and \`series_expr\` (array of Y samples) with **mathjs** syntax. Pass each Slider/field binding as a **top-level** key in \`args\` (e.g. \`"a": { "path": "/a" }\`) so updates stay reactive; nest paths only as documented.
+
+**\`series_expr\` (required):** Every \`series_expr\` call **must** include \`expression\`, \`xMin\`, \`xMax\`, and \`steps\` as **top-level** \`args\` keys. That includes **each** \`functionCall\` used for \`LineChart\` / \`AreaChart\` data — e.g. \`categories\` **and** **every** \`series[].values\` row. Do **not** omit the sweep because you already passed coefficients (\`p\`, \`r\`, …): without \`xMin\`/\`xMax\`/\`steps\` the host rejects the call and the chart shows **“No series data”**. Use the **same** \`xMin\` / \`xMax\` / \`steps\` for all series on one chart (and for \`categories\` if you derive labels from the same sweep) so points align. \`xMin\`, \`xMax\`, and \`steps\` may be literals or \`{ "path": "..." }\`.
+
+For \`Text\`, wrap with \`toString\` around \`math_eval\` so \`text\` stays a string. **Slider (v0.9 host):** optional \`decimalPlaces\` (\`0\`–\`3\`) or \`step\` for fractional values; omit for integer steps.
+
+**Charts:** A \`LineChart\` \`series\` binding may resolve to a plain \`number[]\` (e.g. one \`series_expr\`) — the host renders it as one line. For **multiple** named series, each row’s \`values\` \`series_expr\` still needs the full sweep keys above. Give object rows a \`name\` when you need the legend label.
 
 **Button actions:** Besides catalog \`openUrl\` via \`functionCall\`, this app supports host events such as \`host.openUrl\` in \`action.event.name\` (see copy-paste template below).`;
 }
 
 function v09WorkedExampleBlock(): string {
-  return `### Copy-paste template (v0.9) — minimal panel + host.openUrl button
+  return `### Copy-paste template (v0.9) — minimal panel + \`Spacer\` toolbar + host.openUrl button
 \`\`\`
-{"version":"v0.9","createSurface":{"surfaceId":"main","catalogId":"https://a2ui.org/specification/v0_9/basic_catalog.json"}}
+{"version":"v0.9","createSurface":{"surfaceId":"main","catalogId":"${A2UI_V09_HOST_CATALOG_JSON_URL}"}}
 {"version":"v0.9","updateComponents":{"surfaceId":"main","components":[
-  {"id":"root","component":"Column","children":["title","openBtn"],"justify":"start","align":"stretch"},
-  {"id":"title","component":"Text","text":"A2UI v0.9 host.openUrl test","variant":"h2"},
+  {"id":"root","component":"Column","children":["bar"],"justify":"start","align":"stretch"},
+  {"id":"bar","component":"Row","children":["title","gap","openBtn"],"justify":"start","align":"center"},
+  {"id":"title","component":"Text","text":"A2UI v0.9 host test","variant":"h2"},
+  {"id":"gap","component":"Spacer","weight":1},
   {"id":"openBtn","component":"Button","child":"openBtnText","variant":"primary","action":{"event":{"name":"host.openUrl","context":{"url":"https://example.com"}}}},
   {"id":"openBtnText","component":"Text","text":"Open example.com","variant":"body"}
 ]}}

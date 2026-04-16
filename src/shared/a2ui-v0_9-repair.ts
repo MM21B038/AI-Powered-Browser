@@ -1,4 +1,4 @@
-import { A2UI_V09_BASIC_CATALOG_JSON_URL, A2UI_V09_VERSION } from "./a2ui-v0_9-constants";
+import { A2UI_V09_HOST_CATALOG_JSON_URL, A2UI_V09_VERSION } from "./a2ui-v0_9-constants";
 
 function isRecord(x: unknown): x is Record<string, unknown> {
   return x !== null && typeof x === "object" && !Array.isArray(x);
@@ -19,6 +19,33 @@ function stripLineComments(text: string): string {
 
 function stripLoadingSentinels(text: string): string {
   return text.replace(/\[Loading root\.\.\.\]\s*/g, "");
+}
+
+function normalizeIconComponentRow(c: any): boolean {
+  if (!isRecord(c) || c.component !== "Icon") return false;
+  let changed = false;
+  // LLMs often emit `iconName`; catalog requires `name`. `unevaluatedProperties: false` rejects `iconName`.
+  if (typeof (c as any).iconName === "string" && (c as any).name === undefined) {
+    (c as any).name = (c as any).iconName;
+    delete (c as any).iconName;
+    changed = true;
+  }
+  // `size` is not in the catalog; strip so the line validates (host uses default 24px).
+  if ("size" in c) {
+    delete (c as any).size;
+    changed = true;
+  }
+  return changed;
+}
+
+function maybeFixUpdateComponentsIcons(msg: any): boolean {
+  const uc = msg?.updateComponents;
+  if (!uc || !Array.isArray(uc.components)) return false;
+  let changed = false;
+  for (const c of uc.components) {
+    if (normalizeIconComponentRow(c)) changed = true;
+  }
+  return changed;
 }
 
 function maybeFixUpdateDataModelShape(msg: any): { changed: boolean; out: any[] } {
@@ -88,7 +115,7 @@ function maybeFixUpdateDataModelShape(msg: any): { changed: boolean; out: any[] 
  * Repair common "almost v0.9" outputs into valid v0.9 NDJSON:
  * - Loose component rows without updateComponents wrapper
  * - updateDataModel with wrong key (dataModel -> value)
- * - Non-catalog components: LineChart -> Image + sparkline_svg when possible
+ * - Non-catalog components: loose LineChart rows -> host `LineChart` when a series path is present (else pass through)
  */
 export function repairA2uiV09JsonlForHost(input: string, opts: { surfaceId: string }): string | null {
   const surfaceId = opts.surfaceId.trim();
@@ -105,6 +132,7 @@ export function repairA2uiV09JsonlForHost(input: string, opts: { surfaceId: stri
     for (const l of lines) {
       try {
         const j = JSON.parse(l) as any;
+        if (maybeFixUpdateComponentsIcons(j)) changed = true;
         const r = maybeFixUpdateDataModelShape(j);
         if (r.changed) changed = true;
         for (const msg of r.out) fixed.push(JSON.stringify(msg));
@@ -125,7 +153,7 @@ export function repairA2uiV09JsonlForHost(input: string, opts: { surfaceId: stri
       const obj = JSON.parse(line) as any;
       if (!isRecord(obj)) continue;
       if (typeof obj.id === "string" && typeof obj.component === "string") {
-        // Basic repair: LineChart -> Image sparkline if possible.
+        // Loose LineChart -> host LineChart with bound numeric array, or Image + sparkline_svg fallback.
         if (obj.component === "LineChart") {
           const seriesPath =
             typeof (obj as any).data?.path === "string"
@@ -133,18 +161,27 @@ export function repairA2uiV09JsonlForHost(input: string, opts: { surfaceId: stri
               : typeof (obj as any).series?.path === "string"
                 ? (obj as any).series.path
                 : null;
-          components.push({
-            id: obj.id,
-            component: "Image",
-            url: seriesPath
-              ? { call: "sparkline_svg", args: { series: { path: seriesPath } }, returnType: "string" }
-              : "",
-            description: "Chart",
-            fit: "contain",
-            variant: "largeFeature",
-          });
+          if (seriesPath) {
+            components.push({
+              id: obj.id,
+              component: "LineChart",
+              series: [{ name: "Series", values: { path: seriesPath } }],
+              heightPx: typeof (obj as any).heightPx === "number" ? (obj as any).heightPx : 280,
+              showLegend: false,
+            });
+          } else {
+            components.push({
+              id: obj.id,
+              component: "Image",
+              url: "",
+              description: "Chart",
+              fit: "contain",
+              variant: "largeFeature",
+            });
+          }
           continue;
         }
+        normalizeIconComponentRow(obj);
         components.push(obj);
       }
     } catch {
@@ -157,7 +194,7 @@ export function repairA2uiV09JsonlForHost(input: string, opts: { surfaceId: stri
   const repaired = [
     JSON.stringify({
       version: A2UI_V09_VERSION,
-      createSurface: { surfaceId, catalogId: A2UI_V09_BASIC_CATALOG_JSON_URL },
+      createSurface: { surfaceId, catalogId: A2UI_V09_HOST_CATALOG_JSON_URL },
     }),
     JSON.stringify({
       version: A2UI_V09_VERSION,

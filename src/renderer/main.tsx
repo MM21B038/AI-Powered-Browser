@@ -7,6 +7,7 @@ import "@fontsource/exo-2/latin-700.css";
 import "@fontsource/orbitron/latin-500.css";
 import "@fontsource/orbitron/latin-600.css";
 import "@fontsource/orbitron/latin-700.css";
+import "./a2ui-material-symbols-fonts";
 import "./index.css";
 import { ShellInjector } from "./ShellInjector";
 

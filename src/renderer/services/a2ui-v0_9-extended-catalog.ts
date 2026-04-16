@@ -1,6 +1,66 @@
 import { z } from "zod";
 import { Catalog } from "@a2ui/web_core/v0_9";
 import { basicCatalog } from "@a2ui/react/v0_9";
+import { a2uiV09DynamicNumberSchema } from "./a2ui-v0_9-dynamic-number-schema";
+import {
+  clampSteps,
+  evaluateMathExpression,
+  MATH_EXPR_MAX_LENGTH,
+  safeNum,
+} from "./a2ui-v0_9-math-catalog-helpers";
+
+function currencyNarrowSymbolFor(currency: string): string {
+  try {
+    const parts = new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency.toUpperCase(),
+      currencyDisplay: "narrowSymbol",
+    }).formatToParts(1);
+    return parts.find((p) => p.type === "currency")?.value ?? "$";
+  } catch {
+    return "$";
+  }
+}
+
+/** Manual K/M/B/T + currency symbol when `Intl` compact notation is unavailable. */
+function formatCompactCurrencyManual(value: number, currency: string, maxFractionDigits: number): string {
+  if (!Number.isFinite(value)) return "";
+  const ax = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  const cur = currency.toUpperCase();
+  if (ax < 1000) {
+    try {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: cur,
+        maximumFractionDigits: maxFractionDigits,
+      }).format(value);
+    } catch {
+      return `${sign}${currencyNarrowSymbolFor(cur)}${ax.toFixed(maxFractionDigits)}`;
+    }
+  }
+  const tiers: readonly [number, string][] = [
+    [1e12, "T"],
+    [1e9, "B"],
+    [1e6, "M"],
+    [1e3, "K"],
+  ];
+  let divisor = 1;
+  let suffix = "";
+  for (const [thr, suf] of tiers) {
+    if (ax >= thr) {
+      divisor = thr;
+      suffix = suf;
+      break;
+    }
+  }
+  const scaled = ax / divisor;
+  const fd = scaled >= 100 ? 0 : Math.min(2, maxFractionDigits);
+  const raw =
+    fd === 0 ? String(Math.round(scaled)) : String(Number.parseFloat(scaled.toFixed(fd)));
+  const sym = currencyNarrowSymbolFor(cur);
+  return `${sign}${sym}${raw}${suffix}`;
+}
 
 function buildSparklineDataUrl(series: number[]): string {
   const w = 720;
@@ -226,6 +286,47 @@ const FormatPercentFn = {
   },
 } as const;
 
+const FormatCompactCurrencyFn = {
+  name: "format_compact_currency",
+  returnType: "string",
+  schema: z.object({
+    value: z.number(),
+    currency: z.string().optional(),
+    maxFractionDigits: z.number().optional(),
+    locale: z.string().optional(),
+  }),
+  execute: ({
+    value,
+    currency,
+    maxFractionDigits,
+    locale,
+  }: {
+    value: number;
+    currency?: string;
+    maxFractionDigits?: number;
+    locale?: string;
+  }) => {
+    const cur = (currency || "USD").toUpperCase();
+    const mfd =
+      typeof maxFractionDigits === "number" ? Math.max(0, Math.min(4, Math.floor(maxFractionDigits))) : 2;
+    if (!Number.isFinite(value)) return "";
+    const loc = locale?.trim() || undefined;
+    try {
+      const opts: Intl.NumberFormatOptions = {
+        style: "currency",
+        currency: cur,
+        notation: "compact",
+        compactDisplay: "short",
+        maximumFractionDigits: mfd,
+        minimumFractionDigits: 0,
+      };
+      return new Intl.NumberFormat(loc, opts).format(value);
+    } catch {
+      return formatCompactCurrencyManual(value, cur, mfd);
+    }
+  },
+} as const;
+
 const MovingAverageFn = {
   name: "moving_average",
   returnType: "array",
@@ -253,10 +354,71 @@ const MovingAverageFn = {
   },
 } as const;
 
-export function buildA2uiV09ExtendedCatalog(): any {
-  const components = Array.from((basicCatalog as any).components?.values?.() ?? []) as any[];
-  const baseFns = Array.from((basicCatalog as any).functions?.values?.() ?? []) as any[];
-  const extra = [
+/**
+ * Reactive math: pass model inputs as **top-level** arg keys (e.g. `a`, `b`) with `{ path }` or numbers
+ * so the DataContext invalidates when those paths change. Nested objects under `args` are not tracked.
+ */
+const MathEvalFn = {
+  name: "math_eval",
+  returnType: "number",
+  schema: z
+    .object({
+      expression: z.string().max(MATH_EXPR_MAX_LENGTH),
+    })
+    .passthrough()
+    .describe(
+      "Evaluate a mathjs expression. Extra keys (besides `expression`) become variables; bind with `{ path }` for reactivity."
+    ),
+  execute: (args: Record<string, unknown>) => {
+    const expression = String(args.expression ?? "");
+    const scope: Record<string, number> = {};
+    for (const [k, v] of Object.entries(args)) {
+      if (k === "expression") continue;
+      scope[k] = safeNum(v, 0);
+    }
+    const n = evaluateMathExpression(expression, scope);
+    return Number.isFinite(n) ? n : 0;
+  },
+} as const;
+
+const SeriesExprFn = {
+  name: "series_expr",
+  returnType: "array",
+  schema: z
+    .object({
+      expression: z.string().max(MATH_EXPR_MAX_LENGTH),
+      xMin: a2uiV09DynamicNumberSchema,
+      xMax: a2uiV09DynamicNumberSchema,
+      steps: a2uiV09DynamicNumberSchema,
+    })
+    .passthrough()
+    .describe(
+      "Build `steps` Y values for x from `xMin` to `xMax`. Sweep bounds and `steps` accept literals or `{ path }` like other dynamic numbers. Expression uses swept `x` plus extra reactive variable keys."
+    ),
+  execute: (args: Record<string, unknown>) => {
+    const expression = String(args.expression ?? "");
+    const xMin = safeNum(args.xMin, 0);
+    const xMax = safeNum(args.xMax, 1);
+    const steps = clampSteps(safeNum(args.steps, 32));
+    const scopeBase: Record<string, number> = {};
+    for (const [k, v] of Object.entries(args)) {
+      if (["expression", "xMin", "xMax", "steps"].includes(k)) continue;
+      scopeBase[k] = safeNum(v, 0);
+    }
+    const out: number[] = [];
+    for (let i = 0; i < steps; i++) {
+      const t = steps <= 1 ? 0 : i / (steps - 1);
+      const x = xMin + (xMax - xMin) * t;
+      const n = evaluateMathExpression(expression, { ...scopeBase, x });
+      out.push(Number.isFinite(n) ? n : 0);
+    }
+    return out;
+  },
+} as const;
+
+/** Extra expression/catalog functions registered for both extended and host catalogs. */
+export function getA2uiV09ExtraCatalogFunctions(): readonly any[] {
+  return [
     ToStringFn,
     ConcatFn,
     ArrayLengthFn,
@@ -267,9 +429,18 @@ export function buildA2uiV09ExtendedCatalog(): any {
     GroupCountFn,
     FormatCurrencyFn,
     FormatPercentFn,
+    FormatCompactCurrencyFn,
     MovingAverageFn,
+    MathEvalFn,
+    SeriesExprFn,
   ];
+}
 
+/** Full upstream basic catalog id + all components (legacy / tests). */
+export function buildA2uiV09ExtendedCatalog(): any {
+  const components = Array.from((basicCatalog as any).components?.values?.() ?? []) as any[];
+  const baseFns = Array.from((basicCatalog as any).functions?.values?.() ?? []) as any[];
+  const extra = getA2uiV09ExtraCatalogFunctions();
   // Keep the same id as the basic catalog so createSurface catalogId still matches.
   return new Catalog((basicCatalog as any).id, components, [...baseFns, ...extra]);
 }

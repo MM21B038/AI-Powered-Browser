@@ -1,7 +1,7 @@
 import { MessageProcessor } from "@a2ui/web_core/v0_9";
-import { A2UI_V09_BASIC_CATALOG_JSON_URL } from "../../shared/a2ui-v0_9-constants";
+import { A2UI_V09_HOST_CATALOG_JSON_URL } from "../../shared/a2ui-v0_9-constants";
 import type { A2uiClientAction } from "@a2ui/web_core/v0_9/schema/client-to-server.js";
-import { buildA2uiV09ExtendedCatalog } from "./a2ui-v0_9-extended-catalog";
+import { buildA2uiV09HostCatalog } from "./a2ui-v0_9-host-catalog";
 
 /**
  * Singleton v0.9 message processor for renderer surfaces.
@@ -11,7 +11,7 @@ class A2uiV09Runtime {
   readonly processor: any;
 
   constructor() {
-    const catalog = buildA2uiV09ExtendedCatalog();
+    const catalog = buildA2uiV09HostCatalog();
     this.processor = new MessageProcessor([catalog], (action: A2uiClientAction) => {
       try {
         window.dispatchEvent(new CustomEvent("a2ui-v0_9-action", { detail: action }));
@@ -27,7 +27,7 @@ class A2uiV09Runtime {
   }
 
   getCatalogId(): string {
-    return A2UI_V09_BASIC_CATALOG_JSON_URL;
+    return A2UI_V09_HOST_CATALOG_JSON_URL;
   }
 
   processMessages(messages: unknown[]): void {
@@ -64,11 +64,8 @@ function computeTodoStats(surface: any): void {
     pending: Math.max(0, total - completed),
   };
   surface?.dataModel?.set?.("/stats", stats);
-  surface?.dataModel?.set?.("/statsText", {
-    total: String(stats.total),
-    completed: String(stats.completed),
-    pending: String(stats.pending),
-  });
+  // Do not write `/statsText` here: that path is a common binding for human-readable strings
+  // (e.g. search result counts). Writing an object would crash Text renders and take down the shell.
 }
 
 export function ensureTodoStatsHook(surface: any): void {
@@ -163,12 +160,22 @@ function computeCompound(surface: any): void {
   const n = clamp(Math.round(safeNum(dm.get("/ci/n"), 12)), 1, 365);
   const r = ratePct / 100;
 
-  const series: number[] = [];
+  // High-resolution samples so LineChart shows a smooth "snowball" curve (not yearly steps only).
+  const yearly: number[] = [];
   for (let y = 0; y <= years; y++) {
-    const fv = p * Math.pow(1 + r / n, n * y);
+    yearly.push(p * Math.pow(1 + r / n, n * y));
+  }
+  const chartSteps = Math.min(
+    200,
+    Math.max(24, Math.ceil(years * 48) || 24)
+  );
+  const series: number[] = [];
+  for (let i = 0; i <= chartSteps; i++) {
+    const t = years * (i / chartSteps);
+    const fv = p * Math.pow(1 + r / n, n * t);
     series.push(fv);
   }
-  const fv = series[series.length - 1] ?? p;
+  const fv = yearly[yearly.length - 1] ?? p;
   const interest = fv - p;
   const chartUrl = buildSparklineSvg(series);
 
@@ -178,7 +185,10 @@ function computeCompound(surface: any): void {
     chartUrl,
     fvText: formatMoney(fv),
     interestText: formatMoney(interest),
+    /** Y values for LineChart / `series_expr`-style bindings (smooth curve). */
     series,
+    /** One point per whole year (table / discrete readouts). */
+    seriesYearly: yearly,
   });
 }
 

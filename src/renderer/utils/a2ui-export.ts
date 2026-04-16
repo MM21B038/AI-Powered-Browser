@@ -1,4 +1,8 @@
 import * as htmlToImage from "html-to-image";
+import {
+  A2UI_V09_BASIC_CATALOG_JSON_URL,
+  A2UI_V09_HOST_CATALOG_JSON_URL,
+} from "../../shared/a2ui-v0_9-constants";
 
 function escapeHtml(s: string): string {
   return s
@@ -109,8 +113,20 @@ export async function buildA2uiStandaloneHtml(meta: {
     const { injectStyles } = await import("https://esm.sh/@a2ui/react@0.9.0-alpha.0/styles");
     injectStyles();
 
+    const HOST_CATALOG_ID = ${JSON.stringify(A2UI_V09_HOST_CATALOG_JSON_URL)};
+    const BASIC_CATALOG_ID = ${JSON.stringify(A2UI_V09_BASIC_CATALOG_JSON_URL)};
+    const msgsNorm = msgs.map((m) => {
+      if (m && typeof m === "object" && m.createSurface && m.createSurface.catalogId === HOST_CATALOG_ID) {
+        return {
+          ...m,
+          createSurface: { ...m.createSurface, catalogId: BASIC_CATALOG_ID },
+        };
+      }
+      return m;
+    });
+
     const mp = new MessageProcessor([basicCatalog], (a) => console.log("[A2UI v0.9 action]", a));
-    mp.processMessages(msgs);
+    mp.processMessages(msgsNorm);
     const surface = mp.model.getSurface(${JSON.stringify(meta.surfaceId)});
     const App = () => React.createElement(A2uiSurface, { surface });
     const rootEl = document.getElementById("a2ui-root");

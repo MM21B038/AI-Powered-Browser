@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useState, type ReactElement } from "react";
+import {
+  Component,
+  useEffect,
+  useMemo,
+  useState,
+  type ErrorInfo,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { A2uiSurface } from "@a2ui/react/v0_9";
 import {
   isLikelyIncompleteStreamingA2uiV09Jsonl,
@@ -8,9 +16,50 @@ import { repairA2uiV09JsonlForHost } from "../../../../shared/a2ui-v0_9-repair";
 import { getA2uiV09Runtime } from "../../../services/a2ui-v0_9-runtime";
 import { ensureCompoundInterestHook, ensureKanbanHook, ensureTodoStatsHook } from "../../../services/a2ui-v0_9-runtime";
 import {
-  A2UI_V09_BASIC_CATALOG_JSON_URL,
+  A2UI_V09_HOST_CATALOG_JSON_URL,
   A2UI_V09_VERSION,
 } from "../../../../shared/a2ui-v0_9-constants";
+import { A2uiJsonlHoverCopyOverlay } from "../../A2uiJsonlHoverCopy";
+
+type A2uiV09SurfaceErrorBoundaryState = { hasError: boolean };
+
+class A2uiV09SurfaceErrorBoundary extends Component<
+  { children: ReactNode; surfaceId: string },
+  A2uiV09SurfaceErrorBoundaryState
+> {
+  override state: A2uiV09SurfaceErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): A2uiV09SurfaceErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  override componentDidCatch(error: Error, info: ErrorInfo): void {
+    try {
+      void window.electronAPI?.debugLog?.({
+        source: "a2ui-v0_9-chat-surface",
+        message: "A2uiSurface render error",
+        data: {
+          surfaceId: this.props.surfaceId,
+          error: error.message,
+          componentStack: info.componentStack?.slice(0, 500),
+        },
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  override render(): ReactNode {
+    if (this.state.hasError) {
+      return (
+        <div className="a2ui-chat-surface a2ui-chat-surface--error mt-2 rounded-md border border-[var(--border-subtle)] bg-[var(--bg2)] p-3 text-sm text-[var(--text-muted)] a2ui-chat-surface__jsonl-wrap">
+          Something went wrong rendering this panel. Try a new message or simplify the UI payload.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export function A2uiV09ChatSurface(props: {
   surfaceId: string;
@@ -79,7 +128,7 @@ export function A2uiV09ChatSurface(props: {
               version: A2UI_V09_VERSION,
               createSurface: {
                 surfaceId: props.surfaceId,
-                catalogId: A2UI_V09_BASIC_CATALOG_JSON_URL,
+                catalogId: A2UI_V09_HOST_CATALOG_JSON_URL,
               },
             },
             ...msgs,
@@ -152,14 +201,16 @@ export function A2uiV09ChatSurface(props: {
 
   if (issue) {
     return (
-      <div className="a2ui-chat-surface a2ui-chat-surface--error mt-2 rounded-md border border-[var(--border-subtle)] bg-[var(--bg2)] p-3 text-sm text-[var(--text-muted)]">
+      <div className="a2ui-chat-surface a2ui-chat-surface--error mt-2 rounded-md border border-[var(--border-subtle)] bg-[var(--bg2)] p-3 text-sm text-[var(--text-muted)] a2ui-chat-surface__jsonl-wrap">
+        <A2uiJsonlHoverCopyOverlay jsonl={props.jsonl} />
         {issue}
       </div>
     );
   }
   if (!hasSurface || !surface) {
     return (
-      <div className="a2ui-chat-surface a2ui-chat-surface--panel">
+      <div className="a2ui-chat-surface a2ui-chat-surface--panel a2ui-chat-surface__jsonl-wrap">
+        <A2uiJsonlHoverCopyOverlay jsonl={props.jsonl} />
         <div className="a2ui-chat-surface-building" role="status" aria-live="polite">
           <p className="a2ui-chat-surface-building__label">Generating interface…</p>
         </div>
@@ -168,7 +219,8 @@ export function A2uiV09ChatSurface(props: {
   }
 
   return (
-    <div className="a2ui-chat-surface a2ui-chat-surface--panel a2ui-chat-surface--ready">
+    <div className="a2ui-chat-surface a2ui-chat-surface--panel a2ui-chat-surface--ready a2ui-chat-surface__jsonl-wrap">
+      <A2uiJsonlHoverCopyOverlay jsonl={props.jsonl} />
       {isFixing ? (
         <div className="a2ui-chat-surface__updating" aria-live="polite">
           Fixing UI…
@@ -178,7 +230,9 @@ export function A2uiV09ChatSurface(props: {
           Updating UI…
         </div>
       ) : null}
-      <A2uiSurface surface={surface as any} />
+      <A2uiV09SurfaceErrorBoundary surfaceId={props.surfaceId}>
+        <A2uiSurface surface={surface as any} />
+      </A2uiV09SurfaceErrorBoundary>
     </div>
   );
 }

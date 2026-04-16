@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { A2UI_V09_HOST_CATALOG_JSON_URL } from "./a2ui-v0_9-constants";
 import { validateA2uiV09JsonlLinesStrict } from "./a2ui-v0_9-validate";
 
 describe("validateA2uiV09JsonlLinesStrict", () => {
@@ -8,7 +9,7 @@ describe("validateA2uiV09JsonlLinesStrict", () => {
         version: "v0.9",
         createSurface: {
           surfaceId: "s",
-          catalogId: "https://a2ui.org/specification/v0_9/basic_catalog.json",
+          catalogId: A2UI_V09_HOST_CATALOG_JSON_URL,
         },
       }),
     ].join("\n");

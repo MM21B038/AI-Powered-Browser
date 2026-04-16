@@ -45,6 +45,7 @@ import {
   downloadTextFile,
 } from "../utils/a2ui-export";
 import { isLikelyIncompleteStreamingA2uiJsonl } from "../../shared/a2ui-jsonl";
+import { A2uiJsonlHoverCopyOverlay } from "./A2uiJsonlHoverCopy";
 
 /** Short coalesce while the assistant stream appends characters (shell waits for one HTTP response). */
 const A2UI_JSONL_DEBOUNCE_MS = 32;
@@ -346,11 +347,16 @@ export function A2uiChatSurface(props: {
     }
   };
 
+  const jsonlForCopy = preparedPipeline.trim() || props.jsonl.trim();
+
   return (
     <A2uiSurfaceErrorBoundary surfaceId={props.surfaceId}>
       <div
-        className={`a2ui-chat-surface a2ui-chat-surface--panel${surfaceIssue || !panelHasTree ? "" : " a2ui-chat-surface--ready"}`}
+        className={`a2ui-chat-surface a2ui-chat-surface--panel a2ui-chat-surface__jsonl-wrap${
+          surfaceIssue || !panelHasTree ? "" : " a2ui-chat-surface--ready"
+        }`}
       >
+        <A2uiJsonlHoverCopyOverlay jsonl={jsonlForCopy} />
         {surfaceIssue ? (
           <div className="text-sm text-[var(--text-muted)]">{surfaceIssue}</div>
         ) : !panelHasTree ? (

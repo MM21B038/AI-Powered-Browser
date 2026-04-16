@@ -188,6 +188,56 @@
   min-width: 0;
 }
 
+/* NDJSON copy on hover (parent needs .a2ui-chat-surface__jsonl-wrap { position: relative }) */
+.a2ui-chat-surface__jsonl-wrap {
+  position: relative;
+}
+
+.a2ui-chat-surface__jsonl-hover-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 6;
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.25rem 0.3rem;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+  pointer-events: none;
+}
+
+.a2ui-chat-surface__jsonl-copy-btn {
+  font-size: 0.72rem;
+  line-height: 1.2;
+  font-weight: 600;
+  padding: 0.32rem 0.55rem;
+  border-radius: 0.35rem;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 80%, var(--accent) 20%);
+  background: color-mix(in srgb, var(--bg0) 92%, var(--accent) 8%);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--bg0) 65%, transparent);
+}
+
+.a2ui-chat-surface__jsonl-copy-btn:hover {
+  background: color-mix(in srgb, var(--bg1) 88%, var(--accent) 12%);
+}
+
+@media (hover: hover) {
+  .a2ui-chat-surface__jsonl-wrap:hover .a2ui-chat-surface__jsonl-hover-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* Touch / no fine hover: keep control visible so copy is always reachable */
+@media (hover: none) {
+  .a2ui-chat-surface__jsonl-hover-actions {
+    opacity: 0.94;
+    pointer-events: auto;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .a2ui-chat-surface-building__dot,
   .a2ui-chat-surface-building__bar {
