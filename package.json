@@ -21,7 +21,7 @@
     "knip": "knip --include files,dependencies",
     "depcheck": "npx depcheck --ignores=cross-env,tailwindcss,wait-on,zod,sqlite3",
     "test": "vitest run",
-    "postinstall": "electron-rebuild -f -w sqlite3"
+    "postinstall": "cd node_modules/sqlite3 && npx node-gyp rebuild --target=41.0.3 --arch=x64 --dist-url=https://electronjs.org/headers --module_name=node_sqlite3 --module_path=./build/Release"
   },
   "keywords": [
     "browser",
