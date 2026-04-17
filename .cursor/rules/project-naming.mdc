@@ -1,0 +1,15 @@
+---
+description: File and folder naming for Autonomous Browser (kebab-case dirs, PascalCase components)
+alwaysApply: true
+---
+
+# Project naming (files and directories)
+
+- **Directories** under `src/`, `electron/`, `docs/`, and `scripts/`: **kebab-case only** — lowercase words separated by single hyphens (e.g. `tools-hub`, `request-workbench`). No `camelCase`, `PascalCase`, or `snake_case` folder names. Short single-word roots are fine (`src`, `modals`, `browser`, `ipc`).
+- **React component files**: `PascalCase.tsx`.
+- **Hooks**: `useSomething.ts`.
+- **Other TypeScript modules** (utils, stores, services, types): `kebab-case.ts`.
+- **Tests**: `test-*.ts` or `spec-*.ts` (prefix style).
+- **Styles**: `style-*.css` (prefix style).
+
+New folders must pass `npm run check:dirs`. See `docs/project-structure-and-naming.md`.

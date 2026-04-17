@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+/* Scan markup and components so utility classes are generated */
+@source "./browser/shell-body.html";
+@source "../../index.html";
+@source "../**/*.{ts,tsx}";
+
+/* body.theme-* tokens (--bg0, --text, …) — must precede @theme bridge */
+@import "./styles/app.css";
+
+@import "./styles/tailwind-theme.css";
+
+@import "./styles/style-chat-code-syntax.css";
+@import "./styles/style-screenshot-library.css";
+@import "./styles/style-ai-chat-tool-mentions.css";
+@import "./styles/style-a2ui-chat-surface.css";
+@import "./styles/style-a2ui-host-tokens.css";
+@import "./styles/style-calculator-widget.css";

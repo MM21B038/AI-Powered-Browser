@@ -1,0 +1,106 @@
+/**
+ * VS Code Dark+–inspired token colors for chat fenced blocks (highlight.js).
+ * Scoped so only .md-codeblock code.hljs is affected.
+ */
+
+.md-codeblock pre code.hljs {
+  color: #d4d4d4;
+  background: transparent;
+}
+
+.md-codeblock pre code.hljs .hljs-keyword,
+.md-codeblock pre code.hljs .hljs-selector-tag,
+.md-codeblock pre code.hljs .hljs-selector-id,
+.md-codeblock pre code.hljs .hljs-selector-class,
+.md-codeblock pre code.hljs .hljs-section,
+.md-codeblock pre code.hljs .hljs-link,
+.md-codeblock pre code.hljs .hljs-meta .hljs-keyword {
+  color: #c586c0;
+}
+
+.md-codeblock pre code.hljs .hljs-string,
+.md-codeblock pre code.hljs .hljs-attr,
+.md-codeblock pre code.hljs .hljs-template-tag,
+.md-codeblock pre code.hljs .hljs-template-variable,
+.md-codeblock pre code.hljs .hljs-addition .hljs-string {
+  color: #ce9178;
+}
+
+.md-codeblock pre code.hljs .hljs-comment,
+.md-codeblock pre code.hljs .hljs-quote,
+.md-codeblock pre code.hljs .hljs-doctag {
+  color: #6a9955;
+  font-style: italic;
+}
+
+.md-codeblock pre code.hljs .hljs-number,
+.md-codeblock pre code.hljs .hljs-literal,
+.md-codeblock pre code.hljs .hljs-regexp,
+.md-codeblock pre code.hljs .hljs-bullet {
+  color: #b5cea8;
+}
+
+.md-codeblock pre code.hljs .hljs-title,
+.md-codeblock pre code.hljs .hljs-built_in,
+.md-codeblock pre code.hljs .hljs-type,
+.md-codeblock pre code.hljs .hljs-class .hljs-title {
+  color: #4ec9b0;
+}
+
+.md-codeblock pre code.hljs .hljs-function .hljs-title,
+.md-codeblock pre code.hljs .hljs-title.function_ {
+  color: #dcdcaa;
+}
+
+.md-codeblock pre code.hljs .hljs-variable,
+.md-codeblock pre code.hljs .hljs-name,
+.md-codeblock pre code.hljs .hljs-attribute,
+.md-codeblock pre code.hljs .hljs-params {
+  color: #9cdcfe;
+}
+
+.md-codeblock pre code.hljs .hljs-meta,
+.md-codeblock pre code.hljs .hljs-meta-string,
+.md-codeblock pre code.hljs .hljs-subst {
+  color: #569cd6;
+}
+
+.md-codeblock pre code.hljs .hljs-symbol,
+.md-codeblock pre code.hljs .hljs-formula {
+  color: #c586c0;
+}
+
+.md-codeblock pre code.hljs .hljs-emphasis {
+  font-style: italic;
+}
+
+.md-codeblock pre code.hljs .hljs-strong {
+  font-weight: 700;
+}
+
+/* Diff: - / + lines (unified diff, patch) */
+.md-codeblock pre code.hljs .hljs-deletion {
+  color: #f97583;
+  background: color-mix(in srgb, #f14c4c 18%, transparent);
+  border-radius: 3px;
+  padding: 0.06em 0;
+}
+
+.md-codeblock pre code.hljs .hljs-addition {
+  color: #85e89d;
+  background: color-mix(in srgb, #3fb950 16%, transparent);
+  border-radius: 3px;
+  padding: 0.06em 0;
+}
+
+.md-codeblock pre code.hljs .hljs-addition .hljs-meta,
+.md-codeblock pre code.hljs .hljs-deletion .hljs-meta {
+  background: transparent;
+}
+
+/* @@ hunk headers */
+.md-codeblock pre code.language-diff .hljs-meta,
+.md-codeblock pre code.hljs .hljs-meta.hljs-keyword {
+  color: #79b8ff;
+  opacity: 0.95;
+}

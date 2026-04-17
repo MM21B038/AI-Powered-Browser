@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+
+# Build outputs (Vite + tsc → dist/electron, dist/renderer)
+dist/
+
+# Windows animated installer bootstrapper (generated)
+installer-bootstrap/build/
+installer-bootstrap/build-resources/
+
+# electron-builder unpacked installers & artifacts (often under dist/ or project root)
+release/
+out/
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+*.snap
+*.blockmap
+*.zip
+*.7z
+
+# Logs & debug
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Test & coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# TypeScript
+*.tsbuildinfo
+
+# Vite / tooling caches
+.vite/
+.cache/
+.eslintcache
+
+# OS junk
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor (uncomment if you do not want these shared)
+# .vscode/
+# .idea/

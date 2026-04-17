@@ -1,0 +1,921 @@
+- generic [active] [ref=e1]:
+  - generic:
+    - generic:
+      - link "Skip to main content" [ref=e2] [cursor=pointer]
+      - link "Accessibility help" [ref=e3] [cursor=pointer]:
+        - /url: https://support.google.com/websearch/answer/181196?hl=en-IN
+      - link "Accessibility feedback" [ref=e4] [cursor=pointer]
+  - generic [ref=e9]:
+    - search [ref=e10]:
+      - generic [ref=e12]:
+        - link "Go to Google Home" [ref=e14] [cursor=pointer]:
+          - /url: https://www.google.com/webhp?hl=en&sa=X&ved=0ahUKEwil-LniieSTAxUw9zgGHR5UAuYQPAgJ
+          - img [ref=e15]
+        - generic [ref=e22]:
+          - generic [ref=e23]:
+            - combobox "Search" [ref=e26]: delhi to chennai flight tomorrow delhi to chennai flight tomorrow
+            - generic [ref=e27]:
+              - button "Clear" [ref=e29] [cursor=pointer]:
+                - img [ref=e31]
+              - generic [ref=e34]:
+                - button "Search by voice" [ref=e35] [cursor=pointer]:
+                  - img [ref=e36]
+                - button "Search by image" [ref=e38] [cursor=pointer]:
+                  - img [ref=e39]
+          - button "Search" [ref=e41] [cursor=pointer]:
+            - img [ref=e44]
+    - generic [ref=e46]:
+      - button "Settings" [ref=e48] [cursor=pointer]:
+        - img [ref=e51]
+      - generic [ref=e54]:
+        - button "Google apps" [ref=e56] [cursor=pointer]:
+          - img [ref=e57]
+        - link "Sign in" [ref=e61] [cursor=pointer]:
+          - /url: https://accounts.google.com/ServiceLogin?hl=en&passive=true&continue=https://www.google.com/search%3Fq%3Ddelhi%2Bto%2Bchennai%2Bflight%2Btomorrow%26sei%3DS1fZadKXNOqv4-EP5-fe-AM&ec=futura_srp_og_si_72236_p
+  - generic [ref=e63]:
+    - navigation [ref=e69]:
+      - generic [ref=e73]:
+        - list [ref=e74]:
+          - listitem [ref=e75]:
+            - link "AI Mode" [ref=e78] [cursor=pointer]:
+              - /url: /search?q=delhi+to+chennai+flight+tomorrow&sca_esv=1bdaceadb8cfd14b&udm=50&fbs=ADc_l-aN0CWEZBOHjofHoaMMDiKpFjzKPapEgCPgp5FnkHrr22I5zutvz3vWeNQbmpz0YdnVLvITuSboblxQQj5ifxYdXkjHv8FPkI2bLqSBiJPC3cLMiUxDLvTcCltsmM49NqFaI7XfUp3pRsxxda-VuJB-wpqjRVsAbgudDIkMuGLI_ixMEYO5MzV7HyVpgjWdRY9svAsq6foPSceOGxOsj_i7BtBeyw&aep=1&ntc=1&sa=X&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ2J8OegQICxAE
+              - generic [ref=e81]: AI Mode
+          - listitem [ref=e82]:
+            - link "All" [disabled] [ref=e83]:
+              - generic [ref=e85]: All
+          - listitem [ref=e86]:
+            - link "Flights" [ref=e87] [cursor=pointer]:
+              - /url: /travel/flights?sca_esv=1bdaceadb8cfd14b&output=search&q=delhi+to+chennai+flight+tomorrow&source=lnms&mode_promoted=true&impression_in_search=true&fbs=ADc_l-aN0CWEZBOHjofHoaMMDiKpFjzKPapEgCPgp5FnkHrr22I5zutvz3vWeNQbmpz0YdnVLvITuSboblxQQj5ifxYdXkjHv8FPkI2bLqSBiJPC3cLMiUxDLvTcCltsmM49NqFaI7XfUp3pRsxxda-VuJB-wpqjRVsAbgudDIkMuGLI_ixMEYO5MzV7HyVpgjWdRY9svAsq6foPSceOGxOsj_i7BtBeyw&ved=1t:200715&ictx=111
+              - generic [ref=e89]: Flights
+          - listitem [ref=e90]:
+            - link "News" [ref=e91] [cursor=pointer]:
+              - /url: /search?sca_esv=1bdaceadb8cfd14b&q=delhi+to+chennai+flight+tomorrow&tbm=nws&source=lnms&fbs=ADc_l-aN0CWEZBOHjofHoaMMDiKpFjzKPapEgCPgp5FnkHrr22I5zutvz3vWeNQbmpz0YdnVLvITuSboblxQQj5ifxYdXkjHv8FPkI2bLqSBiJPC3cLMiUxDLvTcCltsmM49NqFaI7XfUp3pRsxxda-VuJB-wpqjRVsAbgudDIkMuGLI_ixMEYO5MzV7HyVpgjWdRY9svAsq6foPSceOGxOsj_i7BtBeyw&sa=X&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ0pQJegQIERAB
+              - generic [ref=e93]: News
+          - listitem [ref=e94]:
+            - link "Images" [ref=e95] [cursor=pointer]:
+              - /url: /search?sca_esv=1bdaceadb8cfd14b&udm=2&fbs=ADc_l-aN0CWEZBOHjofHoaMMDiKpFjzKPapEgCPgp5FnkHrr22I5zutvz3vWeNQbmpz0YdnVLvITuSboblxQQj5ifxYdXkjHv8FPkI2bLqSBiJPC3cLMiUxDLvTcCltsmM49NqFaI7XfUp3pRsxxda-VuJB-wpqjRVsAbgudDIkMuGLI_ixMEYO5MzV7HyVpgjWdRY9svAsq6foPSceOGxOsj_i7BtBeyw&q=delhi+to+chennai+flight+tomorrow&sa=X&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQtKgLegQIFBAB
+              - generic [ref=e97]: Images
+          - listitem [ref=e98]:
+            - link "Forums" [ref=e99] [cursor=pointer]:
+              - /url: /search?sca_esv=1bdaceadb8cfd14b&udm=18&fbs=ADc_l-aN0CWEZBOHjofHoaMMDiKpFjzKPapEgCPgp5FnkHrr22I5zutvz3vWeNQbmpz0YdnVLvITuSboblxQQj5ifxYdXkjHv8FPkI2bLqSBiJPC3cLMiUxDLvTcCltsmM49NqFaI7XfUp3pRsxxda-VuJB-wpqjRVsAbgudDIkMuGLI_ixMEYO5MzV7HyVpgjWdRY9svAsq6foPSceOGxOsj_i7BtBeyw&q=delhi+to+chennai+flight+tomorrow&sa=X&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQs6gLegQIDxAB
+              - generic [ref=e101]: Forums
+          - listitem [ref=e102]:
+            - link "Videos" [ref=e103] [cursor=pointer]:
+              - /url: /search?sca_esv=1bdaceadb8cfd14b&udm=7&fbs=ADc_l-aN0CWEZBOHjofHoaMMDiKpFjzKPapEgCPgp5FnkHrr22I5zutvz3vWeNQbmpz0YdnVLvITuSboblxQQj5ifxYdXkjHv8FPkI2bLqSBiJPC3cLMiUxDLvTcCltsmM49NqFaI7XfUp3pRsxxda-VuJB-wpqjRVsAbgudDIkMuGLI_ixMEYO5MzV7HyVpgjWdRY9svAsq6foPSceOGxOsj_i7BtBeyw&q=delhi+to+chennai+flight+tomorrow&sa=X&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQtKgLegQIDhAB
+              - generic [ref=e105]: Videos
+          - listitem [ref=e106]:
+            - button "More filters" [ref=e107] [cursor=pointer]:
+              - generic "More filters" [ref=e108]:
+                - generic [ref=e109]:
+                  - generic [ref=e110]: More
+                  - img [ref=e112]
+        - button "Tools" [ref=e115] [cursor=pointer]:
+          - generic [ref=e117]:
+            - generic [ref=e118]: Tools
+            - img [ref=e120]
+    - heading "Search Results" [level=1] [ref=e122]
+    - main [ref=e128]:
+      - region "Ads" [ref=e131]:
+        - generic [ref=e132]:
+          - heading "Sponsored results" [level=2] [ref=e138]
+          - generic [ref=e139]:
+            - generic [ref=e145]:
+              - generic [ref=e151]:
+                - generic [ref=e152]:
+                  - link "Delhi to chennai flight - Fares as low as ₹1,399 ixigo https://www.ixigo.com" [ref=e153] [cursor=pointer]:
+                    - /url: https://www.ixigo.com/
+                    - heading "Delhi to chennai flight - Fares as low as ₹1,399" [level=3] [ref=e154]
+                    - generic [ref=e160]:
+                      - generic [ref=e162]: ixigo
+                      - generic [ref=e163]: https://www.ixigo.com
+                  - button "Why this ad?" [ref=e166] [cursor=pointer]:
+                    - img [ref=e168]
+                - generic [ref=e173]:
+                  - text: Search and book
+                  - emphasis [ref=e174]: flight
+                  - text: tickets, train tickets, buses & hotels at best price. Get the cheapest fares & best
+                  - emphasis [ref=e175]: flight
+                  - text: deals on ixigo. Save time with Automatic Web Check-In.
+                - generic [ref=e177]:
+                  - text: ‎
+                  - link "Book Cheap Flight Tickets" [ref=e178] [cursor=pointer]:
+                    - /url: /aclk?sa=L&pf=1&ai=DChsSEwiq_MDiieSTAxXdm2YCHRjMMKMYACICCAEQDBoCc20&co=1&ase=2&gclid=EAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAAYASADEgKS0vD_BwE&cid=CAAS0gHkaDpH79fy1d0ezKhCrAaHhww9__F_K0H4EbjJ75f1Holh1G0GJ7PLLG-vxEkBv-uRpZilXl1zFtoj8er1gQyv892rDBYfjqhH6GVxWU1ZwQihcqOwheskZODgcYXEdMPLQlLpc4LUQLgcSTPMnLaq9LPGY_mCoM1GZQigdZurWW5KFer6BF36EYstNgVlH_Wkpg4KKqWBlvL0gZ7X50jxpD9ZtOIgI9ZXjiLHKbth9Ck--_V4Sy0idDU9F2r7dRGt1YHpl6c3v8cgHm_d5smN-EM&cce=2&category=acrcp_v1_32&sig=AOD64_1CQOL9cb7vUlKDjlUv60KJCNs1fg&adurl=https://www.ixigo.com/%3Futm_source%3DGoogle_Search%26utm_medium%3Dpaid_search_google%26utm_campaign%3DGeneric_Search_Feb23_NewUser%26utm_source%3DGoogle_Search%26utm_medium%3Dpaid_search_google%26utm_campaign%3DGeneric_Search_Feb23_NewUserGGL%26gad_source%3D1%26gad_campaignid%3D19655732088%26gbraid%3D0AAAAAC5edWBgnB18KSz-8ffur-I_IrJC4%26gclid%3DEAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAAYASADEgKS0vD_BwE&q=
+                  - text: · ‎
+                  - link "Indigo Flights" [ref=e179] [cursor=pointer]:
+                    - /url: https://www.ixigo.com/
+                  - text: · ‎
+                  - link "Flights From Chennai" [ref=e180] [cursor=pointer]:
+                    - /url: /aclk?sa=L&pf=1&ai=DChsSEwiq_MDiieSTAxXdm2YCHRjMMKMYACICCAEQEBoCc20&co=1&ase=2&gclid=EAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAAYASAEEgJkLPD_BwE&cid=CAAS0gHkaDpH79fy1d0ezKhCrAaHhww9__F_K0H4EbjJ75f1Holh1G0GJ7PLLG-vxEkBv-uRpZilXl1zFtoj8er1gQyv892rDBYfjqhH6GVxWU1ZwQihcqOwheskZODgcYXEdMPLQlLpc4LUQLgcSTPMnLaq9LPGY_mCoM1GZQigdZurWW5KFer6BF36EYstNgVlH_Wkpg4KKqWBlvL0gZ7X50jxpD9ZtOIgI9ZXjiLHKbth9Ck--_V4Sy0idDU9F2r7dRGt1YHpl6c3v8cgHm_d5smN-EM&cce=2&category=acrcp_v1_32&sig=AOD64_3XTj2-LxS3S38-1xte-KqJV-Rvkg&adurl=https://www.ixigo.com/%3Futm_source%3DGoogle_Search%26utm_medium%3Dpaid_search_google%26utm_campaign%3DGeneric_Search_Feb23_NewUser%26utm_source%3DGoogle_Search%26utm_medium%3Dpaid_search_google%26utm_campaign%3DGeneric_Search_Feb23_NewUserGGL%26gad_source%3D1%26gad_campaignid%3D19655732088%26gbraid%3D0AAAAAC5edWBgnB18KSz-8ffur-I_IrJC4%26gclid%3DEAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAAYASAEEgJkLPD_BwE&q=
+                  - text: · ‎
+                  - link "Flight Deals of the Day" [ref=e181] [cursor=pointer]:
+                    - /url: https://www.ixigo.com/flights
+              - generic [ref=e187]:
+                - generic [ref=e188]:
+                  - link "Delhi To Chennai Flight Tomorrow MakeMyTrip https://www.makemytrip.com › delhi-chennai" [ref=e189] [cursor=pointer]:
+                    - /url: https://www.makemytrip.com/flight/sem/search?action=FLTSRCH&origin=DEL&destination=MAA&cabinClass=E&tripType=O&deptDate=$Cheapest_D7&retnDate=&noOfAdults=1&noOfChildren=0&noOfInfants=0&intl=false&cmp=SEM%7CM%7CDF%7CG%7CRoute%7CBusiness%7CRoute-AtoC_PWA%7CDF_Route_Exact_6%7CDelhi_Madras_Exact
+                    - heading "Delhi To Chennai Flight Tomorrow" [level=3] [ref=e190]
+                    - generic [ref=e196]:
+                      - generic [ref=e198]: MakeMyTrip
+                      - generic [ref=e199]: https://www.makemytrip.com › delhi-chennai
+                  - button "Why this ad?" [ref=e202] [cursor=pointer]:
+                    - img [ref=e204]
+                - generic [ref=e209]:
+                  - text: Seamless
+                  - emphasis [ref=e210]: Flight
+                  - text: "Booking — Use Code: MMTPROMO on Domestic"
+                  - emphasis [ref=e211]: Flights
+                  - text: . Unlock Extra Discount using Bank Offers. Exclusive Offers on
+                  - emphasis [ref=e212]: Flights
+                  - text: "Use Code: MMTPROMO. Instant Discounts, Book Your"
+                  - emphasis [ref=e213]: Flight
+                  - text: Now! No Cost EMI.
+                - generic [ref=e215]:
+                  - text: ‎
+                  - link "Last Minute Flight Deals" [ref=e216] [cursor=pointer]:
+                    - /url: /aclk?sa=L&pf=1&ai=DChsSEwiq_MDiieSTAxXdm2YCHRjMMKMYACICCAEQERoCc20&co=1&ase=2&gclid=EAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAAYAiAEEgL_RvD_BwE&cid=CAAS0gHkaDpH79fy1d0ezKhCrAaHhww9__F_K0H4EbjJ75f1Holh1G0GJ7PLLG-vxEkBv-uRpZilXl1zFtoj8er1gQyv892rDBYfjqhH6GVxWU1ZwQihcqOwheskZODgcYXEdMPLQlLpc4LUQLgcSTPMnLaq9LPGY_mCoM1GZQigdZurWW5KFer6BF36EYstNgVlH_Wkpg4KKqWBlvL0gZ7X50jxpD9ZtOIgI9ZXjiLHKbth9Ck--_V4Sy0idDU9F2r7dRGt1YHpl6c3v8cgHm_d5smN-EM&cce=2&category=acrcp_v1_32&sig=AOD64_111CL0VM9wFKA_F---VXjiLmLnUA&adurl=https://www.makemytrip.com/flight/sem/search%3Faction%3DFLTSRCH%26origin%3DDEL%26destination%3DMAA%26cabinClass%3DE%26tripType%3DO%26deptDate%3D%24Cheapest_D7%26retnDate%3D%26noOfAdults%3D1%26noOfChildren%3D0%26noOfInfants%3D0%26intl%3Dfalse%26cmp%3DSEM%7CD%7CDF%7CG%7CRoute%7CBusiness%7CRoute-Top40_DT%7CDF_Route_Delhi_Chennai_Exact%7CDelhi_Chennai_Exact%7CRSA%26gad_source%3D1%26gad_campaignid%3D13352712650%26gbraid%3D0AAAAAD5Az1SDOUffZlgX-m4p5aHmElwon%26gclid%3DEAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAAYAiAEEgL_RvD_BwE&q=
+                  - text: · ‎
+                  - link "Find Cheapest Flight Fast" [ref=e217] [cursor=pointer]:
+                    - /url: /aclk?sa=L&pf=1&ai=DChsSEwiq_MDiieSTAxXdm2YCHRjMMKMYACICCAEQExoCc20&co=1&ase=2&gclid=EAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAAYAiAFEgLCgPD_BwE&cid=CAAS0gHkaDpH79fy1d0ezKhCrAaHhww9__F_K0H4EbjJ75f1Holh1G0GJ7PLLG-vxEkBv-uRpZilXl1zFtoj8er1gQyv892rDBYfjqhH6GVxWU1ZwQihcqOwheskZODgcYXEdMPLQlLpc4LUQLgcSTPMnLaq9LPGY_mCoM1GZQigdZurWW5KFer6BF36EYstNgVlH_Wkpg4KKqWBlvL0gZ7X50jxpD9ZtOIgI9ZXjiLHKbth9Ck--_V4Sy0idDU9F2r7dRGt1YHpl6c3v8cgHm_d5smN-EM&cce=2&category=acrcp_v1_32&sig=AOD64_0l82VIVqEaofynwMafjxAVQls_nw&adurl=https://www.makemytrip.com/flight/sem/search%3Faction%3DFLTSRCH%26origin%3DDEL%26destination%3DMAA%26cabinClass%3DE%26tripType%3DO%26deptDate%3D%24Cheapest_D7%26retnDate%3D%26noOfAdults%3D1%26noOfChildren%3D0%26noOfInfants%3D0%26intl%3Dfalse%26cmp%3DSEM%7CD%7CDF%7CG%7CRoute%7CBusiness%7CRoute-Top40_DT%7CDF_Route_Delhi_Chennai_Exact%7CDelhi_Chennai_Exact%7CRSA%26gad_source%3D1%26gad_campaignid%3D13352712650%26gbraid%3D0AAAAAD5Az1SDOUffZlgX-m4p5aHmElwon%26gclid%3DEAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAAYAiAFEgLCgPD_BwE&q=
+                  - text: · ‎
+                  - link "Chennai Flights" [ref=e218] [cursor=pointer]:
+                    - /url: https://www.makemytrip.com/flight/sem/search?action=FLTSRCH&origin=DEL&destination=MAA&cabinClass=E&tripType=O&deptDate=$date_7&retnDate=&noOfAdults=1&noOfChildren=0&noOfInfants=0&intl=false&cmp=SEM%7CD%7CDF%7CG%7CRoute%7CRoute-Top40_DT%7CDF_Route_Delhi_Chennai_Exact%7CDelhi_Chennai_Exact%7CSitelink%7C%7Bcreative%7D&s_kwcid=AL!1631!3!%7Bcreative%7D!%7Bmatchtype%7D!%7Bplacement%7D!%7Bnetwork%7D!!%7Bkeyword%7D
+                  - text: · ‎
+                  - link "Flat 500 Off on Flights" [ref=e219] [cursor=pointer]:
+                    - /url: https://www.makemytrip.com/flights/?cmp=SEM%7CD%7CDF%7CG%7CPMax%7CPerformance-Max%7CDF_Performance_Max%7CFlight%7CSitelink
+                - generic [ref=e221]:
+                  - generic [ref=e222]: "Deal:"
+                  - link "₹500 off on All Flights" [ref=e223] [cursor=pointer]:
+                    - /url: https://www.google.com/aclk?sa=L&pf=1&ai=DChsSEwiq_MDiieSTAxXdm2YCHRjMMKMYACICCAEQDRoCc20&co=1&ase=2&gclid=EAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAAYAiADEgKNTfD_BwE&cid=CAAS0gHkaDpH79fy1d0ezKhCrAaHhww9__F_K0H4EbjJ75f1Holh1G0GJ7PLLG-vxEkBv-uRpZilXl1zFtoj8er1gQyv892rDBYfjqhH6GVxWU1ZwQihcqOwheskZODgcYXEdMPLQlLpc4LUQLgcSTPMnLaq9LPGY_mCoM1GZQigdZurWW5KFer6BF36EYstNgVlH_Wkpg4KKqWBlvL0gZ7X50jxpD9ZtOIgI9ZXjiLHKbth9Ck--_V4Sy0idDU9F2r7dRGt1YHpl6c3v8cgHm_d5smN-EM&cce=2&category=acrcp_v1_32&sig=AOD64_0EFz-zai3QVjxeB7XKryQUZXHizw&nis=4&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQgtsBegQIGBAV&adurl=https://www.makemytrip.com/flights/%3Fcmp%3DSEM%7CD%7CDF%7CG%7CGeneric%7CGeneric-Generic_DT%7CDF_Generic_Exact%7CDFAccount%7CAccountLevel%7CPromotion%7CSPECIALUPI%26gad_source%3D1%26gad_campaignid%3D13352712650%26gbraid%3D0AAAAAD5Az1SDOUffZlgX-m4p5aHmElwon%26gclid%3DEAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAAYAiADEgKNTfD_BwE
+                  - text: · Code SPECIALUPI
+              - generic [ref=e229]:
+                - generic [ref=e230]:
+                  - link "New Delhi (DEL) to Chennai Skyscanner https://www.skyscanner.co.in" [ref=e231] [cursor=pointer]:
+                    - /url: https://www.skyscanner.co.in/routes/del/maa/delhi-indira-gandhi-international-to-chennai.html
+                    - heading "New Delhi (DEL) to Chennai" [level=3] [ref=e232]
+                    - generic [ref=e238]:
+                      - generic [ref=e240]: Skyscanner
+                      - generic [ref=e241]: https://www.skyscanner.co.in
+                  - button "Why this ad?" [ref=e244] [cursor=pointer]:
+                    - img [ref=e246]
+                - generic [ref=e251]:
+                  - text: Direct
+                  - emphasis [ref=e252]: Flights
+                  - text: to
+                  - emphasis [ref=e253]: Chennai
+                  - text: — Compare and find cheap
+                  - emphasis [ref=e254]: flight
+                  - text: tickets from New
+                  - emphasis [ref=e255]: Delhi
+                  - text: (DEL) to
+                  - emphasis [ref=e256]: Chennai
+                  - text: (MAA) Cheap
+                  - emphasis [ref=e257]: Flight
+                  - text: Fares...
+                - generic [ref=e259]:
+                  - text: ‎
+                  - 'link "Skyscanner: Delhi (DEL) to Chennai (MAA)" [ref=e260] [cursor=pointer]':
+                    - /url: /aclk?sa=L&ai=DChsSEwiq_MDiieSTAxXdm2YCHRjMMKMYACICCAEQFBoCc20&ae=2&co=1&ase=2&gclid=EAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAAYAyADEgLRqPD_BwE&cid=CAAS0gHkaDpH79fy1d0ezKhCrAaHhww9__F_K0H4EbjJ75f1Holh1G0GJ7PLLG-vxEkBv-uRpZilXl1zFtoj8er1gQyv892rDBYfjqhH6GVxWU1ZwQihcqOwheskZODgcYXEdMPLQlLpc4LUQLgcSTPMnLaq9LPGY_mCoM1GZQigdZurWW5KFer6BF36EYstNgVlH_Wkpg4KKqWBlvL0gZ7X50jxpD9ZtOIgI9ZXjiLHKbth9Ck--_V4Sy0idDU9F2r7dRGt1YHpl6c3v8cgHm_d5smN-EM&cce=2&category=acrcp_v1_71&sig=AOD64_2O6HiJA2hl7UGaqrrWBF3eajNVfg&adurl=&q=
+                  - text: · ‎
+                  - link "Cheap Flight Fares" [ref=e261] [cursor=pointer]:
+                    - /url: /aclk?sa=L&ai=DChsSEwiq_MDiieSTAxXdm2YCHRjMMKMYACICCAEQFRoCc20&ae=2&co=1&ase=2&gclid=EAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAAYAyAEEgK1gvD_BwE&cid=CAAS0gHkaDpH79fy1d0ezKhCrAaHhww9__F_K0H4EbjJ75f1Holh1G0GJ7PLLG-vxEkBv-uRpZilXl1zFtoj8er1gQyv892rDBYfjqhH6GVxWU1ZwQihcqOwheskZODgcYXEdMPLQlLpc4LUQLgcSTPMnLaq9LPGY_mCoM1GZQigdZurWW5KFer6BF36EYstNgVlH_Wkpg4KKqWBlvL0gZ7X50jxpD9ZtOIgI9ZXjiLHKbth9Ck--_V4Sy0idDU9F2r7dRGt1YHpl6c3v8cgHm_d5smN-EM&cce=2&category=acrcp_v1_71&sig=AOD64_1fYS4QT-k_RCrMqJFkCkX7Qf4z9A&adurl=&q=
+                  - text: · ‎
+                  - link "Flights from Chennai" [ref=e262] [cursor=pointer]:
+                    - /url: https://www.skyscanner.co.in/flights-from/MAA
+                  - text: · ‎
+                  - link "India Flights" [ref=e263] [cursor=pointer]:
+                    - /url: https://www.skyscanner.co.in/flights-to/IN
+              - generic [ref=e269]:
+                - generic [ref=e270]:
+                  - link "Delhi to Chennai Flights - One-way fares from INR7,658* Air India https://www.airindia.com" [ref=e271] [cursor=pointer]:
+                    - /url: https://www.airindia.com/en/book-flights/delhi-to-chennai-flights
+                    - heading "Delhi to Chennai Flights - One-way fares from INR7,658*" [level=3] [ref=e272]
+                    - generic [ref=e278]:
+                      - generic [ref=e280]: Air India
+                      - generic [ref=e281]: https://www.airindia.com
+                  - button "Why this ad?" [ref=e284] [cursor=pointer]:
+                    - img [ref=e286]
+                - generic [ref=e291]:
+                  - text: Fly
+                  - emphasis [ref=e292]: Delhi to chennai
+                  - text: with Air India. Complimentary meals & 15Kg baggage allowance. Stream your favourite movies , TV shows and more with our inflight entertainment.
+                - generic [ref=e294]:
+                  - text: ‎
+                  - link "Up to ₹3000* Off" [ref=e295] [cursor=pointer]:
+                    - /url: https://www.airindia.com/en-in/book-flights/flyai-offer
+                  - text: · ‎
+                  - link "Student Offers" [ref=e296] [cursor=pointer]:
+                    - /url: https://www.airindia.com/in/en/book/exclusive-deals/student-flight-offer.html
+                  - text: · ‎
+                  - link "Special offers" [ref=e297] [cursor=pointer]:
+                    - /url: https://www.airindia.com/in/en/maharaja-club/special-offers.html
+                  - text: · ‎
+                  - link "Book Air India Flights" [ref=e298] [cursor=pointer]:
+                    - /url: /aclk?sa=L&ai=DChsSEwiq_MDiieSTAxXdm2YCHRjMMKMYACICCAEQDhoCc20&co=1&ase=2&gclid=EAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAAYBCAEEgIhTvD_BwE&cid=CAAS0gHkaDpH79fy1d0ezKhCrAaHhww9__F_K0H4EbjJ75f1Holh1G0GJ7PLLG-vxEkBv-uRpZilXl1zFtoj8er1gQyv892rDBYfjqhH6GVxWU1ZwQihcqOwheskZODgcYXEdMPLQlLpc4LUQLgcSTPMnLaq9LPGY_mCoM1GZQigdZurWW5KFer6BF36EYstNgVlH_Wkpg4KKqWBlvL0gZ7X50jxpD9ZtOIgI9ZXjiLHKbth9Ck--_V4Sy0idDU9F2r7dRGt1YHpl6c3v8cgHm_d5smN-EM&cce=2&category=acrcp_v1_32&sig=AOD64_0HVsuM__nWmtcV726ff8maoKTtcg&adurl=&q=
+                  - text: · ‎
+                  - link "15 Kg Baggage Allowance" [ref=e299] [cursor=pointer]:
+                    - /url: /aclk?sa=L&ai=DChsSEwiq_MDiieSTAxXdm2YCHRjMMKMYACICCAEQEhoCc20&co=1&ase=2&gclid=EAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAAYBCAFEgLQ4PD_BwE&cid=CAAS0gHkaDpH79fy1d0ezKhCrAaHhww9__F_K0H4EbjJ75f1Holh1G0GJ7PLLG-vxEkBv-uRpZilXl1zFtoj8er1gQyv892rDBYfjqhH6GVxWU1ZwQihcqOwheskZODgcYXEdMPLQlLpc4LUQLgcSTPMnLaq9LPGY_mCoM1GZQigdZurWW5KFer6BF36EYstNgVlH_Wkpg4KKqWBlvL0gZ7X50jxpD9ZtOIgI9ZXjiLHKbth9Ck--_V4Sy0idDU9F2r7dRGt1YHpl6c3v8cgHm_d5smN-EM&cce=2&category=acrcp_v1_32&sig=AOD64_1fZQCj9gRYy_AGcTDnW4dgxxHDEw&adurl=&q=
+            - button "Hide sponsored results" [ref=e300] [cursor=pointer]:
+              - separator [ref=e301]
+              - generic [ref=e302]:
+                - generic [ref=e303]: Hide sponsored results
+                - img [ref=e305]
+      - generic [ref=e310]:
+        - generic [ref=e315]:
+          - generic [ref=e316]:
+            - heading "Search flights" [level=2] [ref=e318]
+            - generic [ref=e319]:
+              - heading "Flights to Chennai" [level=3] [ref=e322]
+              - button "About this result" [ref=e326] [cursor=pointer]:
+                - generic "About this result" [ref=e327]:
+                  - img [ref=e330]
+          - generic [ref=e332]:
+            - generic [ref=e335]:
+              - generic [ref=e337]:
+                - img [ref=e339]
+                - combobox "New Delhi (DEL),Enter an origin" [ref=e341]: New Delhi (DEL)
+              - generic [ref=e344]:
+                - img [ref=e346]
+                - combobox "Chennai (MAA),Enter a destination" [ref=e349]: Chennai (MAA)
+            - generic [ref=e351]:
+              - generic [ref=e352]:
+                - img [ref=e354]
+                - textbox "Departure date . Enter a date or use the arrow keys to change the current date." [ref=e357]:
+                  - /placeholder: "Departure date "
+                  - text: Sun, 12 Apr
+                - img [ref=e360] [cursor=pointer]
+                - img [ref=e364] [cursor=pointer]
+              - generic [ref=e366]:
+                - img [ref=e368]
+                - textbox "Return date . Enter a date or use the arrow keys to change the current date." [ref=e371]:
+                  - /placeholder: "Return date "
+                - img [ref=e374] [cursor=pointer]
+                - img [ref=e378] [cursor=pointer]
+            - generic [ref=e383]:
+              - combobox "Change seating class." [ref=e386] [cursor=pointer]:
+                - generic [ref=e388]:
+                  - generic [ref=e389]: Economy
+                  - img [ref=e391]
+              - combobox "Change ticket type." [ref=e395] [cursor=pointer]:
+                - generic [ref=e397]:
+                  - generic [ref=e398]: One way
+                  - img [ref=e400]
+              - button "Nonstop" [ref=e402] [cursor=pointer]:
+                - generic [ref=e404]: Nonstop
+              - button "Less emissions" [ref=e405] [cursor=pointer]:
+                - generic [ref=e407]: Less emissions
+            - menu "Compare prices for one-way trips by departure date" [ref=e409] [cursor=pointer]:
+              - generic [ref=e411]: from ₹6,953
+              - generic [ref=e414]: Apr
+              - menuitem "Prices from ₹6,953. Depart Sunday, 12 April." [ref=e417]
+              - generic [ref=e419]: "12"
+              - generic [ref=e420]: S
+              - menuitem "Prices from ₹6,953. Depart Monday, 13 April." [ref=e421]
+              - generic [ref=e423]: "13"
+              - generic [ref=e424]: M
+              - menuitem "Prices from ₹6,953. Depart Tuesday, 14 April." [ref=e425]
+              - generic [ref=e427]: "14"
+              - generic [ref=e428]: T
+              - menuitem "Prices from ₹7,976. Depart Wednesday, 15 April." [ref=e429]
+              - generic [ref=e431]: "15"
+              - generic [ref=e432]: W
+              - menuitem "Prices from ₹8,180. Depart Thursday, 16 April." [ref=e433]
+              - generic [ref=e435]: "16"
+              - generic [ref=e436]: T
+              - menuitem "Prices from ₹7,556. Depart Friday, 17 April." [ref=e437]
+              - generic [ref=e439]: "17"
+              - generic [ref=e440]: F
+              - menuitem "Prices from ₹7,556. Depart Saturday, 18 April." [ref=e441]
+              - generic [ref=e443]: "18"
+              - generic [ref=e444]: S
+              - menuitem "Prices from ₹7,976. Depart Sunday, 19 April." [ref=e445]
+              - generic [ref=e447]: "19"
+              - generic [ref=e448]: S
+              - menuitem "Prices from ₹8,180. Depart Monday, 20 April." [ref=e449]
+              - generic [ref=e451]: "20"
+              - generic [ref=e452]: M
+              - menuitem "Prices from ₹7,976. Depart Tuesday, 21 April." [ref=e453]
+              - generic [ref=e455]: "21"
+              - generic [ref=e456]: T
+              - menuitem "Prices from ₹7,976. Depart Wednesday, 22 April." [ref=e457]
+              - generic [ref=e459]: "22"
+              - generic [ref=e460]: W
+              - menuitem "Prices from ₹7,976. Depart Thursday, 23 April." [ref=e461]
+              - generic [ref=e463]: "23"
+              - generic [ref=e464]: T
+              - menuitem "Prices from ₹7,976. Depart Friday, 24 April." [ref=e465]
+              - generic [ref=e467]: "24"
+              - generic [ref=e468]: F
+              - menuitem "Prices from ₹7,976. Depart Saturday, 25 April." [ref=e469]
+              - generic [ref=e471]: "25"
+              - generic [ref=e472]: S
+              - menuitem "Prices from ₹7,976. Depart Sunday, 26 April." [ref=e473]
+              - generic [ref=e475]: "26"
+              - generic [ref=e476]: S
+              - menuitem "Prices from ₹7,976. Depart Monday, 27 April." [ref=e477]
+              - generic [ref=e479]: "27"
+              - generic [ref=e480]: M
+              - menuitem "Prices from ₹7,976. Depart Tuesday, 28 April." [ref=e481]
+              - generic [ref=e483]: "28"
+              - generic [ref=e484]: T
+              - menuitem "Prices from ₹8,329. Depart Wednesday, 29 April." [ref=e485]
+              - generic [ref=e487]: "29"
+              - generic [ref=e488]: W
+              - menuitem "Prices from ₹8,180. Depart Thursday, 30 April." [ref=e489]
+              - generic [ref=e491]: "30"
+              - generic [ref=e492]: T
+              - generic [ref=e493]: May
+              - menuitem "Prices from ₹7,976. Depart Friday, 1 May." [ref=e495]
+              - generic [ref=e497]: "1"
+              - generic [ref=e498]: F
+              - menuitem "Prices from ₹7,976. Depart Saturday, 2 May." [ref=e499]
+              - generic [ref=e501]: "2"
+              - generic [ref=e502]: S
+              - menuitem "Prices from ₹8,180. Depart Sunday, 3 May." [ref=e503]
+              - generic [ref=e505]: "3"
+              - generic [ref=e506]: S
+              - menuitem "Prices from ₹7,976. Depart Monday, 4 May." [ref=e507]
+              - generic [ref=e509]: "4"
+              - generic [ref=e510]: M
+              - menuitem "Prices from ₹8,180. Depart Tuesday, 5 May." [ref=e511]
+              - generic [ref=e513]: "5"
+              - generic [ref=e514]: T
+              - menuitem "Prices from ₹8,329. Depart Wednesday, 6 May." [ref=e515]
+              - generic [ref=e517]: "6"
+              - generic [ref=e518]: W
+              - menuitem "Prices from ₹7,976. Depart Thursday, 7 May." [ref=e519]
+              - generic [ref=e521]: "7"
+              - generic [ref=e522]: T
+              - menuitem "Prices from ₹7,976. Depart Friday, 8 May." [ref=e523]
+              - generic [ref=e525]: "8"
+              - generic [ref=e526]: F
+              - menuitem "Prices from ₹7,976. Depart Saturday, 9 May." [ref=e527]
+              - generic [ref=e529]: "9"
+              - generic [ref=e530]: S
+              - menuitem "Prices from ₹7,976. Depart Sunday, 10 May." [ref=e531]
+              - generic [ref=e533]: "10"
+              - generic [ref=e534]: S
+              - menuitem "Prices from ₹7,766. Depart Monday, 11 May." [ref=e535]
+              - generic [ref=e537]: "11"
+              - generic [ref=e538]: M
+              - menuitem "Prices from ₹7,766. Depart Tuesday, 12 May." [ref=e539]
+              - generic [ref=e541]: "12"
+              - generic [ref=e542]: T
+              - menuitem "Prices from ₹7,766. Depart Wednesday, 13 May." [ref=e543]
+              - generic [ref=e545]: "13"
+              - generic [ref=e546]: W
+              - menuitem "Prices from ₹7,766. Depart Thursday, 14 May." [ref=e547]
+              - generic [ref=e549]: "14"
+              - generic [ref=e550]: T
+              - menuitem "Prices from ₹7,766. Depart Friday, 15 May." [ref=e551]
+              - generic [ref=e553]: "15"
+              - generic [ref=e554]: F
+              - menuitem "Prices from ₹7,556. Depart Saturday, 16 May." [ref=e555]
+              - generic [ref=e557]: "16"
+              - generic [ref=e558]: S
+              - menuitem "Prices from ₹7,766. Depart Sunday, 17 May." [ref=e559]
+              - generic [ref=e561]: "17"
+              - generic [ref=e562]: S
+              - menuitem "Prices from ₹7,556. Depart Monday, 18 May." [ref=e563]
+              - generic [ref=e565]: "18"
+              - generic [ref=e566]: M
+              - menuitem "Prices from ₹7,766. Depart Tuesday, 19 May." [ref=e567]
+              - generic [ref=e569]: "19"
+              - generic [ref=e570]: T
+              - menuitem "Prices from ₹7,766. Depart Wednesday, 20 May." [ref=e571]
+              - generic [ref=e573]: "20"
+              - generic [ref=e574]: W
+              - menuitem "Prices from ₹7,766. Depart Thursday, 21 May." [ref=e575]
+              - generic [ref=e577]: "21"
+              - generic [ref=e578]: T
+              - menuitem "Prices from ₹7,766. Depart Friday, 22 May." [ref=e579]
+              - generic [ref=e581]: "22"
+              - generic [ref=e582]: F
+              - menuitem "Prices from ₹7,556. Depart Saturday, 23 May." [ref=e583]
+              - generic [ref=e585]: "23"
+              - generic [ref=e586]: S
+              - menuitem "Prices from ₹7,766. Depart Sunday, 24 May." [ref=e587]
+              - generic [ref=e589]: "24"
+              - generic [ref=e590]: S
+              - menuitem "Prices from ₹7,556. Depart Monday, 25 May." [ref=e591]
+              - generic [ref=e593]: "25"
+              - generic [ref=e594]: M
+              - menuitem "Prices from ₹7,766. Depart Tuesday, 26 May." [ref=e595]
+              - generic [ref=e597]: "26"
+              - generic [ref=e598]: T
+              - menuitem "Prices from ₹7,766. Depart Wednesday, 27 May." [ref=e599]
+              - generic [ref=e601]: "27"
+              - generic [ref=e602]: W
+              - menuitem "Prices from ₹7,556. Depart Thursday, 28 May." [ref=e603]
+              - generic [ref=e605]: "28"
+              - generic [ref=e606]: T
+              - menuitem "Prices from ₹7,766. Depart Friday, 29 May." [ref=e607]
+              - generic [ref=e609]: "29"
+              - generic [ref=e610]: F
+              - menuitem "Prices from ₹7,556. Depart Saturday, 30 May." [ref=e611]
+              - generic [ref=e613]: "30"
+              - generic [ref=e614]: S
+              - menuitem "Prices from ₹7,766. Depart Sunday, 31 May." [ref=e615]
+              - generic [ref=e617]: "31"
+              - generic [ref=e618]: S
+              - generic [ref=e619]: Jun
+              - menuitem "Prices from ₹7,556. Depart Monday, 1 June." [ref=e621]
+              - generic [ref=e623]: "1"
+              - generic [ref=e624]: M
+              - menuitem "Prices from ₹7,556. Depart Tuesday, 2 June." [ref=e625]
+              - generic [ref=e627]: "2"
+              - generic [ref=e628]: T
+              - menuitem "Prices from ₹7,556. Depart Wednesday, 3 June." [ref=e629]
+              - generic [ref=e631]: "3"
+              - generic [ref=e632]: W
+              - menuitem "Prices from ₹7,556. Depart Thursday, 4 June." [ref=e633]
+              - generic [ref=e635]: "4"
+              - generic [ref=e636]: T
+              - menuitem "Prices from ₹7,556. Depart Friday, 5 June." [ref=e637]
+              - generic [ref=e639]: "5"
+              - generic [ref=e640]: F
+              - menuitem "Prices from ₹7,556. Depart Saturday, 6 June." [ref=e641]
+              - generic [ref=e643]: "6"
+              - generic [ref=e644]: S
+              - menuitem "Prices from ₹7,556. Depart Sunday, 7 June." [ref=e645]
+              - generic [ref=e647]: "7"
+              - generic [ref=e648]: S
+              - menuitem "Prices from ₹7,556. Depart Monday, 8 June." [ref=e649]
+              - generic [ref=e651]: "8"
+              - generic [ref=e652]: M
+              - menuitem "Prices from ₹7,556. Depart Tuesday, 9 June." [ref=e653]
+              - generic [ref=e655]: "9"
+              - generic [ref=e656]: T
+              - menuitem "Prices from ₹7,556. Depart Wednesday, 10 June." [ref=e657]
+              - generic [ref=e659]: "10"
+              - generic [ref=e660]: W
+              - menuitem "Prices from ₹7,556. Depart Thursday, 11 June." [ref=e661]
+              - generic [ref=e663]: "11"
+              - generic [ref=e664]: T
+              - menuitem "Prices from ₹7,556. Depart Friday, 12 June." [ref=e665]
+              - generic [ref=e667]: "12"
+              - generic [ref=e668]: F
+              - menuitem "Prices from ₹7,556. Depart Saturday, 13 June." [ref=e669]
+              - generic [ref=e671]: "13"
+              - generic [ref=e672]: S
+              - menuitem "Prices from ₹7,556. Depart Sunday, 14 June." [ref=e673]
+              - generic [ref=e675]: "14"
+              - generic [ref=e676]: S
+              - menuitem "Prices from ₹7,556. Depart Monday, 15 June." [ref=e677]
+              - generic [ref=e679]: "15"
+              - generic [ref=e680]: M
+              - menuitem "Prices from ₹7,556. Depart Tuesday, 16 June." [ref=e681]
+              - generic [ref=e683]: "16"
+              - generic [ref=e684]: T
+              - menuitem "Prices from ₹7,766. Depart Wednesday, 17 June." [ref=e685]
+              - generic [ref=e687]: "17"
+              - generic [ref=e688]: W
+              - menuitem "Prices from ₹7,556. Depart Thursday, 18 June." [ref=e689]
+              - generic [ref=e691]: "18"
+              - generic [ref=e692]: T
+              - menuitem "Prices from ₹7,766. Depart Friday, 19 June." [ref=e693]
+              - generic [ref=e695]: "19"
+              - generic [ref=e696]: F
+              - menuitem "Prices from ₹7,556. Depart Saturday, 20 June." [ref=e697]
+              - generic [ref=e699]: "20"
+              - generic [ref=e700]: S
+              - menuitem "Prices from ₹7,556. Depart Sunday, 21 June." [ref=e701]
+              - generic [ref=e703]: "21"
+              - generic [ref=e704]: S
+              - menuitem "Prices from ₹7,556. Depart Monday, 22 June." [ref=e705]
+              - generic [ref=e707]: "22"
+              - generic [ref=e708]: M
+              - menuitem "Prices from ₹7,556. Depart Tuesday, 23 June." [ref=e709]
+              - generic [ref=e711]: "23"
+              - generic [ref=e712]: T
+              - menuitem "Prices from ₹7,556. Depart Wednesday, 24 June." [ref=e713]
+              - generic [ref=e715]: "24"
+              - generic [ref=e716]: W
+              - menuitem "Prices from ₹7,556. Depart Thursday, 25 June." [ref=e717]
+              - generic [ref=e719]: "25"
+              - generic [ref=e720]: T
+              - menuitem "Prices from ₹7,766. Depart Friday, 26 June." [ref=e721]
+              - generic [ref=e723]: "26"
+              - generic [ref=e724]: F
+              - menuitem "Prices from ₹7,556. Depart Saturday, 27 June." [ref=e725]
+              - generic [ref=e727]: "27"
+              - generic [ref=e728]: S
+              - menuitem "Prices from ₹7,766. Depart Sunday, 28 June." [ref=e729]
+              - generic [ref=e731]: "28"
+              - generic [ref=e732]: S
+              - menuitem "Prices from ₹7,766. Depart Monday, 29 June." [ref=e733]
+              - generic [ref=e735]: "29"
+              - generic [ref=e736]: M
+              - menuitem "Prices from ₹7,556. Depart Tuesday, 30 June." [ref=e737]
+              - generic [ref=e739]: "30"
+              - generic [ref=e740]: T
+              - generic [ref=e741]: Jul
+              - menuitem "Prices from ₹6,953. Depart Wednesday, 1 July." [ref=e743]
+              - generic [ref=e745]: "1"
+              - generic [ref=e746]: W
+              - menuitem "Prices from ₹6,953. Depart Thursday, 2 July." [ref=e747]
+              - generic [ref=e749]: "2"
+              - generic [ref=e750]: T
+              - menuitem "Prices from ₹6,953. Depart Friday, 3 July." [ref=e751]
+              - generic [ref=e753]: "3"
+              - generic [ref=e754]: F
+              - menuitem "Prices from ₹6,953. Depart Saturday, 4 July." [ref=e755]
+              - generic [ref=e757]: "4"
+              - generic [ref=e758]: S
+              - menuitem "Prices from ₹6,953. Depart Sunday, 5 July." [ref=e759]
+              - generic [ref=e761]: "5"
+              - generic [ref=e762]: S
+              - menuitem "Prices from ₹6,953. Depart Monday, 6 July." [ref=e763]
+              - generic [ref=e765]: "6"
+              - generic [ref=e766]: M
+              - menuitem "Prices from ₹6,953. Depart Tuesday, 7 July." [ref=e767]
+              - generic [ref=e769]: "7"
+              - generic [ref=e770]: T
+              - menuitem "Prices from ₹6,953. Depart Wednesday, 8 July." [ref=e771]
+              - generic [ref=e773]: "8"
+              - generic [ref=e774]: W
+              - menuitem "Prices from ₹6,953. Depart Thursday, 9 July." [ref=e775]
+              - generic [ref=e777]: "9"
+              - generic [ref=e778]: T
+              - menuitem "Prices from ₹6,953. Depart Friday, 10 July." [ref=e779]
+              - generic [ref=e781]: "10"
+              - generic [ref=e782]: F
+              - menuitem "Prices from ₹6,953. Depart Saturday, 11 July." [ref=e783]
+              - generic [ref=e785]: "11"
+              - generic [ref=e786]: S
+              - menuitem "Prices from ₹6,953. Depart Sunday, 12 July." [ref=e787]
+              - generic [ref=e789]: "12"
+              - generic [ref=e790]: S
+              - button [ref=e792]:
+                - img [ref=e795]
+              - button [ref=e797]:
+                - img [ref=e800]
+            - generic [ref=e804]:
+              - link "IndiGo 2h 50m Nonstop from ₹6,953" [ref=e805] [cursor=pointer]:
+                - /url: https://www.google.com/travel/flights?sca_esv=1bdaceadb8cfd14b&source=flun&uitype=cuAA&hl=en&gl=in&curr=INR&ep=CAE&tfs=CAEQAhosEgoyMDI2LTA0LTEyMgI2RWoMCAISCC9tLzBkbHYwcgwIAhIIL20vMGM4dGt6aENqUkliRE5IZFMxc09VWjBPWE5CUkY5WGVVRkNSeTB0TFMwdExTMHRjMlZpWTJ3eE1FRkJRVUZCUjI1YVZqQjNSVGRzYjJOQkVnTnVOa1VhQ2dpcE5oQUFHZ05KVGxJNE1IQ3ZPZz09&ved=1t:2773&ictx=111
+                - generic [ref=e807]: IndiGo
+                - generic [ref=e808]: 2h 50m
+                - generic [ref=e809]: Nonstop
+                - generic [ref=e810]: from ₹6,953
+              - link "Air India 2h 40m Nonstop from ₹7,286" [ref=e811] [cursor=pointer]:
+                - /url: https://www.google.com/travel/flights?sca_esv=1bdaceadb8cfd14b&source=flun&uitype=cuAA&hl=en&gl=in&curr=INR&ep=CAE&tfs=CAEQAhosEgoyMDI2LTA0LTEyMgJBSWoMCAISCC9tLzBkbHYwcgwIAhIIL20vMGM4dGt6aENqUkliRE5IZFMxc09VWjBPWE5CUkY5WGVVRkNSeTB0TFMwdExTMHRjMlZpWTJ3eE1FRkJRVUZCUjI1YVZqQjNSVGRzYjJOQkVnTnVRVWthQ2dqMk9CQUFHZ05KVGxJNE1IQ1VQUT09&ved=1t:2773&ictx=111
+                - generic [ref=e813]: Air India
+                - generic [ref=e814]: 2h 40m
+                - generic [ref=e815]: Nonstop
+                - generic [ref=e816]: from ₹7,286
+              - link "SpiceJet 21h 25m+ Connecting from ₹9,910" [ref=e817] [cursor=pointer]:
+                - /url: https://www.google.com/travel/flights?sca_esv=1bdaceadb8cfd14b&source=flun&uitype=cuAA&hl=en&gl=in&curr=INR&ep=CAE&tfs=CAEQAhosEgoyMDI2LTA0LTEyMgJTR2oMCAISCC9tLzBkbHYwcgwIAhIIL20vMGM4dGt6aENqUkliRE5IZFMxc09VWjBPWE5CUkY5WGVVRkNSeTB0TFMwdExTMHRjMlZpWTJ3eE1FRkJRVUZCUjI1YVZqQjNSVGRzYjJOQkVnTmpVMGNhQ2dpMlRSQUFHZ05KVGxJNE1IQ1lVdz09&ved=1t:2773&ictx=111
+                - generic [ref=e819]: SpiceJet
+                - generic [ref=e820]: 21h 25m+
+                - generic [ref=e821]: Connecting
+                - generic [ref=e822]: from ₹9,910
+            - link "Show flights on Google Flights" [ref=e825] [cursor=pointer]:
+              - separator [ref=e826]
+              - generic [ref=e827]:
+                - generic [ref=e828]: Show flights
+                - img [ref=e830]
+        - generic [ref=e834]:
+          - heading "Web results" [level=2] [ref=e835]
+          - generic [ref=e836]:
+            - generic [ref=e839]:
+              - link "Flight tickets from Delhi Indira Gandhi International to ... skyscanner.co.in https://www.skyscanner.co.in › routes › del › maa › del..." [ref=e841] [cursor=pointer]:
+                - /url: https://www.skyscanner.co.in/routes/del/maa/delhi-indira-gandhi-international-to-chennai.html
+                - heading "Flight tickets from Delhi Indira Gandhi International to ..." [level=3] [ref=e842]
+                - generic [ref=e847]:
+                  - generic [ref=e849]: skyscanner.co.in
+                  - generic [ref=e851]: https://www.skyscanner.co.in › routes › del › maa › del...
+              - button "About this result" [ref=e852] [cursor=pointer]:
+                - img [ref=e855]
+            - generic [ref=e858]:
+              - generic [ref=e859]:
+                - text: New
+                - emphasis [ref=e860]: Delhi to Chennai
+                - text: ":"
+                - emphasis [ref=e861]: Flight
+                - text: information. The things to know before you go. Cheapest flight found, ₹ 6,913. Cheapest month to fly, August. Average flight time ...
+              - link "Read more" [ref=e862] [cursor=pointer]:
+                - /url: https://www.skyscanner.co.in/routes/del/maa/delhi-indira-gandhi-international-to-chennai.html#:~:text=New%20Delhi%20to%20Chennai%3A%20Flight,Average%20flight%20time
+            - generic [ref=e864]: Starting from ₹6,913.00
+        - generic [ref=e868]:
+          - generic [ref=e871]:
+            - link "Delhi to Chennai Flights, Fares @ ... MakeMyTrip https://www.makemytrip.com › flights › new_delhi-chen..." [ref=e873] [cursor=pointer]:
+              - /url: https://www.makemytrip.com/flights/new_delhi-chennai-cheap-airtickets.html
+              - heading "Delhi to Chennai Flights, Fares @ ..." [level=3] [ref=e874]
+              - generic [ref=e879]:
+                - generic [ref=e881]: MakeMyTrip
+                - generic [ref=e883]: https://www.makemytrip.com › flights › new_delhi-chen...
+            - button "About this result" [ref=e884] [cursor=pointer]:
+              - img [ref=e887]
+          - generic [ref=e891]:
+            - text: Delhi to Chennai Flights -
+            - emphasis [ref=e892]: Book Delhi to Chennai flight tickets at lowest airfare
+            - text: only at MakeMyTrip. Use promo code MMTDEAL & get Flat 8% Upto ₹450 OFF on ...
+        - generic [ref=e896]:
+          - generic [ref=e899]:
+            - link "Delhi to Chennai Flights IndiGo https://www.goindigo.in › Flights › Domestic Flights" [ref=e901] [cursor=pointer]:
+              - /url: https://www.goindigo.in/domestic-flights/delhi-to-chennai-flights.html
+              - heading "Delhi to Chennai Flights" [level=3] [ref=e902]
+              - generic [ref=e907]:
+                - generic [ref=e909]: IndiGo
+                - generic [ref=e911]: https://www.goindigo.in › Flights › Domestic Flights
+            - button "About this result" [ref=e912] [cursor=pointer]:
+              - img [ref=e915]
+          - generic [ref=e919]:
+            - text: Book Delhi to Chennai flight tickets at cheapest price.
+            - emphasis [ref=e920]: Airfares at ₹5130
+            - text: and avail IndiGo flight offers, 10% discount and cashback on goIndiGo.in website ...
+        - generic [ref=e924]:
+          - generic [ref=e927]:
+            - link "Delhi to Chennai Flight Schedule, Flight Time and Status Goibibo https://www.goibibo.com › flights › delhi-to-chennai-fli..." [ref=e929] [cursor=pointer]:
+              - /url: https://www.goibibo.com/flights/delhi-to-chennai-flight-schedule/
+              - heading "Delhi to Chennai Flight Schedule, Flight Time and Status" [level=3] [ref=e930]
+              - generic [ref=e935]:
+                - generic [ref=e937]: Goibibo
+                - generic [ref=e939]: https://www.goibibo.com › flights › delhi-to-chennai-fli...
+            - button "About this result" [ref=e940] [cursor=pointer]:
+              - img [ref=e943]
+          - generic [ref=e947]:
+            - text: Compare
+            - emphasis [ref=e948]: Delhi to Chennai Flight Schedule, Flight time and Flight status
+            - text: at Goibibo. Get all information including airlines name, flight number, ...
+        - generic [ref=e952]:
+          - heading "Sponsored results" [level=2] [ref=e958]
+          - generic [ref=e959]:
+            - generic [ref=e965]:
+              - generic [ref=e970]:
+                - generic [ref=e971]:
+                  - link "Delhi To Chennai Flight - Lowest Airfare Guaranteed Cleartrip https://www.cleartrip.com › delhi" [ref=e972] [cursor=pointer]:
+                    - /url: https://www.cleartrip.com/flights/results?adults=1&childs=0&infants=0&class=Economy&depart_date=&dx=7&from=HDO&to=MAA
+                    - heading "Delhi To Chennai Flight - Lowest Airfare Guaranteed" [level=3] [ref=e973]
+                    - generic [ref=e979]:
+                      - generic [ref=e981]: Cleartrip
+                      - generic [ref=e982]: https://www.cleartrip.com › delhi
+                  - button "Why this ad?" [ref=e985] [cursor=pointer]:
+                    - img [ref=e987]
+                - generic [ref=e991]: "Cheapest Air Tickets Guaranteed. Book in 30 Secs! Use Code: CTFLY for instant discount."
+                - generic [ref=e993]:
+                  - text: ‎
+                  - link "Upto 25% off, Code CTDOM" [ref=e994] [cursor=pointer]:
+                    - /url: /aclk?sa=L&ai=DChsSEwiq_MDiieSTAxXdm2YCHRjMMKMYACICCAIQCRoCc20&ae=2&aspm=1&co=1&ase=2&gclid=EAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAMYASAEEgIY3_D_BwE&cid=CAAS0gHkaDpH79fy1d0ezKhCrAaHhww9__F_K0H4EbjJ75f1Holh1G0GJ7PLLG-vxEkBv-uRpZilXl1zFtoj8er1gQyv892rDBYfjqhH6GVxWU1ZwQihcqOwheskZODgcYXEdMPLQlLpc4LUQLgcSTPMnLaq9LPGY_mCoM1GZQigdZurWW5KFer6BF36EYstNgVlH_Wkpg4KKqWBlvL0gZ7X50jxpD9ZtOIgI9ZXjiLHKbth9Ck--_V4Sy0idDU9F2r7dRGt1YHpl6c3v8cgHm_d5smN-EM&cce=2&category=acrcp_v1_35&sig=AOD64_3bRPW29ATZcwbtpJ4-XZIZ31Mh0g&adurl=&q=
+                  - text: · ‎
+                  - link "Get upto 25% off flights" [ref=e995] [cursor=pointer]:
+                    - /url: /aclk?sa=L&ai=DChsSEwiq_MDiieSTAxXdm2YCHRjMMKMYACICCAIQChoCc20&ae=2&aspm=1&co=1&ase=2&gclid=EAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAMYASAFEgJYOvD_BwE&cid=CAAS0gHkaDpH79fy1d0ezKhCrAaHhww9__F_K0H4EbjJ75f1Holh1G0GJ7PLLG-vxEkBv-uRpZilXl1zFtoj8er1gQyv892rDBYfjqhH6GVxWU1ZwQihcqOwheskZODgcYXEdMPLQlLpc4LUQLgcSTPMnLaq9LPGY_mCoM1GZQigdZurWW5KFer6BF36EYstNgVlH_Wkpg4KKqWBlvL0gZ7X50jxpD9ZtOIgI9ZXjiLHKbth9Ck--_V4Sy0idDU9F2r7dRGt1YHpl6c3v8cgHm_d5smN-EM&cce=2&category=acrcp_v1_35&sig=AOD64_2t5V4i4Fo-Tjemqf8XHCmhfoDWtQ&adurl=&q=
+                  - text: · ‎
+                  - link "12% Off, Code CTFKAXIS" [ref=e996] [cursor=pointer]:
+                    - /url: https://www.cleartrip.com/flights?utm_source=google_sitelink&utm_medium=cpa&utm_campaign=Gen:_sitelink
+                  - text: · ‎
+                  - link "Sr. Citizen Offer!" [ref=e997] [cursor=pointer]:
+                    - /url: https://www.cleartrip.com/flights?utm_source=google_sitelink&utm_medium=cpc&utm_content=CTSENIOR&utm_campaign=Gen:_sitelink
+                - generic [ref=e999]:
+                  - generic [ref=e1000]: "Deal:"
+                  - link "12% off New User Offer" [ref=e1001] [cursor=pointer]:
+                    - /url: https://www.google.com/aclk?sa=L&ai=DChsSEwiq_MDiieSTAxXdm2YCHRjMMKMYACICCAIQCBoCc20&ae=2&aspm=1&co=1&ase=2&gclid=EAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAMYASADEgJThfD_BwE&cid=CAAS0gHkaDpH79fy1d0ezKhCrAaHhww9__F_K0H4EbjJ75f1Holh1G0GJ7PLLG-vxEkBv-uRpZilXl1zFtoj8er1gQyv892rDBYfjqhH6GVxWU1ZwQihcqOwheskZODgcYXEdMPLQlLpc4LUQLgcSTPMnLaq9LPGY_mCoM1GZQigdZurWW5KFer6BF36EYstNgVlH_Wkpg4KKqWBlvL0gZ7X50jxpD9ZtOIgI9ZXjiLHKbth9Ck--_V4Sy0idDU9F2r7dRGt1YHpl6c3v8cgHm_d5smN-EM&cce=2&category=acrcp_v1_35&sig=AOD64_1E8SgePkgKwONpcBM_fQ-utUhZhw&nis=4&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQgtsBegQIMxAV&adurl=
+                  - text: · Code CTFIRST · Ends Apr 30
+              - generic [ref=e1006]:
+                - generic [ref=e1007]:
+                  - link "Flights from INR2755 | Cheap Flight To Chennai | Flights to Chennai Cheapflights https://in.cheapflights.com › flights › chennai" [ref=e1008] [cursor=pointer]:
+                    - /url: https://www.in.cheapflights.com/flights-to-Chennai/
+                    - heading "Flights from INR2755 | Cheap Flight To Chennai | Flights to Chennai" [level=3] [ref=e1009]
+                    - generic [ref=e1015]:
+                      - generic [ref=e1017]: Cheapflights
+                      - generic [ref=e1018]: https://in.cheapflights.com › flights › chennai
+                  - button "Why this ad?" [ref=e1021] [cursor=pointer]:
+                    - img [ref=e1023]
+                - generic [ref=e1028]:
+                  - text: Cheap
+                  - emphasis [ref=e1029]: Flight
+                  - text: To
+                  - emphasis [ref=e1030]: Chennai
+                  - text: . Filter results for your perfect trip. Book
+                  - emphasis [ref=e1031]: flights
+                  - text: easily.
+                - generic [ref=e1033]:
+                  - text: ‎
+                  - link "Fly today" [ref=e1034] [cursor=pointer]:
+                    - /url: https://www.in.cheapflights.com/semi/adwordssearch/flight_general/any/en.html?tags=m:903&
+                  - text: · ‎
+                  - link "One-way flights" [ref=e1035] [cursor=pointer]:
+                    - /url: https://www.in.cheapflights.com/semi/adwordssearch/flight_general/any/en.html?cp_ft=ow&tags=m:1677&
+                  - text: · ‎
+                  - link "Save 21% or more on flights" [ref=e1036] [cursor=pointer]:
+                    - /url: /aclk?sa=L&ai=DChsSEwiq_MDiieSTAxXdm2YCHRjMMKMYACICCAIQBhoCc20&co=1&ase=2&gclid=EAIaIQobChMIqvzA4onkkwMV3ZtmAh0YzDCjEAMYAiAEEgL5RfD_BwE&cid=CAAS0gHkaDpH79fy1d0ezKhCrAaHhww9__F_K0H4EbjJ75f1Holh1G0GJ7PLLG-vxEkBv-uRpZilXl1zFtoj8er1gQyv892rDBYfjqhH6GVxWU1ZwQihcqOwheskZODgcYXEdMPLQlLpc4LUQLgcSTPMnLaq9LPGY_mCoM1GZQigdZurWW5KFer6BF36EYstNgVlH_Wkpg4KKqWBlvL0gZ7X50jxpD9ZtOIgI9ZXjiLHKbth9Ck--_V4Sy0idDU9F2r7dRGt1YHpl6c3v8cgHm_d5smN-EM&cce=2&category=acrcp_v1_32&sig=AOD64_2gjvhZ3ksRw02XME-TmOq5rTV1FQ&adurl=&q=
+                  - text: · ‎
+                  - link "Find our cheapest flights" [ref=e1037] [cursor=pointer]:
+                    - /url: https://www.in.cheapflights.com/semi/adwordssearch/flight_general/any/en.html?tags=m:1679&
+            - button "Hide sponsored results" [ref=e1038] [cursor=pointer]:
+              - separator [ref=e1039]
+              - generic [ref=e1040]:
+                - generic [ref=e1041]: Hide sponsored results
+                - img [ref=e1043]
+        - generic [ref=e1048]:
+          - generic [ref=e1051]:
+            - link "Book New delhi to Chennai Flight Tickets, Fares ... Cleartrip https://www.cleartrip.com › ... › Flights from New delhi" [ref=e1053] [cursor=pointer]:
+              - /url: https://www.cleartrip.com/flight-schedule/new-delhi-chennai-flights.html
+              - heading "Book New delhi to Chennai Flight Tickets, Fares ..." [level=3] [ref=e1054]
+              - generic [ref=e1059]:
+                - generic [ref=e1061]: Cleartrip
+                - generic [ref=e1063]: https://www.cleartrip.com › ... › Flights from New delhi
+            - button "About this result" [ref=e1064] [cursor=pointer]:
+              - img [ref=e1067]
+          - generic [ref=e1070]:
+            - generic [ref=e1071]:
+              - emphasis [ref=e1072]: The first DEL to MAA flight departs at 00:15
+              - text: and the last leaves by 23:30. The shortest flight duration is 2h 40m. Choose a New delhi to Chennai morning flight ...
+            - link "Read more" [ref=e1073] [cursor=pointer]:
+              - /url: https://www.cleartrip.com/flight-schedule/new-delhi-chennai-flights.html#:~:text=The%20first%20DEL%20to%20MAA,prefer%20to%20travel%20after%20work.
+          - generic [ref=e1076]:
+            - generic [ref=e1077]:
+              - img "Rated 4.5 out of 5, (49,282) user reviews" [ref=e1078]:
+                - text: "4.5"
+                - img [ref=e1079]
+                - text: (49,282)
+              - text: ·
+            - text: Free · ‎Travel
+        - generic [ref=e1085]:
+          - generic [ref=e1088]:
+            - link "Delhi (DEL) to Chennai (MAA) Flight Schedule, Time ... makemytrip.com https://www.makemytrip.com › united_states › delhi-che..." [ref=e1090] [cursor=pointer]:
+              - /url: https://www.makemytrip.com/international-flights/united_states/delhi-chennai-flight-schedule.html
+              - heading "Delhi (DEL) to Chennai (MAA) Flight Schedule, Time ..." [level=3] [ref=e1091]
+              - generic [ref=e1096]:
+                - generic [ref=e1098]: makemytrip.com
+                - generic [ref=e1100]: https://www.makemytrip.com › united_states › delhi-che...
+            - button "About this result" [ref=e1101] [cursor=pointer]:
+              - img [ref=e1104]
+          - generic [ref=e1107]:
+            - generic [ref=e1108]:
+              - emphasis [ref=e1109]: Delhi to Chennai Flights
+              - text: ; 14:05. Ghaziabad · 17:05. Chennai. USD 75 ; 02:55. New Delhi · 05:45. Chennai. USD 76 ; 11:00. New Delhi · 13:50. Chennai. USD 76 ; 09:15.
+            - link "Read more" [ref=e1110] [cursor=pointer]:
+              - /url: https://www.makemytrip.com/international-flights/united_states/delhi-chennai-flight-schedule.html#:~:text=Delhi%20to%20Chennai%20Flights&text=14%3A05,Ghaziabad&text=17%3A05,USD%2075&text=02%3A55,New%20Delhi&text=05%3A45,USD%2076&text=11%3A00,New%20Delhi&text=13%3A50,USD%2076&text=09%3A15
+        - generic [ref=e1114]:
+          - generic [ref=e1117]:
+            - link "Delhi to Chennai Flights, Ticket Price from INR ... Air India https://www.airindia.com › Book Flights" [ref=e1119] [cursor=pointer]:
+              - /url: https://www.airindia.com/en-in/book-flights/delhi-to-chennai-flights
+              - heading "Delhi to Chennai Flights, Ticket Price from INR ..." [level=3] [ref=e1120]
+              - generic [ref=e1125]:
+                - generic [ref=e1127]: Air India
+                - generic [ref=e1129]: https://www.airindia.com › Book Flights
+            - button "About this result" [ref=e1130] [cursor=pointer]:
+              - img [ref=e1133]
+          - generic [ref=e1137]:
+            - emphasis [ref=e1138]: Book Delhi to Chennai flights with Air India
+            - text: "& get flight tickets from INR 7259. Use AISAVER to get up to ₹1000 off on air tickets and experience luxury and ..."
+          - generic [ref=e1141]:
+            - generic [ref=e1142]:
+              - img "Rated 4.8 out of 5, (1,37,000) user reviews" [ref=e1143]:
+                - text: "4.8"
+                - img [ref=e1144]
+                - text: (1,37,000)
+              - text: ·
+            - text: Free
+        - generic [ref=e1150]:
+          - generic [ref=e1153]:
+            - link "Delhi to Chennai Flights, Air Fares ... EaseMyTrip https://www.easemytrip.com › Flights" [ref=e1155] [cursor=pointer]:
+              - /url: https://www.easemytrip.com/flights/delhi-del-to-chennai-maa/
+              - heading "Delhi to Chennai Flights, Air Fares ..." [level=3] [ref=e1156]
+              - generic [ref=e1161]:
+                - generic [ref=e1163]: EaseMyTrip
+                - generic [ref=e1165]: https://www.easemytrip.com › Flights
+            - button "About this result" [ref=e1166] [cursor=pointer]:
+              - img [ref=e1169]
+          - generic [ref=e1172]:
+            - generic [ref=e1173]:
+              - text: You can now
+              - emphasis [ref=e1174]: easily make online flight bookings from Delhi (DEL) to Chennai (MAA) at
+              - text: just ₹6498 (per person) with EaseMyTrip, your most trusted travel companion.
+            - link "Read more" [ref=e1175] [cursor=pointer]:
+              - /url: https://www.easemytrip.com/flights/delhi-del-to-chennai-maa/#:~:text=You%20can%20now%20easily%20make,your%20most%20trusted%20travel%20companion.
+        - generic [ref=e1179]:
+          - generic [ref=e1182]:
+            - link "DEL-MAA Flight Status FlightStats https://www.flightstats.com › flight-tracker › route › MAA" [ref=e1184] [cursor=pointer]:
+              - /url: https://www.flightstats.com/v2/flight-tracker/route/DEL/MAA
+              - heading "DEL-MAA Flight Status" [level=3] [ref=e1185]
+              - generic [ref=e1190]:
+                - generic [ref=e1192]: FlightStats
+                - generic [ref=e1194]: https://www.flightstats.com › flight-tracker › route › MAA
+            - button "About this result" [ref=e1195] [cursor=pointer]:
+              - img [ref=e1198]
+          - generic [ref=e1202]:
+            - text: (DEL to MAA) Track the current status of
+            - emphasis [ref=e1203]: flights
+            - text: departing from (DEL)
+            - emphasis [ref=e1204]: Delhi
+            - text: Indira Gandhi International Airport and arriving in (MAA)
+            - emphasis [ref=e1205]: Chennai
+            - text: International
+        - generic [ref=e1209]:
+          - generic [ref=e1212]:
+            - link "Live Flight Status & Tracker | Delhi Airport (DEL) Delhi Airport https://www.newdelhiairport.in › live-flight-information" [ref=e1214] [cursor=pointer]:
+              - /url: https://www.newdelhiairport.in/live-flight-information/
+              - heading "Live Flight Status & Tracker | Delhi Airport (DEL)" [level=3] [ref=e1215]
+              - generic [ref=e1220]:
+                - generic [ref=e1222]: Delhi Airport
+                - generic [ref=e1224]: https://www.newdelhiairport.in › live-flight-information
+            - button "About this result" [ref=e1225] [cursor=pointer]:
+              - img [ref=e1228]
+          - generic [ref=e1232]:
+            - text: Track live flight status at IGI.
+            - emphasis [ref=e1233]: Get real-time arrival and departure info
+            - text: with the Delhi Airport tracker for timely travel updates.
+      - generic [ref=e1235]:
+        - generic [ref=e1240]:
+          - heading "People also search for" [level=2] [ref=e1242]
+          - generic [ref=e1244]:
+            - generic [ref=e1245]:
+              - link "Indigo delhi to chennai flight tomorrow" [ref=e1249] [cursor=pointer]:
+                - /url: /search?sca_esv=1bdaceadb8cfd14b&q=Indigo+delhi+to+chennai+flight+tomorrow&sa=X&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ1QJ6BAg8EAE
+                - generic [ref=e1250]:
+                  - generic [ref=e1255]: Indigo delhi to chennai flight tomorrow
+                  - img [ref=e1259]
+              - link "IndiGo Delhi to Chennai Flights today status" [ref=e1264] [cursor=pointer]:
+                - /url: /search?sca_esv=1bdaceadb8cfd14b&q=IndiGo+Delhi+to+Chennai+Flights+today+status&sa=X&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ1QJ6BAhIEAE
+                - generic [ref=e1265]:
+                  - generic [ref=e1270]: IndiGo Delhi to Chennai Flights today status
+                  - img [ref=e1274]
+              - link "Delhi to Chennai flight time" [ref=e1279] [cursor=pointer]:
+                - /url: /search?sca_esv=1bdaceadb8cfd14b&q=Delhi+to+Chennai+flight+time&sa=X&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ1QJ6BAhKEAE
+                - generic [ref=e1280]:
+                  - generic [ref=e1285]: Delhi to Chennai flight time
+                  - img [ref=e1289]
+              - link "IndiGo Delhi to Chennai flight timings today" [ref=e1294] [cursor=pointer]:
+                - /url: /search?sca_esv=1bdaceadb8cfd14b&q=IndiGo+Delhi+to+Chennai+flight+timings+today&sa=X&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ1QJ6BAhBEAE
+                - generic [ref=e1295]:
+                  - generic [ref=e1300]: IndiGo Delhi to Chennai flight timings today
+                  - img [ref=e1304]
+            - generic [ref=e1306]:
+              - link "Delhi to Chennai distance" [ref=e1310] [cursor=pointer]:
+                - /url: /search?sca_esv=1bdaceadb8cfd14b&q=Delhi+to+Chennai+distance&sa=X&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ1QJ6BAhJEAE
+                - generic [ref=e1311]:
+                  - generic [ref=e1316]: Delhi to Chennai distance
+                  - img [ref=e1320]
+              - link "Delhi to Chennai flight time tomorrow" [ref=e1325] [cursor=pointer]:
+                - /url: /search?sca_esv=1bdaceadb8cfd14b&q=Delhi+to+Chennai+flight+time+tomorrow&sa=X&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ1QJ6BAhHEAE
+                - generic [ref=e1326]:
+                  - generic [ref=e1331]: Delhi to Chennai flight time tomorrow
+                  - img [ref=e1335]
+              - link "Delhi to Chennai flight time and price" [ref=e1340] [cursor=pointer]:
+                - /url: /search?sca_esv=1bdaceadb8cfd14b&q=Delhi+to+Chennai+flight+time+and+price&sa=X&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ1QJ6BAg-EAE
+                - generic [ref=e1341]:
+                  - generic [ref=e1346]: Delhi to Chennai flight time and price
+                  - img [ref=e1350]
+              - link "Delhi to chennai flight tomorrow price" [ref=e1355] [cursor=pointer]:
+                - /url: /search?sca_esv=1bdaceadb8cfd14b&q=Delhi+to+chennai+flight+tomorrow+price&sa=X&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ1QJ6BAg9EAE
+                - generic [ref=e1356]:
+                  - generic [ref=e1361]: Delhi to chennai flight tomorrow price
+                  - img [ref=e1365]
+        - navigation [ref=e1367]:
+          - heading "Page navigation" [level=1] [ref=e1368]
+          - text: "1"
+          - link "Page 2" [ref=e1371] [cursor=pointer]:
+            - /url: /search?q=delhi+to+chennai+flight+tomorrow&sca_esv=1bdaceadb8cfd14b&ei=TFfZaaWiDLDu4-EPnqiJsA4&start=10&sa=N&sstk=Af77f_dnMD176eG0uq100GbKUiXPRLGfTqJ4JJySQUIpWZDW3YaSIj-56PsKnYXjhqUr8v2PQ0CZdXRBUPt9WcBznU7Xcb2UmXxD1w&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ8tMDegQICBAE
+            - text: "2"
+          - link "Page 3" [ref=e1373] [cursor=pointer]:
+            - /url: /search?q=delhi+to+chennai+flight+tomorrow&sca_esv=1bdaceadb8cfd14b&ei=TFfZaaWiDLDu4-EPnqiJsA4&start=20&sa=N&sstk=Af77f_dnMD176eG0uq100GbKUiXPRLGfTqJ4JJySQUIpWZDW3YaSIj-56PsKnYXjhqUr8v2PQ0CZdXRBUPt9WcBznU7Xcb2UmXxD1w&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ8tMDegQICBAG
+            - text: "3"
+          - link "Page 4" [ref=e1375] [cursor=pointer]:
+            - /url: /search?q=delhi+to+chennai+flight+tomorrow&sca_esv=1bdaceadb8cfd14b&ei=TFfZaaWiDLDu4-EPnqiJsA4&start=30&sa=N&sstk=Af77f_dnMD176eG0uq100GbKUiXPRLGfTqJ4JJySQUIpWZDW3YaSIj-56PsKnYXjhqUr8v2PQ0CZdXRBUPt9WcBznU7Xcb2UmXxD1w&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ8tMDegQICBAI
+            - text: "4"
+          - link "Page 5" [ref=e1377] [cursor=pointer]:
+            - /url: /search?q=delhi+to+chennai+flight+tomorrow&sca_esv=1bdaceadb8cfd14b&ei=TFfZaaWiDLDu4-EPnqiJsA4&start=40&sa=N&sstk=Af77f_dnMD176eG0uq100GbKUiXPRLGfTqJ4JJySQUIpWZDW3YaSIj-56PsKnYXjhqUr8v2PQ0CZdXRBUPt9WcBznU7Xcb2UmXxD1w&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ8tMDegQICBAK
+            - text: "5"
+          - link "Page 6" [ref=e1379] [cursor=pointer]:
+            - /url: /search?q=delhi+to+chennai+flight+tomorrow&sca_esv=1bdaceadb8cfd14b&ei=TFfZaaWiDLDu4-EPnqiJsA4&start=50&sa=N&sstk=Af77f_dnMD176eG0uq100GbKUiXPRLGfTqJ4JJySQUIpWZDW3YaSIj-56PsKnYXjhqUr8v2PQ0CZdXRBUPt9WcBznU7Xcb2UmXxD1w&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ8tMDegQICBAM
+            - text: "6"
+          - link "Page 7" [ref=e1381] [cursor=pointer]:
+            - /url: /search?q=delhi+to+chennai+flight+tomorrow&sca_esv=1bdaceadb8cfd14b&ei=TFfZaaWiDLDu4-EPnqiJsA4&start=60&sa=N&sstk=Af77f_dnMD176eG0uq100GbKUiXPRLGfTqJ4JJySQUIpWZDW3YaSIj-56PsKnYXjhqUr8v2PQ0CZdXRBUPt9WcBznU7Xcb2UmXxD1w&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ8tMDegQICBAO
+            - text: "7"
+          - link "Page 8" [ref=e1383] [cursor=pointer]:
+            - /url: /search?q=delhi+to+chennai+flight+tomorrow&sca_esv=1bdaceadb8cfd14b&ei=TFfZaaWiDLDu4-EPnqiJsA4&start=70&sa=N&sstk=Af77f_dnMD176eG0uq100GbKUiXPRLGfTqJ4JJySQUIpWZDW3YaSIj-56PsKnYXjhqUr8v2PQ0CZdXRBUPt9WcBznU7Xcb2UmXxD1w&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ8tMDegQICBAQ
+            - text: "8"
+          - link "Page 9" [ref=e1385] [cursor=pointer]:
+            - /url: /search?q=delhi+to+chennai+flight+tomorrow&sca_esv=1bdaceadb8cfd14b&ei=TFfZaaWiDLDu4-EPnqiJsA4&start=80&sa=N&sstk=Af77f_dnMD176eG0uq100GbKUiXPRLGfTqJ4JJySQUIpWZDW3YaSIj-56PsKnYXjhqUr8v2PQ0CZdXRBUPt9WcBznU7Xcb2UmXxD1w&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ8tMDegQICBAS
+            - text: "9"
+          - link "Page 10" [ref=e1387] [cursor=pointer]:
+            - /url: /search?q=delhi+to+chennai+flight+tomorrow&sca_esv=1bdaceadb8cfd14b&ei=TFfZaaWiDLDu4-EPnqiJsA4&start=90&sa=N&sstk=Af77f_dnMD176eG0uq100GbKUiXPRLGfTqJ4JJySQUIpWZDW3YaSIj-56PsKnYXjhqUr8v2PQ0CZdXRBUPt9WcBznU7Xcb2UmXxD1w&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ8tMDegQICBAU
+            - text: "10"
+          - heading "Next" [level=2] [ref=e1389]:
+            - link "Next" [ref=e1390] [cursor=pointer]:
+              - /url: /search?q=delhi+to+chennai+flight+tomorrow&sca_esv=1bdaceadb8cfd14b&ei=TFfZaaWiDLDu4-EPnqiJsA4&start=10&sa=N&sstk=Af77f_dnMD176eG0uq100GbKUiXPRLGfTqJ4JJySQUIpWZDW3YaSIj-56PsKnYXjhqUr8v2PQ0CZdXRBUPt9WcBznU7Xcb2UmXxD1w&ved=2ahUKEwil-LniieSTAxUw9zgGHR5UAuYQ8NMDegQICBAW
+              - generic [ref=e1392]: Next
+      - navigation
+    - contentinfo [ref=e1393]:
+      - heading "Footer links" [level=1] [ref=e1394]
+      - generic [ref=e1398]:
+        - generic [ref=e1400]:
+          - text: India
+          - generic [ref=e1402]:
+            - button "Aya Nagar Extension, Aya Nagar, New Delhi, Delhi - From your IP address" [ref=e1404] [cursor=pointer]:
+              - generic [ref=e1405]: Aya Nagar Extension, Aya Nagar, New Delhi, Delhi
+              - generic [ref=e1407]:
+                - text: "-"
+                - generic [ref=e1408]: From your IP address
+            - text: "-"
+            - button "Update location" [ref=e1410] [cursor=pointer]: Update location
+        - generic [ref=e1413]:
+          - link "Help" [ref=e1414] [cursor=pointer]:
+            - /url: https://support.google.com/websearch/?p=ws_results_help&hl=en-IN&fg=1
+          - link "Send feedback" [ref=e1415] [cursor=pointer]:
+            - /url: "#"
+          - link "Privacy" [ref=e1416] [cursor=pointer]:
+            - /url: https://policies.google.com/privacy?hl=en-IN&fg=1
+          - link "Terms" [ref=e1417] [cursor=pointer]:
+            - /url: https://policies.google.com/terms?hl=en-IN&fg=1

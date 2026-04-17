@@ -1,0 +1,123 @@
+{
+  "name": "autonomous-browser",
+  "version": "1.0.0",
+  "description": "AI-powered Chromium browser with chat automation",
+  "main": "dist/electron/electron/main.js",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.electron.json && tsc --noEmit -p tsconfig.renderer.json && tsc --noEmit -p tsconfig.tests.json",
+    "check:dirs": "node scripts/check-kebab-dirs.mjs",
+    "build:electron": "tsc -p tsconfig.electron.json && node -e \"const fs=require('node:fs'),p=require('node:path');const d=p.join('dist','electron','electron');for(const f of['chrome-importer.impl.js','firefox-importer.impl.js','python-sandbox-runner.py'])fs.copyFileSync(p.join('electron',f),p.join(d,f));\"",
+    "build:renderer": "vite build",
+    "rasterize-icon": "node scripts/rasterize-app-icon.mjs",
+    "build:app": "npm run rasterize-icon && npm run build:electron && npm run build:renderer",
+    "start": "npm run build:app && electron .",
+    "dev": "concurrently \"vite\" \"wait-on tcp:5173 && npm run build:electron && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron . --remote-debugging-port=9222\"",
+    "build": "npm run build:app && electron-builder",
+    "pack": "npm run build:app && electron-builder --dir",
+    "smoke": "npm run pack",
+    "dist": "npm run build:app && electron-builder",
+    "dist:win-animated": "node scripts/dist-win-animated.mjs",
+    "lint": "eslint . --ext .ts,.tsx",
+    "knip": "knip --include files,dependencies",
+    "depcheck": "npx depcheck --ignores=cross-env,tailwindcss,wait-on,zod,sqlite3",
+    "test": "vitest run",
+    "postinstall": "electron-rebuild -f -w sqlite3"
+  },
+  "keywords": [
+    "browser",
+    "ai",
+    "automation",
+    "electron"
+  ],
+  "author": "",
+  "build": {
+    "appId": "com.autonomousbrowser.app",
+    "productName": "Autonomous Browser",
+    "directories": {
+      "buildResources": "build"
+    },
+    "icon": "icon.png",
+    "files": [
+      "dist/electron/**/*",
+      "dist/renderer/**/*",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "devDependencies": {
+    "@emnapi/core": "^1.9.2",
+    "@emnapi/runtime": "^1.9.2",
+    "@eslint/js": "^9.22.0",
+    "@napi-rs/wasm-runtime": "^1.1.2",
+    "@tailwindcss/vite": "^4.2.2",
+    "@types/dompurify": "^3.0.5",
+    "@types/node": "^24.5.2",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "@typescript-eslint/eslint-plugin": "^8.43.0",
+    "@typescript-eslint/parser": "^8.43.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.0.0",
+    "electron": "^41.0.3",
+    "electron-builder": "^26.8.1",
+    "eslint": "^9.35.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "globals": "^16.4.0",
+    "knip": "^6.2.0",
+    "sharp": "^0.34.5",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.7",
+    "vitest": "^3.2.4",
+    "wait-on": "^8.0.5"
+  },
+  "dependencies": {
+    "@a2a-js/sdk": "^0.3.13",
+    "@a2ui/react": "^0.9.0-alpha.0",
+    "@a2ui/web_core": "0.9.1-alpha.0",
+    "@ag-ui/client": "^0.0.52",
+    "@ag-ui/core": "^0.0.52",
+    "@fontsource-variable/material-symbols-outlined": "^5.2.41",
+    "@fontsource-variable/material-symbols-rounded": "^5.2.41",
+    "@fontsource-variable/material-symbols-sharp": "^5.2.41",
+    "@fontsource/exo-2": "^5.2.8",
+    "@fontsource/orbitron": "^5.2.8",
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "@types/express": "^5.0.6",
+    "dompurify": "^3.3.3",
+    "express": "^5.2.1",
+    "highlight.js": "^11.11.1",
+    "html-to-image": "^1.11.13",
+    "marked": "^17.0.5",
+    "mathjs": "^15.1.1",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "recharts": "^3.8.1",
+    "sqlite3": "^6.0.1",
+    "zod": "^4.3.6",
+    "zustand": "^5.0.8"
+  }
+}

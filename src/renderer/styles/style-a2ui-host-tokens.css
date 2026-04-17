@@ -1,0 +1,1019 @@
+/* -------------------------------------------------------------------------- */
+/* Host v0.9 density — shared spacing (renderer only; agents use semantic props) */
+/* -------------------------------------------------------------------------- */
+
+:root {
+  --a2ui-host-leaf-margin: 0.35rem;
+  --a2ui-host-card-padding: 0.75rem;
+  --a2ui-host-stack-gap: 0.35rem;
+  --a2ui-host-control-pad-y: 0.42rem;
+  --a2ui-host-control-pad-x: 0.65rem;
+  --a2ui-host-radius: 0.5rem;
+  --a2ui-host-modal-padding: 1rem;
+  --a2ui-host-tabs-pad-y: 0.4rem;
+  --a2ui-host-tabs-pad-x: 0.75rem;
+}
+
+/*
+ * Chart palette + plot chrome must NOT live on `:root` (html): theme tokens (`--accent`, `--bg*`,
+ * `--text`, …) are set on `body.theme-*`. Resolving `var(--accent)` on html leaves series colors
+ * invalid so Recharts SVG `fill` falls back to black (notably pie/donut).
+ */
+body {
+  /* Host charts (Recharts) — semantic series slots; no per-message hex in NDJSON */
+  --a2ui-host-chart-series-0: var(--accent);
+  --a2ui-host-chart-series-1: color-mix(in srgb, var(--accent2, var(--accent)) 72%, var(--danger) 28%);
+  --a2ui-host-chart-series-2: color-mix(in srgb, var(--success, var(--accent2, var(--accent))) 58%, var(--accent) 42%);
+  --a2ui-host-chart-series-3: color-mix(in srgb, var(--danger) 52%, var(--accent2, var(--accent)) 48%);
+  --a2ui-host-chart-series-4: color-mix(in srgb, var(--accent) 48%, var(--text2) 52%);
+  --a2ui-host-chart-series-5: color-mix(in srgb, var(--accent2, var(--accent)) 45%, var(--success, var(--accent)) 55%);
+  --a2ui-host-chart-series-6: color-mix(in srgb, var(--success, var(--accent2, var(--accent))) 65%, var(--text2) 35%);
+  --a2ui-host-chart-series-7: color-mix(in srgb, var(--danger) 38%, var(--accent2, var(--accent)) 62%);
+  --a2ui-host-chart-grid-stroke: color-mix(
+    in srgb,
+    var(--border-subtle, var(--border, rgba(255, 255, 255, 0.12))) 58%,
+    transparent
+  );
+  --a2ui-host-chart-axis-tick: var(--text2);
+  --a2ui-host-chart-tooltip-bg: var(--bg2);
+  --a2ui-host-chart-tooltip-border: color-mix(
+    in srgb,
+    var(--border-subtle, var(--border, rgba(255, 255, 255, 0.12))) 72%,
+    transparent
+  );
+  --a2ui-host-chart-tooltip-color: var(--text);
+  --a2ui-host-chart-plot-bg: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--bg3) 90%, var(--accent) 8%) 0%,
+    color-mix(in srgb, var(--bg2) 94%, transparent) 55%,
+    color-mix(in srgb, var(--bg1) 92%, var(--accent) 5%) 100%
+  );
+  --a2ui-host-chart-plot-border: 1px solid
+    color-mix(
+      in srgb,
+      var(--border-subtle, var(--border, rgba(255, 255, 255, 0.12))) 78%,
+      var(--accent) 12%
+    );
+  --a2ui-host-chart-plot-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent),
+    0 1px 3px color-mix(in srgb, var(--bg0) 40%, transparent);
+  --a2ui-host-chart-pie-cell-stroke: color-mix(
+    in srgb,
+    var(--border-subtle, var(--border, rgba(255, 255, 255, 0.12))) 50%,
+    var(--bg3) 50%
+  );
+}
+
+/* A2UI surfaces inherit shell typography inside chat capture (theme colors come from `a2ui-host-theme` + CSS variables). */
+
+.a2ui-chat-surface__capture {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  font-family: inherit;
+  color: var(--text);
+}
+
+.a2ui-chat-surface__capture .a2ui-text,
+.a2ui-chat-surface__capture .a2ui-button,
+.a2ui-chat-surface__capture .a2ui-card {
+  font-family: inherit;
+}
+
+/* v0.9 (and v0.8) renderer styles are intentionally minimal.
+   These host-side overrides make A2UI panels feel like the rest of the app. */
+
+.a2ui-chat-surface__capture :where(.a2ui-surface) {
+  color: var(--text);
+}
+
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-column > section),
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-row > section) {
+  gap: 0.65rem;
+}
+
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-card > section) {
+  background: color-mix(in srgb, var(--bg3) 92%, var(--accent) 8%);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 78%, var(--accent) 22%);
+  border-radius: 0.65rem;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.06),
+    inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+  padding: 0.75rem;
+}
+
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-text) {
+  color: var(--text);
+}
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-text p) {
+  opacity: 0.92;
+}
+
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-button button) {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 75%, transparent);
+  background: color-mix(in srgb, var(--bg4) 86%, var(--accent) 14%);
+  color: var(--text);
+  border-radius: 0.5rem;
+  padding: 0.48rem 0.92rem;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+  box-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.08),
+    inset 0 1px 0 color-mix(in srgb, var(--text) 5%, transparent);
+}
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-button button:hover) {
+  background: color-mix(in srgb, var(--bg4) 78%, var(--accent) 22%);
+  border-color: color-mix(in srgb, var(--border-subtle) 62%, var(--accent) 38%);
+}
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-button button:active) {
+  transform: translateY(0.5px);
+}
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-button button:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 2px;
+}
+
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-textfield) {
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-textfield label) {
+  color: var(--text);
+  opacity: 0.85;
+  font-size: 0.85rem;
+  letter-spacing: 0.01em;
+}
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-textfield input),
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-textfield textarea),
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-multiplechoice select) {
+  background: color-mix(in srgb, var(--bg1) 88%, var(--accent) 12%);
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 74%, transparent);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.06);
+}
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-textfield input:focus),
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-textfield textarea:focus),
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-multiplechoice select:focus) {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-subtle) 45%);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent),
+    inset 0 1px 0 rgba(0, 0, 0, 0.06);
+}
+
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-checkbox) {
+  display: flex;
+}
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-checkbox label) {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  cursor: pointer;
+}
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-checkbox input[type="checkbox"]) {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--accent);
+}
+
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-slider) {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-slider input[type="range"]) {
+  accent-color: var(--accent);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Host v0.9 layout primitives (see a2ui-v0_9-host-basic-layout-components.tsx) */
+/* -------------------------------------------------------------------------- */
+
+.a2ui-host-leaf {
+  margin: var(--a2ui-host-leaf-margin);
+  box-sizing: border-box;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+}
+
+.a2ui-host-card {
+  margin: var(--a2ui-host-leaf-margin);
+  padding: var(--a2ui-host-card-padding);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 78%, transparent);
+  border-radius: var(--a2ui-host-radius);
+  box-sizing: border-box;
+  color: var(--text);
+}
+
+.a2ui-host-row,
+.a2ui-host-column,
+.a2ui-host-list {
+  display: flex;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  color: var(--text);
+  gap: var(--a2ui-host-stack-gap);
+  box-sizing: border-box;
+}
+
+.a2ui-host-row {
+  flex-direction: row;
+}
+
+.a2ui-host-column {
+  flex-direction: column;
+}
+
+.a2ui-host-list--horizontal {
+  flex-direction: row;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.a2ui-host-list--vertical {
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.a2ui-host-tabs {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  margin: var(--a2ui-host-leaf-margin);
+  gap: var(--a2ui-host-stack-gap);
+  box-sizing: border-box;
+}
+
+.a2ui-host-tabs__bar {
+  display: flex;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 78%, transparent);
+  margin-bottom: 0.25rem;
+  gap: 0.15rem;
+}
+
+.a2ui-host-tabs__tab {
+  padding: var(--a2ui-host-tabs-pad-y) var(--a2ui-host-tabs-pad-x);
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.88rem;
+  color: var(--text);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.a2ui-host-tabs__tab--active {
+  border-bottom-color: var(--accent);
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.a2ui-host-tabs__panel {
+  flex: 1;
+  min-height: 0;
+}
+
+.a2ui-host-divider {
+  margin: var(--a2ui-host-leaf-margin);
+  border: none;
+  background-color: color-mix(in srgb, var(--accent) 45%, var(--border-subtle) 55%);
+  flex-shrink: 0;
+}
+
+.a2ui-host-divider--horizontal {
+  width: 100%;
+  height: 1px;
+}
+
+.a2ui-host-divider--vertical {
+  width: 1px;
+  height: 100%;
+  min-height: 1rem;
+}
+
+.a2ui-host-audioplugin {
+  display: flex;
+  flex-direction: column;
+  gap: var(--a2ui-host-stack-gap);
+  width: 100%;
+}
+
+.a2ui-host-audioplugin__desc {
+  font-size: 0.75rem;
+  color: var(--text2);
+}
+
+.a2ui-host-modal__backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.a2ui-host-modal__panel {
+  background-color: var(--bg2);
+  color: var(--text);
+  padding: var(--a2ui-host-modal-padding);
+  border-radius: var(--a2ui-host-radius);
+  max-width: 90%;
+  max-height: 90%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 78%, transparent);
+  box-shadow: 0 8px 32px color-mix(in srgb, var(--bg0) 50%, transparent);
+}
+
+.a2ui-host-modal__close-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.a2ui-host-modal__close {
+  border: none;
+  background: none;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.2rem 0.35rem;
+  color: var(--text);
+  border-radius: 0.35rem;
+}
+
+.a2ui-host-modal__close:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.a2ui-host-modal__body {
+  flex: 1;
+  min-height: 0;
+}
+
+.a2ui-host-modal__trigger {
+  display: inline-block;
+  cursor: pointer;
+  border-radius: 0.35rem;
+}
+
+.a2ui-host-modal__trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Host v0.9 Spacer */
+/* -------------------------------------------------------------------------- */
+
+.a2ui-host-spacer {
+  flex-shrink: 0;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Host v0.9 charts (Recharts shell) */
+/* -------------------------------------------------------------------------- */
+
+.a2ui-host-chart {
+  width: 100%;
+  margin: var(--a2ui-host-leaf-margin);
+  box-sizing: border-box;
+  font-family: inherit;
+  color: var(--text);
+}
+
+.a2ui-host-chart__title {
+  font-size: 0.88rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  margin-bottom: 0.35rem;
+  color: var(--text);
+  opacity: 0.95;
+}
+
+.a2ui-host-chart__plot {
+  width: 100%;
+  min-height: 120px;
+  box-sizing: border-box;
+  padding: 0.4rem 0.35rem 0.35rem;
+  border-radius: var(--a2ui-host-radius);
+  border: var(--a2ui-host-chart-plot-border);
+  background: var(--a2ui-host-chart-plot-bg);
+  box-shadow: var(--a2ui-host-chart-plot-shadow);
+  color: var(--text);
+}
+
+.a2ui-host-chart__plot .recharts-responsive-container {
+  overflow: visible;
+}
+
+.a2ui-host-chart__plot .recharts-wrapper {
+  background: transparent;
+}
+
+/* Some Recharts builds default the cartesian “surface” rect to a dark fill */
+.a2ui-host-chart__plot .recharts-surface {
+  overflow: visible;
+}
+
+.a2ui-host-chart__plot .recharts-legend-wrapper {
+  color: var(--text2);
+}
+
+.a2ui-host-chart__plot .recharts-default-legend {
+  color: inherit;
+}
+
+.a2ui-host-chart__tooltip {
+  outline: none;
+}
+
+.a2ui-host-chart__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 8rem;
+  padding: 1rem;
+  font-size: 0.85rem;
+  color: var(--text2);
+  border: 1px dashed color-mix(in srgb, var(--border-subtle) 65%, transparent);
+  border-radius: var(--a2ui-host-radius);
+  background: color-mix(in srgb, var(--bg1) 90%, transparent);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Host v0.9 interactives (shared shell) */
+/* -------------------------------------------------------------------------- */
+
+.a2ui-host-textfield,
+.a2ui-host-checkbox,
+.a2ui-host-slider,
+.a2ui-host-datetime,
+.a2ui-host-choicepicker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--a2ui-host-stack-gap);
+  width: 100%;
+  margin: var(--a2ui-host-leaf-margin);
+  box-sizing: border-box;
+  font-family: inherit;
+  color: var(--text);
+}
+
+.a2ui-host-slider {
+  gap: 0.28rem;
+}
+
+.a2ui-host-textfield__label,
+.a2ui-host-slider__label,
+.a2ui-host-datetime__label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  opacity: 0.9;
+}
+
+.a2ui-host-datetime__field {
+  width: 100%;
+  min-height: 2.65rem;
+  display: flex;
+  align-items: stretch;
+  cursor: pointer;
+  border-radius: var(--a2ui-host-radius);
+}
+
+.a2ui-host-datetime__field:focus-within {
+  outline: none;
+}
+
+.a2ui-host-datetime__field .a2ui-host-datetime__input {
+  flex: 1;
+  min-height: 2.65rem;
+  cursor: pointer;
+}
+
+.a2ui-host-textfield__input,
+.a2ui-host-textfield__textarea,
+.a2ui-host-datetime__input,
+.a2ui-host-choicepicker__filter {
+  width: 100%;
+  padding: var(--a2ui-host-control-pad-y) var(--a2ui-host-control-pad-x);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 74%, transparent);
+  border-radius: var(--a2ui-host-radius);
+  background: color-mix(in srgb, var(--bg1) 88%, var(--accent) 12%);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  box-sizing: border-box;
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.06);
+}
+
+.a2ui-host-textfield__input:focus,
+.a2ui-host-textfield__textarea:focus,
+.a2ui-host-datetime__input:focus,
+.a2ui-host-choicepicker__filter:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-subtle) 45%);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent),
+    inset 0 1px 0 rgba(0, 0, 0, 0.06);
+}
+
+.a2ui-host-textfield__input--error,
+.a2ui-host-textfield__textarea--error {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border-subtle) 45%);
+}
+
+.a2ui-host-textfield__error {
+  font-size: 0.75rem;
+  color: var(--danger);
+}
+
+.a2ui-host-checkbox__row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.a2ui-host-checkbox__input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.a2ui-host-checkbox__label {
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.a2ui-host-slider__top {
+  display: flex;
+  justify-content: flex-start;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+}
+
+.a2ui-host-slider__label {
+  min-width: 0;
+}
+
+.a2ui-host-slider__value {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  color: var(--text2);
+  font-variant-numeric: tabular-nums;
+}
+
+.a2ui-host-slider__range {
+  width: 100%;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+.a2ui-host-choicepicker__label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.a2ui-host-choicepicker__list {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.a2ui-host-choicepicker__list--column {
+  flex-direction: column;
+}
+
+.a2ui-host-choicepicker__list--row {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.a2ui-host-choicepicker__option {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.a2ui-host-choicepicker__chip {
+  padding: 0.28rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 72%, var(--accent) 28%);
+  background: color-mix(in srgb, var(--bg0) 92%, var(--accent) 8%);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.a2ui-host-choicepicker__chip--selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 88%, var(--bg0) 12%);
+  color: var(--bg0);
+}
+
+.a2ui-host-choicepicker__chip:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.a2ui-host-checkbox__input:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.a2ui-host-slider__range:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
+  border-radius: 0.25rem;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Host v0.9 Button — theme tokens; variants: primary / default / borderless    */
+/* -------------------------------------------------------------------------- */
+
+.a2ui-host-button {
+  position: relative;
+  z-index: 1;
+  margin: var(--a2ui-host-leaf-margin);
+  padding: 0.48rem 1rem;
+  font-family: inherit;
+  font-size: 0.92rem;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border-style: solid;
+  border-width: 1px;
+  outline: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.2s ease,
+    border-color 0.2s ease,
+    background 0.2s ease,
+    color 0.2s ease,
+    filter 0.15s ease;
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text) 10%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.a2ui-host-button:focus-visible {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent),
+    0 1px 0 color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.a2ui-host-button:disabled,
+.a2ui-host-button--invalid {
+  opacity: 0.48;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* Filled CTA — main actions */
+.a2ui-host-button--primary {
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--accent) 92%, var(--text) 8%) 0%,
+    var(--accent) 100%
+  );
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--bg0) 35%);
+  color: var(--bg0);
+}
+
+.a2ui-host-button--primary:hover:not(:disabled) {
+  filter: brightness(1.07);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--text) 55%);
+}
+
+.a2ui-host-button--primary:active:not(:disabled) {
+  transform: translateY(0.5px);
+  filter: brightness(0.96);
+}
+
+/* Secondary — matches panel inputs */
+.a2ui-host-button--default {
+  background: color-mix(in srgb, var(--bg3) 88%, var(--accent) 12%);
+  border-color: color-mix(in srgb, var(--border-subtle) 72%, var(--accent) 28%);
+  color: var(--text);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--bg0) 30%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.a2ui-host-button--default:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bg3) 78%, var(--accent) 22%);
+  border-color: color-mix(in srgb, var(--border-subtle) 55%, var(--accent) 45%);
+}
+
+.a2ui-host-button--default:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+
+/* Text / link style */
+.a2ui-host-button--borderless {
+  background: transparent;
+  border-color: transparent;
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: none;
+  padding: 0.42rem 0.55rem;
+  text-decoration: none;
+}
+
+.a2ui-host-button--borderless:hover:not(:disabled) {
+  color: color-mix(in srgb, var(--accent) 70%, var(--text) 30%);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.a2ui-host-button--borderless:focus-visible {
+  text-decoration: underline;
+}
+
+.a2ui-host-button--borderless:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .a2ui-host-button {
+    transition: none;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Host v0.9 Dropdown — themed like TextField, custom chevron, no native arrow */
+/* -------------------------------------------------------------------------- */
+
+.a2ui-host-dropdown {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 100%;
+  margin: var(--a2ui-host-leaf-margin);
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.a2ui-host-dropdown__label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  opacity: 0.88;
+}
+
+.a2ui-host-dropdown__selection {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 1.15rem;
+}
+
+.a2ui-host-dropdown__selection-label {
+  flex-shrink: 0;
+  font-weight: 650;
+  font-size: 0.68rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text2);
+  opacity: 0.85;
+}
+
+.a2ui-host-dropdown__selection-value {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  font-size: 0.88rem;
+  font-weight: 650;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.a2ui-host-dropdown__wrap {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  border-radius: 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 74%, transparent);
+  background: color-mix(in srgb, var(--bg1) 88%, var(--accent) 12%);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.06);
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.2s ease,
+    background 0.18s ease;
+}
+
+.a2ui-host-dropdown__wrap:hover {
+  border-color: color-mix(in srgb, var(--border-subtle) 58%, var(--accent) 42%);
+}
+
+.a2ui-host-dropdown__wrap:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-subtle) 45%);
+  background: color-mix(in srgb, var(--bg1) 82%, var(--accent) 18%);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent),
+    inset 0 1px 0 rgba(0, 0, 0, 0.06);
+}
+
+.a2ui-host-dropdown__wrap--error {
+  border-color: color-mix(in srgb, var(--danger) 58%, var(--border-subtle) 42%);
+}
+
+.a2ui-host-dropdown__wrap--error:focus-within {
+  border-color: color-mix(in srgb, var(--danger) 65%, var(--border-subtle) 35%);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--danger) 22%, transparent),
+    inset 0 1px 0 rgba(0, 0, 0, 0.06);
+}
+
+.a2ui-host-dropdown__select {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  border: none;
+  margin: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+  line-height: 1.4;
+  padding: 0.52rem 2.4rem 0.52rem 0.65rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  outline: none;
+  color-scheme: light dark;
+}
+
+.a2ui-host-dropdown__select::-ms-expand {
+  display: none;
+}
+
+.a2ui-host-dropdown__select--placeholder {
+  color: var(--text2);
+}
+
+.a2ui-host-dropdown__option {
+  color: var(--text);
+  background-color: var(--bg0);
+  font: inherit;
+}
+
+.a2ui-host-dropdown__option--empty {
+  color: var(--text2);
+}
+
+.a2ui-host-dropdown__chevron {
+  position: absolute;
+  right: 0.52rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  pointer-events: none;
+  color: color-mix(in srgb, var(--text2) 88%, var(--accent) 12%);
+  transition: color 0.18s ease;
+}
+
+.a2ui-host-dropdown__wrap:hover .a2ui-host-dropdown__chevron {
+  color: color-mix(in srgb, var(--text) 55%, var(--accent) 45%);
+}
+
+.a2ui-host-dropdown__wrap:focus-within .a2ui-host-dropdown__chevron {
+  color: var(--accent);
+}
+
+.a2ui-host-dropdown__chevron-icon {
+  display: block;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.a2ui-host-dropdown__wrap:focus-within .a2ui-host-dropdown__chevron-icon {
+  transform: rotate(180deg);
+}
+
+.a2ui-host-dropdown__error {
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .a2ui-host-dropdown__wrap,
+  .a2ui-host-dropdown__chevron,
+  .a2ui-host-dropdown__chevron-icon {
+    transition: none;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* A2UI v0.9 Icon — Material Symbols (Fontsource variable fonts) + host SVGs   */
+/* -------------------------------------------------------------------------- */
+
+.a2ui-host-icon--material.material-symbols-outlined {
+  font-family: "Material Symbols Outlined Variable", sans-serif;
+  font-weight: 400;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  direction: ltr;
+  font-feature-settings: "liga";
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 400,
+    "GRAD" 0,
+    "opsz" 24;
+  color: var(--text);
+}
+
+.a2ui-host-icon--material.material-symbols-rounded {
+  font-family: "Material Symbols Rounded Variable", sans-serif;
+  font-weight: 400;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  direction: ltr;
+  font-feature-settings: "liga";
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 400,
+    "GRAD" 0,
+    "opsz" 24;
+  color: var(--text);
+}
+
+.a2ui-host-icon--material.material-symbols-sharp {
+  font-family: "Material Symbols Sharp Variable", sans-serif;
+  font-weight: 400;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  direction: ltr;
+  font-feature-settings: "liga";
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 400,
+    "GRAD" 0,
+    "opsz" 24;
+  color: var(--text);
+}
+
+.a2ui-host-icon--host {
+  color: var(--text);
+}
+
+.a2ui-host-icon--host .a2ui-host-icon__svg {
+  display: block;
+  flex-shrink: 0;
+}

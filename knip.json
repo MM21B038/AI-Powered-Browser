@@ -1,0 +1,25 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": ["src/renderer/main.tsx", "electron/main.ts", "electron/preload.ts"],
+  "project": ["src/**/*.{ts,tsx}", "electron/**/*.ts"],
+  "ignore": [
+    "**/*.impl.js",
+    "src/renderer/browser/shell-body.html",
+    "dist/**",
+    "electron/mcp/stdio-server.ts",
+    "electron/mcp/stdio-server-intelligent.ts",
+    "src/types/global.d.ts",
+    "src/types/vite-env.d.ts"
+  ],
+  "ignoreDependencies": [
+    "@emnapi/core",
+    "@emnapi/runtime",
+    "@napi-rs/wasm-runtime",
+    "@types/dompurify",
+    "sqlite3",
+    "tailwindcss",
+    "zod",
+    "sharp"
+  ]
+}
+
