@@ -16,6 +16,11 @@ import type {
   McpBridgeState,
   SystemInfo,
 } from "../../../shared/ipc-types";
+import {
+  APP_THEME_IDS,
+  normalizeAppThemeId,
+  type AppThemeId,
+} from "../../../shared/app-themes";
 
 function IconRefresh(): ReactElement {
   return (
@@ -137,39 +142,9 @@ const INTELLIGENT_SETTINGS_SECTIONS: readonly {
   },
 ];
 
-/** Theme IDs shown first in intelligent Appearance; order matches presets. */
-const INTELLIGENT_THEME_IDS = [
-  "dark",
-  "ink",
-  "aurora",
-  "ocean",
-  "ember",
-  "neon",
-  "hacker",
-  "forest",
-  "sunset",
-  "lavender",
-  "prism",
-  "minimal",
-] as const;
-
-const INTELLIGENT_THEME_PREVIEW_COUNT = 3;
-
-const INTELLIGENT_THEME_PREVIEW_LIST = INTELLIGENT_THEME_IDS.slice(
-  0,
-  INTELLIGENT_THEME_PREVIEW_COUNT,
-);
-const INTELLIGENT_THEME_REST_LIST = INTELLIGENT_THEME_IDS.slice(
-  INTELLIGENT_THEME_PREVIEW_COUNT,
-);
-
-function intelligentThemeDisplayName(
-  t: (typeof INTELLIGENT_THEME_IDS)[number],
-): string {
+function intelligentThemeDisplayName(t: AppThemeId): string {
   if (t === "dark") return "Void";
   if (t === "ink") return "Ink";
-  if (t === "prism") return "Prism";
-  if (t === "hacker") return "Hacker";
   return t[0].toUpperCase() + t.slice(1);
 }
 
@@ -396,10 +371,10 @@ export function SettingsPanel({
   const [appStats, setAppStats] = useState<AppDataStats | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [progress, setProgress] = useState({ show: false, pct: 0, text: "" });
-  const [activeTheme, setActiveTheme] = useState(
-    () =>
-      (typeof localStorage !== "undefined" && localStorage.getItem("theme")) ||
-      "dark",
+  const [activeTheme, setActiveTheme] = useState<AppThemeId>(() =>
+    typeof localStorage !== "undefined"
+      ? normalizeAppThemeId(localStorage.getItem("theme"))
+      : "dark",
   );
   const [intelligentSettings, setIntelligentSettings] =
     useState<IntelligentSettingsState>(() => loadIntelligentSettings());
@@ -452,9 +427,6 @@ export function SettingsPanel({
     top: 0,
     height: 0,
   });
-  const [intelligentThemeGridExpanded, setIntelligentThemeGridExpanded] =
-    useState(false);
-
   const notifyAiModelAction = (msg: string) => {
     setAiModelActionFeedback(msg);
     window.dispatchEvent(
@@ -503,7 +475,7 @@ export function SettingsPanel({
     }
     const hp = window.legacyBrowser?.getHomePage?.() ?? "";
     setHomePage(hp);
-    setActiveTheme(localStorage.getItem("theme") || "dark");
+    setActiveTheme(normalizeAppThemeId(localStorage.getItem("theme")));
     const loaded = loadIntelligentSettings();
     setIntelligentSettings(loaded);
     intelligentDiskJsonRef.current = JSON.stringify(loaded);
@@ -604,9 +576,6 @@ export function SettingsPanel({
     if (open && panel === "intelligent") {
       setModelListFilter("");
       setModelPickerOpen(false);
-      /* Always start collapsed (3 + “more”). Do not auto-expand when the active
-         theme is outside the preview list — that forced all themes to show. */
-      setIntelligentThemeGridExpanded(false);
     }
   }, [open, panel]);
 
@@ -841,7 +810,7 @@ export function SettingsPanel({
     if (e.target === e.currentTarget) onClose();
   };
 
-  const applyTheme = (name: string) => {
+  const applyTheme = (name: AppThemeId) => {
     bridge?.applyTheme?.(name);
     setActiveTheme(name);
   };
@@ -1548,74 +1517,26 @@ export function SettingsPanel({
                 </div>
                 <div className="settings-section">
                   <label className="settings-label">Theme</label>
-                  {!intelligentThemeGridExpanded ? (
-                    <div className="theme-grid theme-grid--intelligent-settings theme-grid--intelligent-settings--collapsed">
-                      {INTELLIGENT_THEME_PREVIEW_LIST.map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          className={`theme-card${
-                            activeTheme === t ? " active" : ""
-                          }`}
-                          data-theme={t}
-                          onClick={() => applyTheme(t)}
-                        >
-                          <div className={`theme-preview ${t}-preview`} />
-                          <span>{intelligentThemeDisplayName(t)}</span>
-                        </button>
-                      ))}
-                      {INTELLIGENT_THEME_REST_LIST.length > 0 ? (
-                        <button
-                          type="button"
-                          className="theme-card theme-card--more"
-                          onClick={() => setIntelligentThemeGridExpanded(true)}
-                          aria-expanded="false"
-                          aria-controls="intelligent-theme-grid-expanded"
-                          id="intelligent-theme-grid-expand"
-                        >
-                          <span className="theme-card__more-glyph" aria-hidden>
-                            +
-                          </span>
-                          <span className="theme-card__more-label">
-                            {INTELLIGENT_THEME_REST_LIST.length} more
-                          </span>
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <div
-                      id="intelligent-theme-grid-expanded"
-                      className="theme-grid theme-grid--intelligent-settings theme-grid--intelligent-settings--expanded"
-                      role="region"
-                      aria-label="All theme presets"
-                    >
-                      {INTELLIGENT_THEME_IDS.map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          className={`theme-card${
-                            activeTheme === t ? " active" : ""
-                          }`}
-                          data-theme={t}
-                          onClick={() => applyTheme(t)}
-                        >
-                          <div className={`theme-preview ${t}-preview`} />
-                          <span>{intelligentThemeDisplayName(t)}</span>
-                        </button>
-                      ))}
-                      {INTELLIGENT_THEME_PREVIEW_LIST.includes(
-                        activeTheme as (typeof INTELLIGENT_THEME_IDS)[number],
-                      ) ? (
-                        <button
-                          type="button"
-                          className="theme-grid__collapse"
-                          onClick={() => setIntelligentThemeGridExpanded(false)}
-                        >
-                          Show fewer themes
-                        </button>
-                      ) : null}
-                    </div>
-                  )}
+                  <div
+                    className="theme-grid theme-grid--intelligent-settings theme-grid--intelligent-settings--expanded"
+                    role="region"
+                    aria-label="Theme presets"
+                  >
+                    {APP_THEME_IDS.map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        className={`theme-card${
+                          activeTheme === t ? " active" : ""
+                        }`}
+                        data-theme={t}
+                        onClick={() => applyTheme(t)}
+                      >
+                        <div className={`theme-preview ${t}-preview`} />
+                        <span>{intelligentThemeDisplayName(t)}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 

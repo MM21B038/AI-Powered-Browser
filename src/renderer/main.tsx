@@ -10,6 +10,7 @@ import "@fontsource/orbitron/latin-700.css";
 import "./a2ui-material-symbols-fonts";
 import "./index.css";
 import { ShellInjector } from "./ShellInjector";
+import { normalizeAppThemeId } from "../shared/app-themes";
 
 function traceRenderer(message: string, data?: unknown): void {
   try {
@@ -38,7 +39,11 @@ window.addEventListener("unhandledrejection", (event) => {
   });
 });
 
-const theme = localStorage.getItem("theme") || "dark";
+const themeRaw = localStorage.getItem("theme") || "dark";
+const theme = normalizeAppThemeId(themeRaw);
+if (theme !== themeRaw) {
+  localStorage.setItem("theme", theme);
+}
 document.body.className = `theme-${theme}`;
 try {
   void window.electronAPI?.syncAppIconTheme?.(theme);

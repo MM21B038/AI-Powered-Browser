@@ -54,8 +54,9 @@ function seriesCssVar(i: number): string {
 const chartTooltipContentStyle: CSSProperties = {
   background: "var(--a2ui-host-chart-tooltip-bg)",
   border: "1px solid var(--a2ui-host-chart-tooltip-border)",
-  borderRadius: "0.5rem",
+  borderRadius: "var(--a2ui-host-radius-md)",
   color: "var(--a2ui-host-chart-tooltip-color)",
+  boxShadow: "var(--a2ui-host-shadow-raised)",
 };
 
 const chartTickSmall = { fill: "var(--a2ui-host-chart-axis-tick, var(--text2))", fontSize: 11 };

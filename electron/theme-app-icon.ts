@@ -3,22 +3,13 @@
  */
 
 import { nativeImage, type NativeImage } from "electron";
+import {
+  APP_THEME_ACCENTS,
+  normalizeAppThemeId as normalizeAppThemeIdShared,
+  type AppThemeId,
+} from "../src/shared/app-themes";
 
-/** Must stay in sync with `body.theme-* { --accent }` in app.css */
-export const APP_THEME_ACCENTS: Readonly<Record<string, string>> = {
-  dark: "#7c6af7",
-  aurora: "#00e5a0",
-  ocean: "#38bdf8",
-  ember: "#fb923c",
-  neon: "#00ffff",
-  forest: "#22c55e",
-  sunset: "#f97316",
-  lavender: "#a78bfa",
-  minimal: "#007bff",
-  ink: "#d4d4d4",
-  prism: "#f472b6",
-  hacker: "#ff3b30",
-};
+export { APP_THEME_ACCENTS };
 
 function parseHexRgb(hex: string): { r: number; g: number; b: number } {
   const h = hex.replace(/^#/, "").trim();
@@ -30,12 +21,8 @@ function parseHexRgb(hex: string): { r: number; g: number; b: number } {
   return { r: 124, g: 106, b: 247 };
 }
 
-export function normalizeAppThemeId(raw: unknown): string {
-  if (typeof raw !== "string") return "dark";
-  let t = raw.trim().toLowerCase();
-  if (t.startsWith("theme-")) t = t.slice(6);
-  if (APP_THEME_ACCENTS[t]) return t;
-  return "dark";
+export function normalizeAppThemeId(raw: unknown): AppThemeId {
+  return normalizeAppThemeIdShared(raw);
 }
 
 const tintedCache = new Map<string, NativeImage>();

@@ -95,6 +95,7 @@ import type {
 } from "../../../shared/ipc-types";
 import { ModelQuickPick } from "../ModelQuickPick";
 import { ThinkingPicker } from "../ThinkingPicker";
+import { IntelligentChatModeSwitch } from "../IntelligentChatModeSwitch";
 import { friendlyMcpConnectionError } from "../../shared/mcp-error-messages";
 import { McpIcon } from "../icons/McpIcon";
 import {
@@ -3599,6 +3600,15 @@ function AiChatPanel(): ReactElement {
       document.body,
     );
 
+  const intelligentWorkspaceModeSwitch =
+    scope === "intelligent" ? (
+      <IntelligentChatModeSwitch
+        mode={intelligentChatMode}
+        disabled={scopeBusy}
+        onChange={setIntelligentChatMode}
+      />
+    ) : null;
+
   const composerToolbarMain = (
     <>
       <button
@@ -3652,31 +3662,6 @@ function AiChatPanel(): ReactElement {
           window.legacyBrowser?.openIntelligentAssistantSettings?.()
         }
       />
-      {scope === "intelligent" ? (
-        <div
-          className="ai-chat-ui-mode-buttons"
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          <button
-            type="button"
-            className={`ai-chat-ui-mode-btn${intelligentChatMode === "assistant" ? " ai-chat-ui-mode-btn--active" : ""}`}
-            aria-pressed={intelligentChatMode === "assistant"}
-            disabled={scopeBusy}
-            onClick={() => setIntelligentChatMode("assistant")}
-          >
-            Assistant
-          </button>
-          <button
-            type="button"
-            className={`ai-chat-ui-mode-btn${intelligentChatMode === "ui" ? " ai-chat-ui-mode-btn--active" : ""}`}
-            aria-pressed={intelligentChatMode === "ui"}
-            disabled={scopeBusy}
-            onClick={() => setIntelligentChatMode("ui")}
-          >
-            UI Mode
-          </button>
-        </div>
-      ) : null}
       <ThinkingPicker
         level={thinkingLevelForChatScope(settings, scope)}
         disabled={scopeBusy}
@@ -3701,6 +3686,13 @@ function AiChatPanel(): ReactElement {
           >
             <IconClearChat />
           </button>
+          {intelligentWorkspaceModeSwitch}
+        </>
+      ) : null}
+      {scope === "intelligent" && !(intelligentWorkspaceShell || isBrowserAgent) ? (
+        <>
+          <span className="ai-chat-composer-toolbar__sep" aria-hidden />
+          {intelligentWorkspaceModeSwitch}
         </>
       ) : null}
     </>

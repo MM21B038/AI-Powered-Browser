@@ -14,9 +14,9 @@
   overflow-y: auto;
   z-index: 30;
   border-radius: 8px;
-  border: 1px solid var(--border2, rgba(255, 255, 255, 0.12));
-  background: var(--bg2, #14141f);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border2, var(--border));
+  background: var(--bg2);
+  box-shadow: var(--shadow-elevated, 0 8px 24px rgba(0, 0, 0, 0.35));
   padding: 4px;
 }
 
@@ -36,12 +36,12 @@
 
 .ai-chat-tool-mention-option:hover,
 .ai-chat-tool-mention-option:focus-visible {
-  background: color-mix(in srgb, var(--accent, #7c6af7) 18%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
   outline: none;
 }
 
 .ai-chat-tool-mention-option--first {
-  background: color-mix(in srgb, var(--accent, #7c6af7) 10%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .ai-chat-tool-mention-empty {

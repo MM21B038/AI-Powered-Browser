@@ -23,8 +23,8 @@
   min-width: 160px;
   padding: 8px 10px;
   border-radius: 8px;
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
-  background: var(--input-bg, rgba(0, 0, 0, 0.25));
+  border: 1px solid var(--border-subtle);
+  background: var(--input-bg);
   color: inherit;
   font-size: 13px;
 }
@@ -38,15 +38,15 @@
 .screenshot-lib-btn {
   padding: 6px 12px;
   border-radius: 8px;
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
-  background: var(--btn-ghost-bg, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--border-subtle);
+  background: var(--btn-ghost-bg);
   color: inherit;
   font-size: 12px;
   cursor: pointer;
 }
 
 .screenshot-lib-btn:hover:not(:disabled) {
-  background: var(--btn-ghost-hover, rgba(255, 255, 255, 0.1));
+  background: var(--btn-ghost-hover);
 }
 
 .screenshot-lib-btn:disabled {
@@ -55,8 +55,8 @@
 }
 
 .screenshot-lib-btn--danger {
-  border-color: rgba(220, 80, 80, 0.45);
-  color: #e8a0a0;
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border2));
+  color: color-mix(in srgb, var(--danger) 82%, var(--text));
 }
 
 .screenshot-lib-scroll {
@@ -75,7 +75,7 @@
   margin-top: 4px;
   padding-top: 6px;
   border-top: 1px solid
-    color-mix(in srgb, var(--border-subtle, rgba(255, 255, 255, 0.14)) 55%, transparent);
+    color-mix(in srgb, var(--border-subtle) 55%, transparent);
 }
 
 .screenshot-lib-section-head {
@@ -93,7 +93,7 @@
     color-mix(in srgb, var(--bg2, rgba(32, 32, 38, 0.97)) 92%, rgba(255, 255, 255, 0.03)) 0%,
     color-mix(in srgb, var(--bg1, rgba(22, 22, 26, 0.94)) 88%, rgba(0, 0, 0, 0.15)) 100%
   );
-  border: 1px solid color-mix(in srgb, var(--border-subtle, rgba(255, 255, 255, 0.12)) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
   box-shadow:
     0 1px 0 color-mix(in srgb, rgba(255, 255, 255, 0.06) 40%, transparent),
     0 8px 24px rgba(0, 0, 0, 0.18);
@@ -107,8 +107,8 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--accent, #7c6af7) 88%, rgba(255, 255, 255, 0.2));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #7c6af7) 22%, transparent);
+  background: color-mix(in srgb, var(--accent) 88%, var(--text));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .screenshot-lib-section-title {
@@ -121,7 +121,7 @@
   font-synthesis: none;
   letter-spacing: -0.022em;
   line-height: 1.28;
-  color: color-mix(in srgb, var(--text, #ececf1) 94%, transparent);
+  color: color-mix(in srgb, var(--text) 94%, transparent);
   font-variant-numeric: tabular-nums;
 }
 
@@ -149,8 +149,8 @@
 .screenshot-lib-tile {
   position: relative;
   border-radius: 10px;
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
-  background: var(--tile-bg, rgba(0, 0, 0, 0.2));
+  border: 1px solid var(--border-subtle);
+  background: var(--tile-bg);
   overflow: hidden;
   cursor: pointer;
   text-align: left;
@@ -158,12 +158,12 @@
 }
 
 .screenshot-lib-tile:hover {
-  border-color: rgba(124, 106, 247, 0.45);
+  border-color: var(--ring-accent-strong);
 }
 
 .screenshot-lib-tile--selected {
-  border-color: rgba(124, 106, 247, 0.75);
-  box-shadow: 0 0 0 1px rgba(124, 106, 247, 0.35);
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border2));
+  box-shadow: 0 0 0 1px var(--ring-accent);
 }
 
 .screenshot-lib-tile-check {
@@ -174,7 +174,7 @@
   display: flex;
   align-items: center;
   padding: 2px;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--surface-scrim);
   border-radius: 4px;
 }
 
@@ -185,7 +185,7 @@
 
 .screenshot-lib-tile-thumb-wrap {
   aspect-ratio: 16 / 10;
-  background: rgba(0, 0, 0, 0.35);
+  background: color-mix(in srgb, var(--bg0) 55%, var(--text) 12%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -202,7 +202,7 @@
   width: 40%;
   height: 40%;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--text2) 18%, transparent);
   animation: screenshot-lib-pulse 1.2s ease-in-out infinite;
 }
 
@@ -249,7 +249,7 @@
 .screenshot-lib-back {
   padding: 6px 12px;
   border-radius: 8px;
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  border: 1px solid var(--border-subtle);
   background: transparent;
   color: inherit;
   font-size: 13px;
@@ -257,7 +257,7 @@
 }
 
 .screenshot-lib-back:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--btn-ghost-bg);
 }
 
 .screenshot-lib-detail-body {
@@ -282,7 +282,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.25);
+  background: color-mix(in srgb, var(--bg0) 78%, var(--text) 9%);
   border-radius: 10px;
   overflow: auto;
 }
@@ -355,8 +355,8 @@
   height: 38px;
   padding: 0;
   border-radius: 8px;
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
-  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
+  background: var(--btn-ghost-bg);
   color: inherit;
   cursor: pointer;
   flex-shrink: 0;
@@ -370,7 +370,7 @@
 }
 
 .screenshot-lib-icon-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.09);
+  background: var(--btn-ghost-hover);
 }
 
 .screenshot-lib-icon-btn:disabled {

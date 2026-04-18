@@ -6,25 +6,18 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  padding: 0.65rem 0.85rem 0.85rem;
-  border-radius: 0.65rem;
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 85%, var(--accent) 15%);
-  background: linear-gradient(
-    165deg,
-    color-mix(in srgb, var(--bg2) 94%, var(--accent) 6%) 0%,
-    var(--bg2) 48%,
-    var(--bg1) 100%
-  );
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.05),
-    inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
-  filter: saturate(0.97);
+  padding: 0.75rem 0.95rem 0.95rem;
+  border-radius: var(--a2ui-host-radius-xl);
+  border: var(--a2ui-host-panel-border);
+  background: var(--a2ui-host-panel-surface);
+  box-shadow: var(--a2ui-host-panel-shadow);
+  filter: saturate(0.98);
   transition:
-    opacity 0.28s ease,
-    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    border-color 0.24s ease,
-    box-shadow 0.28s ease,
-    filter 0.28s ease;
+    opacity var(--a2ui-host-duration-slow) var(--a2ui-host-ease-out),
+    transform var(--a2ui-host-duration-slow) var(--a2ui-host-ease-out),
+    border-color var(--a2ui-host-duration-normal) var(--a2ui-host-ease-standard),
+    box-shadow var(--a2ui-host-duration-slow) var(--a2ui-host-ease-out),
+    filter var(--a2ui-host-duration-slow) var(--a2ui-host-ease-out);
 }
 
 .a2ui-chat-surface--panel.a2ui-chat-surface--ready {
@@ -32,13 +25,14 @@
   transform: translateY(0);
   filter: saturate(1);
   box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.06),
-    0 4px 14px rgba(0, 0, 0, 0.05);
+    var(--a2ui-host-shadow-raised),
+    0 8px 28px color-mix(in srgb, var(--bg0) 18%, transparent),
+    var(--a2ui-host-shadow-inset);
 }
 
 .a2ui-chat-surface--panel:not(.a2ui-chat-surface--ready) {
-  opacity: 0.9;
-  transform: translateY(1px);
+  opacity: 0.92;
+  transform: translateY(2px);
 }
 
 .a2ui-chat-surface-building {
@@ -57,10 +51,11 @@
 }
 
 .a2ui-chat-surface-building__dot {
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 55%, var(--border-subtle));
+  width: 0.48rem;
+  height: 0.48rem;
+  border-radius: var(--a2ui-host-radius-pill);
+  background: color-mix(in srgb, var(--accent) 58%, var(--border-subtle));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
   animation: a2ui-building-dot 1s ease-in-out infinite;
 }
 
@@ -93,12 +88,12 @@
 .a2ui-chat-surface-building__bar {
   display: block;
   height: 0.55rem;
-  border-radius: 0.3rem;
+  border-radius: var(--a2ui-host-radius-sm);
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--bg3) 70%, var(--border-subtle)) 0%,
-    color-mix(in srgb, var(--accent) 22%, var(--bg3)) 50%,
-    color-mix(in srgb, var(--bg3) 70%, var(--border-subtle)) 100%
+    color-mix(in srgb, var(--bg3) 68%, var(--border-subtle)) 0%,
+    color-mix(in srgb, var(--accent) 26%, var(--bg3)) 50%,
+    color-mix(in srgb, var(--bg3) 68%, var(--border-subtle)) 100%
   );
   background-size: 200% 100%;
   animation: a2ui-building-shimmer 1.35s ease-in-out infinite;
@@ -146,13 +141,14 @@
 
 .a2ui-chat-surface__action-hint {
   margin: 0 0 0.65rem;
-  padding: 0.4rem 0.55rem;
+  padding: 0.45rem 0.65rem;
   font-size: 0.75rem;
   line-height: 1.35;
   color: var(--text-muted);
-  border-radius: 0.35rem;
-  background: color-mix(in srgb, var(--bg0) 88%, var(--border-subtle));
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  border-radius: var(--a2ui-host-radius-sm);
+  background: color-mix(in srgb, var(--bg0) 90%, var(--accent) 4%);
+  border: var(--a2ui-host-border-hairline);
+  box-shadow: var(--a2ui-host-shadow-inset);
 }
 
 .a2ui-chat-surface__updating {
@@ -167,16 +163,27 @@
 .a2ui-chat-surface__action-btn {
   font-size: 0.75rem;
   line-height: 1.2;
-  padding: 0.28rem 0.55rem;
-  border-radius: 0.35rem;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg0);
+  padding: 0.32rem 0.62rem;
+  border-radius: var(--a2ui-host-radius-sm);
+  border: var(--a2ui-host-border-subtle);
+  background: var(--a2ui-host-surface-control);
   color: var(--text);
   cursor: pointer;
+  box-shadow: var(--a2ui-host-shadow-inset);
+  transition:
+    background var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard),
+    border-color var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard),
+    box-shadow var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard);
 }
 
 .a2ui-chat-surface__action-btn:hover:not(:disabled) {
-  background: var(--bg1);
+  background: color-mix(in srgb, var(--bg2) 88%, var(--accent) 12%);
+  border-color: color-mix(in srgb, var(--border-subtle) 55%, var(--accent) 45%);
+}
+
+.a2ui-chat-surface__action-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--a2ui-host-shadow-focus-ring), var(--a2ui-host-shadow-inset);
 }
 
 .a2ui-chat-surface__action-btn:disabled {
@@ -210,17 +217,20 @@
   font-size: 0.72rem;
   line-height: 1.2;
   font-weight: 600;
-  padding: 0.32rem 0.55rem;
-  border-radius: 0.35rem;
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 80%, var(--accent) 20%);
+  padding: 0.34rem 0.58rem;
+  border-radius: var(--a2ui-host-radius-sm);
+  border: var(--a2ui-host-border-accent);
   background: color-mix(in srgb, var(--bg0) 92%, var(--accent) 8%);
   color: var(--text);
   cursor: pointer;
-  box-shadow: 0 1px 3px color-mix(in srgb, var(--bg0) 65%, transparent);
+  box-shadow: var(--a2ui-host-shadow-raised), var(--a2ui-host-shadow-inset);
+  transition:
+    background var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard),
+    box-shadow var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard);
 }
 
 .a2ui-chat-surface__jsonl-copy-btn:hover {
-  background: color-mix(in srgb, var(--bg1) 88%, var(--accent) 12%);
+  background: color-mix(in srgb, var(--bg1) 86%, var(--accent) 14%);
 }
 
 @media (hover: hover) {

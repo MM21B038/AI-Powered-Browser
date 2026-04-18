@@ -1,17 +1,31 @@
 /* -------------------------------------------------------------------------- */
-/* Host v0.9 density — shared spacing (renderer only; agents use semantic props) */
+/* Host v0.9 design tokens — spacing, radii, motion (structure only; colors on body) */
 /* -------------------------------------------------------------------------- */
 
 :root {
-  --a2ui-host-leaf-margin: 0.35rem;
-  --a2ui-host-card-padding: 0.75rem;
-  --a2ui-host-stack-gap: 0.35rem;
-  --a2ui-host-control-pad-y: 0.42rem;
-  --a2ui-host-control-pad-x: 0.65rem;
-  --a2ui-host-radius: 0.5rem;
-  --a2ui-host-modal-padding: 1rem;
-  --a2ui-host-tabs-pad-y: 0.4rem;
-  --a2ui-host-tabs-pad-x: 0.75rem;
+  --a2ui-host-leaf-margin: 0.38rem;
+  --a2ui-host-card-padding: 0.85rem;
+  --a2ui-host-stack-gap: 0.45rem;
+  --a2ui-host-control-pad-y: 0.45rem;
+  --a2ui-host-control-pad-x: 0.7rem;
+  --a2ui-host-radius-xs: 0.35rem;
+  --a2ui-host-radius-sm: 0.5rem;
+  --a2ui-host-radius-md: 0.625rem;
+  --a2ui-host-radius-lg: 0.75rem;
+  --a2ui-host-radius-xl: 0.95rem;
+  --a2ui-host-radius-2xl: 1.1rem;
+  --a2ui-host-radius-pill: 999px;
+  /** @deprecated use --a2ui-host-radius-md; kept for any external references */
+  --a2ui-host-radius: var(--a2ui-host-radius-md);
+  --a2ui-host-modal-padding: 1.1rem;
+  --a2ui-host-tabs-pad-y: 0.45rem;
+  --a2ui-host-tabs-pad-x: 0.8rem;
+  --a2ui-host-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --a2ui-host-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --a2ui-host-duration-instant: 0.1s;
+  --a2ui-host-duration-fast: 0.16s;
+  --a2ui-host-duration-normal: 0.24s;
+  --a2ui-host-duration-slow: 0.34s;
 }
 
 /*
@@ -20,6 +34,46 @@
  * invalid so Recharts SVG `fill` falls back to black (notably pie/donut).
  */
 body {
+  /* Shared A2UI chrome — borders & elevation (theme-aware; must live on body, not :root) */
+  --a2ui-host-border-hairline: 1px solid
+    color-mix(in srgb, var(--border-subtle, var(--border)) 68%, transparent);
+  --a2ui-host-border-subtle: 1px solid
+    color-mix(in srgb, var(--border-subtle, var(--border)) 76%, var(--accent) 10%);
+  --a2ui-host-border-accent: 1px solid
+    color-mix(in srgb, var(--border-subtle) 52%, var(--accent) 48%);
+  --a2ui-host-border-strong: 1px solid
+    color-mix(in srgb, var(--border-subtle) 42%, var(--accent) 58%);
+  --a2ui-host-shadow-inset: inset 0 1px 0 color-mix(in srgb, var(--text) 7%, transparent);
+  --a2ui-host-shadow-inset-deep: inset 0 1px 2px color-mix(in srgb, var(--bg0) 22%, transparent);
+  --a2ui-host-shadow-raised:
+    0 1px 2px color-mix(in srgb, var(--bg0) 38%, transparent),
+    0 6px 20px color-mix(in srgb, var(--bg0) 22%, transparent);
+  --a2ui-host-shadow-raised-lg:
+    0 4px 6px color-mix(in srgb, var(--bg0) 28%, transparent),
+    0 16px 40px color-mix(in srgb, var(--bg0) 18%, transparent);
+  --a2ui-host-shadow-focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 26%, transparent);
+  --a2ui-host-surface-card: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--bg3) 93%, var(--accent) 7%) 0%,
+    color-mix(in srgb, var(--bg2) 96%, transparent) 100%
+  );
+  --a2ui-host-surface-control: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg1) 90%, var(--accent) 10%) 0%,
+    color-mix(in srgb, var(--bg2) 88%, var(--accent) 12%) 100%
+  );
+  --a2ui-host-panel-surface: linear-gradient(
+    168deg,
+    color-mix(in srgb, var(--bg2) 95%, var(--accent) 5%) 0%,
+    var(--bg2) 46%,
+    color-mix(in srgb, var(--bg1) 93%, var(--accent) 7%) 100%
+  );
+  --a2ui-host-panel-border: var(--a2ui-host-border-accent);
+  --a2ui-host-panel-shadow:
+    var(--a2ui-host-shadow-raised),
+    0 12px 36px color-mix(in srgb, var(--bg0) 20%, transparent),
+    var(--a2ui-host-shadow-inset);
+
   /* Host charts (Recharts) — semantic series slots; no per-message hex in NDJSON */
   --a2ui-host-chart-series-0: var(--accent);
   --a2ui-host-chart-series-1: color-mix(in srgb, var(--accent2, var(--accent)) 72%, var(--danger) 28%);
@@ -35,28 +89,23 @@ body {
     transparent
   );
   --a2ui-host-chart-axis-tick: var(--text2);
-  --a2ui-host-chart-tooltip-bg: var(--bg2);
+  --a2ui-host-chart-tooltip-bg: color-mix(in srgb, var(--bg2) 94%, var(--accent) 6%);
   --a2ui-host-chart-tooltip-border: color-mix(
     in srgb,
-    var(--border-subtle, var(--border, rgba(255, 255, 255, 0.12))) 72%,
-    transparent
+    var(--border-subtle, var(--border, rgba(255, 255, 255, 0.12))) 65%,
+    var(--accent) 18%
   );
   --a2ui-host-chart-tooltip-color: var(--text);
-  --a2ui-host-chart-plot-bg: linear-gradient(
-    165deg,
-    color-mix(in srgb, var(--bg3) 90%, var(--accent) 8%) 0%,
-    color-mix(in srgb, var(--bg2) 94%, transparent) 55%,
-    color-mix(in srgb, var(--bg1) 92%, var(--accent) 5%) 100%
-  );
+  --a2ui-host-chart-plot-bg: var(--a2ui-host-surface-card);
   --a2ui-host-chart-plot-border: 1px solid
     color-mix(
       in srgb,
-      var(--border-subtle, var(--border, rgba(255, 255, 255, 0.12))) 78%,
-      var(--accent) 12%
+      var(--border-subtle, var(--border, rgba(255, 255, 255, 0.12))) 70%,
+      var(--accent) 18%
     );
   --a2ui-host-chart-plot-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent),
-    0 1px 3px color-mix(in srgb, var(--bg0) 40%, transparent);
+    var(--a2ui-host-shadow-inset),
+    0 2px 8px color-mix(in srgb, var(--bg0) 35%, transparent);
   --a2ui-host-chart-pie-cell-stroke: color-mix(
     in srgb,
     var(--border-subtle, var(--border, rgba(255, 255, 255, 0.12))) 50%,
@@ -94,13 +143,11 @@ body {
 }
 
 .a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-card > section) {
-  background: color-mix(in srgb, var(--bg3) 92%, var(--accent) 8%);
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 78%, var(--accent) 22%);
-  border-radius: 0.65rem;
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.06),
-    inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
-  padding: 0.75rem;
+  background: var(--a2ui-host-surface-card);
+  border: var(--a2ui-host-border-subtle);
+  border-radius: var(--a2ui-host-radius-lg);
+  box-shadow: var(--a2ui-host-shadow-raised), var(--a2ui-host-shadow-inset);
+  padding: var(--a2ui-host-card-padding);
 }
 
 .a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-text) {
@@ -112,33 +159,31 @@ body {
 
 .a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-button button) {
   appearance: none;
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 75%, transparent);
-  background: color-mix(in srgb, var(--bg4) 86%, var(--accent) 14%);
+  border: var(--a2ui-host-border-subtle);
+  background: var(--a2ui-host-surface-control);
   color: var(--text);
-  border-radius: 0.5rem;
-  padding: 0.48rem 0.92rem;
+  border-radius: var(--a2ui-host-radius-md);
+  padding: 0.52rem 1rem;
   font: inherit;
   font-weight: 650;
   cursor: pointer;
   transition:
-    transform 120ms ease,
-    background 120ms ease,
-    border-color 120ms ease,
-    box-shadow 120ms ease;
-  box-shadow:
-    0 1px 0 rgba(0, 0, 0, 0.08),
-    inset 0 1px 0 color-mix(in srgb, var(--text) 5%, transparent);
+    transform var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard),
+    background var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard),
+    border-color var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard),
+    box-shadow var(--a2ui-host-duration-normal) var(--a2ui-host-ease-out);
+  box-shadow: var(--a2ui-host-shadow-raised), var(--a2ui-host-shadow-inset);
 }
 .a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-button button:hover) {
-  background: color-mix(in srgb, var(--bg4) 78%, var(--accent) 22%);
-  border-color: color-mix(in srgb, var(--border-subtle) 62%, var(--accent) 38%);
+  background: color-mix(in srgb, var(--bg3) 78%, var(--accent) 22%);
+  border-color: color-mix(in srgb, var(--border-subtle) 58%, var(--accent) 42%);
 }
 .a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-button button:active) {
   transform: translateY(0.5px);
 }
 .a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-button button:focus-visible) {
-  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--a2ui-host-shadow-focus-ring), var(--a2ui-host-shadow-inset);
 }
 
 .a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-textfield) {
@@ -154,22 +199,23 @@ body {
 .a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-textfield input),
 .a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-textfield textarea),
 .a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-multiplechoice select) {
-  background: color-mix(in srgb, var(--bg1) 88%, var(--accent) 12%);
+  background: var(--a2ui-host-surface-control);
   color: var(--text);
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 74%, transparent);
-  border-radius: 0.5rem;
-  padding: 0.5rem 0.6rem;
+  border: var(--a2ui-host-border-subtle);
+  border-radius: var(--a2ui-host-radius-md);
+  padding: var(--a2ui-host-control-pad-y) var(--a2ui-host-control-pad-x);
   font: inherit;
-  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.06);
+  box-shadow: var(--a2ui-host-shadow-inset-deep);
+  transition:
+    border-color var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard),
+    box-shadow var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard);
 }
 .a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-textfield input:focus),
 .a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-textfield textarea:focus),
 .a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-multiplechoice select:focus) {
   outline: none;
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border-subtle) 45%);
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent),
-    inset 0 1px 0 rgba(0, 0, 0, 0.06);
+  box-shadow: var(--a2ui-host-shadow-focus-ring), var(--a2ui-host-shadow-inset-deep);
 }
 
 .a2ui-chat-surface__capture :where(.a2ui-surface .a2ui-checkbox) {
@@ -211,10 +257,12 @@ body {
 .a2ui-host-card {
   margin: var(--a2ui-host-leaf-margin);
   padding: var(--a2ui-host-card-padding);
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 78%, transparent);
-  border-radius: var(--a2ui-host-radius);
+  border: var(--a2ui-host-border-subtle);
+  border-radius: var(--a2ui-host-radius-lg);
   box-sizing: border-box;
   color: var(--text);
+  background: var(--a2ui-host-surface-card);
+  box-shadow: var(--a2ui-host-shadow-raised), var(--a2ui-host-shadow-inset);
 }
 
 .a2ui-host-row,
@@ -260,32 +308,50 @@ body {
 
 .a2ui-host-tabs__bar {
   display: flex;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 78%, transparent);
-  margin-bottom: 0.25rem;
-  gap: 0.15rem;
+  border-bottom: var(--a2ui-host-border-hairline);
+  margin-bottom: 0.35rem;
+  gap: 0.2rem;
+  padding: 0.15rem;
+  border-radius: var(--a2ui-host-radius-md);
+  background: color-mix(in srgb, var(--bg1) 92%, transparent);
 }
 
 .a2ui-host-tabs__tab {
   padding: var(--a2ui-host-tabs-pad-y) var(--a2ui-host-tabs-pad-x);
   border: none;
-  background: none;
+  background: transparent;
   cursor: pointer;
   font-family: inherit;
   font-size: 0.88rem;
+  color: var(--text2);
+  border-radius: var(--a2ui-host-radius-sm);
+  margin-bottom: 0;
+  transition:
+    color var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard),
+    background var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard);
+}
+
+.a2ui-host-tabs__tab:hover {
   color: var(--text);
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .a2ui-host-tabs__tab--active {
-  border-bottom-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg2) 84%);
   font-weight: 700;
   color: var(--accent);
+  box-shadow: var(--a2ui-host-shadow-inset);
 }
 
 .a2ui-host-tabs__panel {
   flex: 1;
   min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .a2ui-host-tabs__tab {
+    transition: none;
+  }
 }
 
 .a2ui-host-divider {
@@ -321,7 +387,8 @@ body {
 .a2ui-host-modal__backdrop {
   position: fixed;
   inset: 0;
-  background-color: rgba(0, 0, 0, 0.45);
+  background-color: color-mix(in srgb, var(--bg0) 55%, transparent);
+  backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -329,17 +396,17 @@ body {
 }
 
 .a2ui-host-modal__panel {
-  background-color: var(--bg2);
+  background: var(--a2ui-host-surface-card);
   color: var(--text);
   padding: var(--a2ui-host-modal-padding);
-  border-radius: var(--a2ui-host-radius);
+  border-radius: var(--a2ui-host-radius-xl);
   max-width: 90%;
   max-height: 90%;
   overflow: auto;
   display: flex;
   flex-direction: column;
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 78%, transparent);
-  box-shadow: 0 8px 32px color-mix(in srgb, var(--bg0) 50%, transparent);
+  border: var(--a2ui-host-border-accent);
+  box-shadow: var(--a2ui-host-shadow-raised-lg);
 }
 
 .a2ui-host-modal__close-row {
@@ -348,19 +415,26 @@ body {
 }
 
 .a2ui-host-modal__close {
-  border: none;
-  background: none;
-  font-size: 1.25rem;
+  border: var(--a2ui-host-border-hairline);
+  background: color-mix(in srgb, var(--bg1) 90%, transparent);
+  font-size: 1.15rem;
   line-height: 1;
   cursor: pointer;
-  padding: 0.2rem 0.35rem;
+  padding: 0.28rem 0.45rem;
   color: var(--text);
-  border-radius: 0.35rem;
+  border-radius: var(--a2ui-host-radius-sm);
+  transition:
+    background var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard),
+    box-shadow var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard);
+}
+
+.a2ui-host-modal__close:hover {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg2) 88%);
 }
 
 .a2ui-host-modal__close:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--a2ui-host-shadow-focus-ring);
 }
 
 .a2ui-host-modal__body {
@@ -371,12 +445,13 @@ body {
 .a2ui-host-modal__trigger {
   display: inline-block;
   cursor: pointer;
-  border-radius: 0.35rem;
+  border-radius: var(--a2ui-host-radius-sm);
+  transition: box-shadow var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard);
 }
 
 .a2ui-host-modal__trigger:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--a2ui-host-shadow-focus-ring);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -414,8 +489,8 @@ body {
   width: 100%;
   min-height: 120px;
   box-sizing: border-box;
-  padding: 0.4rem 0.35rem 0.35rem;
-  border-radius: var(--a2ui-host-radius);
+  padding: 0.5rem 0.45rem 0.45rem;
+  border-radius: var(--a2ui-host-radius-lg);
   border: var(--a2ui-host-chart-plot-border);
   background: var(--a2ui-host-chart-plot-bg);
   box-shadow: var(--a2ui-host-chart-plot-shadow);
@@ -455,9 +530,9 @@ body {
   padding: 1rem;
   font-size: 0.85rem;
   color: var(--text2);
-  border: 1px dashed color-mix(in srgb, var(--border-subtle) 65%, transparent);
-  border-radius: var(--a2ui-host-radius);
-  background: color-mix(in srgb, var(--bg1) 90%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--border-subtle) 55%, var(--accent) 25%);
+  border-radius: var(--a2ui-host-radius-lg);
+  background: color-mix(in srgb, var(--bg1) 92%, var(--accent) 6%);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -499,7 +574,7 @@ body {
   display: flex;
   align-items: stretch;
   cursor: pointer;
-  border-radius: var(--a2ui-host-radius);
+  border-radius: var(--a2ui-host-radius-md);
 }
 
 .a2ui-host-datetime__field:focus-within {
@@ -518,14 +593,17 @@ body {
 .a2ui-host-choicepicker__filter {
   width: 100%;
   padding: var(--a2ui-host-control-pad-y) var(--a2ui-host-control-pad-x);
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 74%, transparent);
-  border-radius: var(--a2ui-host-radius);
-  background: color-mix(in srgb, var(--bg1) 88%, var(--accent) 12%);
+  border: var(--a2ui-host-border-subtle);
+  border-radius: var(--a2ui-host-radius-md);
+  background: var(--a2ui-host-surface-control);
   color: var(--text);
   font: inherit;
   font-size: 0.9rem;
   box-sizing: border-box;
-  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.06);
+  box-shadow: var(--a2ui-host-shadow-inset-deep);
+  transition:
+    border-color var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard),
+    box-shadow var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard);
 }
 
 .a2ui-host-textfield__input:focus,
@@ -534,9 +612,7 @@ body {
 .a2ui-host-choicepicker__filter:focus {
   outline: none;
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border-subtle) 45%);
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent),
-    inset 0 1px 0 rgba(0, 0, 0, 0.06);
+  box-shadow: var(--a2ui-host-shadow-focus-ring), var(--a2ui-host-shadow-inset-deep);
 }
 
 .a2ui-host-textfield__input--error,
@@ -621,36 +697,42 @@ body {
 }
 
 .a2ui-host-choicepicker__chip {
-  padding: 0.28rem 0.65rem;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 72%, var(--accent) 28%);
+  padding: 0.32rem 0.72rem;
+  border-radius: var(--a2ui-host-radius-pill);
+  border: var(--a2ui-host-border-accent);
   background: color-mix(in srgb, var(--bg0) 92%, var(--accent) 8%);
   color: var(--text);
   font: inherit;
   font-size: 0.8rem;
   cursor: pointer;
+  box-shadow: var(--a2ui-host-shadow-inset);
+  transition:
+    border-color var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard),
+    background var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard),
+    box-shadow var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard);
 }
 
 .a2ui-host-choicepicker__chip--selected {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 88%, var(--bg0) 12%);
   color: var(--bg0);
+  box-shadow: var(--a2ui-host-shadow-raised);
 }
 
 .a2ui-host-choicepicker__chip:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--a2ui-host-shadow-focus-ring), var(--a2ui-host-shadow-inset);
 }
 
 .a2ui-host-checkbox__input:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
   outline-offset: 2px;
 }
 
 .a2ui-host-slider__range:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
   outline-offset: 2px;
-  border-radius: 0.25rem;
+  border-radius: var(--a2ui-host-radius-xs);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -661,13 +743,13 @@ body {
   position: relative;
   z-index: 1;
   margin: var(--a2ui-host-leaf-margin);
-  padding: 0.48rem 1rem;
+  padding: 0.52rem 1.05rem;
   font-family: inherit;
   font-size: 0.92rem;
   font-weight: 650;
   line-height: 1.25;
   letter-spacing: 0.02em;
-  border-radius: 0.5rem;
+  border-radius: var(--a2ui-host-radius-md);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -679,21 +761,24 @@ body {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   transition:
-    transform 0.12s ease,
-    box-shadow 0.2s ease,
-    border-color 0.2s ease,
-    background 0.2s ease,
-    color 0.2s ease,
-    filter 0.15s ease;
-  box-shadow:
-    0 1px 0 color-mix(in srgb, var(--text) 10%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
+    transform var(--a2ui-host-duration-instant) var(--a2ui-host-ease-standard),
+    box-shadow var(--a2ui-host-duration-normal) var(--a2ui-host-ease-out),
+    border-color var(--a2ui-host-duration-normal) var(--a2ui-host-ease-out),
+    background var(--a2ui-host-duration-normal) var(--a2ui-host-ease-out),
+    color var(--a2ui-host-duration-normal) var(--a2ui-host-ease-out),
+    filter var(--a2ui-host-duration-fast) var(--a2ui-host-ease-standard);
+  box-shadow: var(--a2ui-host-shadow-raised), var(--a2ui-host-shadow-inset);
 }
 
 .a2ui-host-button:focus-visible {
+  box-shadow: var(--a2ui-host-shadow-focus-ring), var(--a2ui-host-shadow-inset);
+}
+
+.a2ui-host-button--primary:focus-visible {
   box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent),
-    0 1px 0 color-mix(in srgb, var(--text) 10%, transparent);
+    var(--a2ui-host-shadow-focus-ring),
+    0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text) 12%, transparent);
 }
 
 .a2ui-host-button:disabled,
@@ -712,6 +797,9 @@ body {
   );
   border-color: color-mix(in srgb, var(--accent) 65%, var(--bg0) 35%);
   color: var(--bg0);
+  box-shadow:
+    0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text) 12%, transparent);
 }
 
 .a2ui-host-button--primary:hover:not(:disabled) {
@@ -726,12 +814,10 @@ body {
 
 /* Secondary — matches panel inputs */
 .a2ui-host-button--default {
-  background: color-mix(in srgb, var(--bg3) 88%, var(--accent) 12%);
-  border-color: color-mix(in srgb, var(--border-subtle) 72%, var(--accent) 28%);
+  background: var(--a2ui-host-surface-control);
+  border-color: color-mix(in srgb, var(--border-subtle) 65%, var(--accent) 35%);
   color: var(--text);
-  box-shadow:
-    0 1px 2px color-mix(in srgb, var(--bg0) 30%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--text) 5%, transparent);
+  box-shadow: var(--a2ui-host-shadow-raised), var(--a2ui-host-shadow-inset);
 }
 
 .a2ui-host-button--default:hover:not(:disabled) {
@@ -775,13 +861,13 @@ body {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Host v0.9 Dropdown — themed like TextField, custom chevron, no native arrow */
+/* Host v0.9 Dropdown — combobox + listbox (reliable in Electron; data model via path) */
 /* -------------------------------------------------------------------------- */
 
 .a2ui-host-dropdown {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.4rem;
   width: 100%;
   margin: var(--a2ui-host-leaf-margin);
   box-sizing: border-box;
@@ -796,48 +882,24 @@ body {
   opacity: 0.88;
 }
 
-.a2ui-host-dropdown__selection {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem;
-  min-height: 1.15rem;
-}
-
-.a2ui-host-dropdown__selection-label {
-  flex-shrink: 0;
-  font-weight: 650;
-  font-size: 0.68rem;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text2);
-  opacity: 0.85;
-}
-
-.a2ui-host-dropdown__selection-value {
-  flex: 1;
-  min-width: 0;
-  text-align: right;
-  font-size: 0.88rem;
-  font-weight: 650;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.a2ui-host-dropdown__control {
+  position: relative;
+  width: 100%;
 }
 
 .a2ui-host-dropdown__wrap {
+  /* Anchor for absolutely positioned chevron (must not use `.a2ui-host-dropdown__control` or the menu shifts the hit target). */
   position: relative;
   display: flex;
   align-items: stretch;
-  border-radius: 0.5rem;
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 74%, transparent);
-  background: color-mix(in srgb, var(--bg1) 88%, var(--accent) 12%);
-  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.06);
+  border-radius: var(--a2ui-host-radius-md);
+  border: var(--a2ui-host-border-subtle);
+  background: var(--a2ui-host-surface-control);
+  box-shadow: var(--a2ui-host-shadow-inset-deep);
   transition:
-    border-color 0.18s ease,
-    box-shadow 0.2s ease,
-    background 0.18s ease;
+    border-color var(--a2ui-host-duration-normal) var(--a2ui-host-ease-out),
+    box-shadow var(--a2ui-host-duration-normal) var(--a2ui-host-ease-out),
+    background var(--a2ui-host-duration-normal) var(--a2ui-host-ease-out);
 }
 
 .a2ui-host-dropdown__wrap:hover {
@@ -847,59 +909,94 @@ body {
 .a2ui-host-dropdown__wrap:focus-within {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border-subtle) 45%);
   background: color-mix(in srgb, var(--bg1) 82%, var(--accent) 18%);
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent),
-    inset 0 1px 0 rgba(0, 0, 0, 0.06);
+  box-shadow: var(--a2ui-host-shadow-focus-ring), var(--a2ui-host-shadow-inset-deep);
+}
+
+.a2ui-host-dropdown__wrap--open {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-subtle) 45%);
+  background: color-mix(in srgb, var(--bg1) 82%, var(--accent) 18%);
+  box-shadow: var(--a2ui-host-shadow-focus-ring), var(--a2ui-host-shadow-inset-deep);
 }
 
 .a2ui-host-dropdown__wrap--error {
   border-color: color-mix(in srgb, var(--danger) 58%, var(--border-subtle) 42%);
 }
 
-.a2ui-host-dropdown__wrap--error:focus-within {
+.a2ui-host-dropdown__wrap--error:focus-within,
+.a2ui-host-dropdown__wrap--error.a2ui-host-dropdown__wrap--open {
   border-color: color-mix(in srgb, var(--danger) 65%, var(--border-subtle) 35%);
   box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--danger) 22%, transparent),
-    inset 0 1px 0 rgba(0, 0, 0, 0.06);
+    0 0 0 3px color-mix(in srgb, var(--danger) 24%, transparent),
+    var(--a2ui-host-shadow-inset-deep);
 }
 
-.a2ui-host-dropdown__select {
+.a2ui-host-dropdown__trigger {
+  position: relative;
   flex: 1;
   width: 100%;
   min-width: 0;
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  border: none;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
   margin: 0;
+  padding: 0.52rem 2.35rem 0.52rem 0.65rem;
+  border: none;
+  border-radius: var(--a2ui-host-radius-md);
   background: transparent;
   color: var(--text);
   font: inherit;
   font-size: 0.92rem;
   line-height: 1.4;
-  padding: 0.52rem 2.4rem 0.52rem 0.65rem;
-  border-radius: 0.5rem;
+  text-align: left;
   cursor: pointer;
   outline: none;
   color-scheme: light dark;
 }
 
-.a2ui-host-dropdown__select::-ms-expand {
-  display: none;
-}
-
-.a2ui-host-dropdown__select--placeholder {
+.a2ui-host-dropdown__trigger--placeholder {
   color: var(--text2);
 }
 
-.a2ui-host-dropdown__option {
+.a2ui-host-dropdown__trigger-value {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.12rem;
+  overflow: hidden;
+  padding-right: 0.15rem;
+  z-index: 1;
+}
+
+.a2ui-host-dropdown__trigger-main {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
   color: var(--text);
-  background-color: var(--bg0);
-  font: inherit;
 }
 
-.a2ui-host-dropdown__option--empty {
+.a2ui-host-dropdown__trigger--placeholder .a2ui-host-dropdown__trigger-main {
+  font-weight: 500;
+  color: inherit;
+}
+
+.a2ui-host-dropdown__trigger-code {
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   color: var(--text2);
+  line-height: 1.2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .a2ui-host-dropdown__chevron {
@@ -921,7 +1018,8 @@ body {
   color: color-mix(in srgb, var(--text) 55%, var(--accent) 45%);
 }
 
-.a2ui-host-dropdown__wrap:focus-within .a2ui-host-dropdown__chevron {
+.a2ui-host-dropdown__wrap:focus-within .a2ui-host-dropdown__chevron,
+.a2ui-host-dropdown__wrap--open .a2ui-host-dropdown__chevron {
   color: var(--accent);
 }
 
@@ -930,8 +1028,87 @@ body {
   transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.a2ui-host-dropdown__wrap:focus-within .a2ui-host-dropdown__chevron-icon {
+.a2ui-host-dropdown__wrap--open .a2ui-host-dropdown__chevron-icon {
   transform: rotate(180deg);
+}
+
+.a2ui-host-dropdown__menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 10060;
+  max-height: min(240px, 46vh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 5px;
+  border-radius: var(--a2ui-host-radius-lg);
+  border: var(--a2ui-host-border-accent);
+  background: color-mix(in srgb, var(--bg2) 96%, var(--accent) 4%);
+  box-shadow: var(--a2ui-host-shadow-raised-lg);
+  scrollbar-gutter: stable;
+}
+
+.a2ui-host-dropdown__opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  margin: 0;
+  border: none;
+  border-radius: var(--a2ui-host-radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+  line-height: 1.35;
+  cursor: pointer;
+  transition:
+    background 0.14s ease,
+    color 0.14s ease;
+}
+
+.a2ui-host-dropdown__opt-check {
+  flex-shrink: 0;
+  width: 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: var(--accent);
+  opacity: 0;
+}
+
+.a2ui-host-dropdown__opt--active .a2ui-host-dropdown__opt-check {
+  opacity: 1;
+}
+
+.a2ui-host-dropdown__opt-label {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.a2ui-host-dropdown__opt:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.a2ui-host-dropdown__opt--active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  font-weight: 600;
+}
+
+.a2ui-host-dropdown__opt--placeholder {
+  color: var(--text2);
+  font-style: italic;
+}
+
+.a2ui-host-dropdown__opt:focus-visible {
+  outline: none;
+  box-shadow: var(--a2ui-host-shadow-focus-ring);
 }
 
 .a2ui-host-dropdown__error {
@@ -943,7 +1120,8 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .a2ui-host-dropdown__wrap,
   .a2ui-host-dropdown__chevron,
-  .a2ui-host-dropdown__chevron-icon {
+  .a2ui-host-dropdown__chevron-icon,
+  .a2ui-host-dropdown__opt {
     transition: none;
   }
 }

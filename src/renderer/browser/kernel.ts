@@ -9,6 +9,7 @@ import { SPOTLIGHT_ICON_SVGS } from "../shared/spotlight-icon-svgs";
 import { QUICK_COMMAND_ENTRIES } from "../shared/quick-command-entries";
 import { getToolTemplateLine } from "../shared/tools-hub-templates";
 import { PYTHON_SANDBOX_LIMITS } from "../../shared/python-sandbox-validation";
+import { normalizeAppThemeId } from "../../shared/app-themes";
 import { normalizeHomePageUrl, urlsMatchForTabSwitch } from "./kernel-utils";
 import {
   loadConversationState,
@@ -2558,17 +2559,22 @@ function setupTitleBar() {
 
 function setupTheme() {
   const saved = localStorage.getItem("theme") || "dark";
-  applyTheme(saved);
+  const normalized = normalizeAppThemeId(saved);
+  if (normalized !== saved) {
+    localStorage.setItem("theme", normalized);
+  }
+  applyTheme(normalized);
 }
 
 function applyTheme(name) {
-  document.body.className = "theme-" + name;
-  localStorage.setItem("theme", name);
+  const id = normalizeAppThemeId(name);
+  document.body.className = "theme-" + id;
+  localStorage.setItem("theme", id);
   document.querySelectorAll(".theme-card").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.theme === name);
+    btn.classList.toggle("active", btn.dataset.theme === id);
   });
   try {
-    void window.electronAPI?.syncAppIconTheme?.(name);
+    void window.electronAPI?.syncAppIconTheme?.(id);
   } catch {
     /* ignore */
   }
