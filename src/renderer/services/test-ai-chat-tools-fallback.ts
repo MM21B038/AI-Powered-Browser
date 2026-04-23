@@ -17,6 +17,12 @@ describe("responseLooksLikeToolsNotSupported", () => {
     expect(responseLooksLikeToolsNotSupported(400, '{"error":{"message":"invalid_api_key"}}')).toBe(false);
   });
 
+  it("returns false for Gemini thought_signature errors (do not strip tools and retry)", () => {
+    const body =
+      "Function call is missing a thought_signature in functionCall parts. See https://ai.google.dev/gemini-api/docs/thought-signatures";
+    expect(responseLooksLikeToolsNotSupported(400, body)).toBe(false);
+  });
+
   it("returns false for 401", () => {
     expect(
       responseLooksLikeToolsNotSupported(401, '{"error":{"message":"Incorrect API key"}}'),

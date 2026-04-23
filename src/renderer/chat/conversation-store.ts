@@ -68,6 +68,11 @@ export type ChatMessageV2 =
       content: string;
       /** JSON string of arguments passed to the tool (model output). */
       arguments?: string;
+      /**
+       * Gemini API: opaque `thought_signature` from the model’s function call part.
+       * Must be echoed on `function` when replaying history or Google returns HTTP 400.
+       */
+      thoughtSignature?: string;
     };
 
 export type Conversation = {
@@ -174,7 +179,8 @@ function isChatMessageV2(x: unknown): x is ChatMessageV2 {
         typeof tm.toolCallId === "string" &&
         typeof tm.name === "string" &&
         typeof tm.content === "string" &&
-        (tm.arguments === undefined || typeof tm.arguments === "string")
+        (tm.arguments === undefined || typeof tm.arguments === "string") &&
+        (tm.thoughtSignature === undefined || typeof tm.thoughtSignature === "string")
       );
     }
     default:

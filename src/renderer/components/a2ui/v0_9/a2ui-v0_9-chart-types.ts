@@ -60,9 +60,16 @@ export const LineChartApi = {
       ...ChartCommonProps,
       title: DynamicStringSchema.describe("Chart title.").optional(),
       categories: StringArrayBindingSchema.optional().describe(
-        "X-axis category labels; if omitted, indices 0..n-1 are used."
+        "X-axis category labels when xMode is category; if omitted, indices 0..n-1 are used. When xMode is number, may be omitted if xValues is set, else parsed as numbers when possible."
       ),
       series: SeriesBindingSchema.describe("One or more numeric series aligned by category index."),
+      /** `number`: use numeric X (mathematical x); bind xValues or numeric-like categories. */
+      xMode: z.enum(["category", "number"]).default("category"),
+      xValues: NumberArrayBindingSchema.optional().describe(
+        "Numeric X samples (same length as each series); use with xMode number and series_expr for x."
+      ),
+      /** When true (default), Y starts at 0 if all series values are non-negative (KPI-style). When false, Y is fully automatic so negative quadrants show when data warrants it. */
+      includeZeroOnY: z.boolean().default(true),
       showLegend: z.boolean().default(true),
       legendPosition: LegendPositionSchema,
       showGrid: z.boolean().default(true),
@@ -105,6 +112,9 @@ export const AreaChartApi = {
       title: DynamicStringSchema.optional(),
       categories: StringArrayBindingSchema.optional(),
       series: SeriesBindingSchema,
+      xMode: z.enum(["category", "number"]).default("category"),
+      xValues: NumberArrayBindingSchema.optional(),
+      includeZeroOnY: z.boolean().default(true),
       stackMode: z
         .enum(["overlay", "stacked"])
         .default("overlay")

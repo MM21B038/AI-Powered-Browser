@@ -62,6 +62,7 @@ export function systemPromptForUiPlanning(): string {
 ## Task
 - The user wants an **interactive UI panel inside this chat** (A2UI v0.9), but this phase is **planning only**.
 - Produce a concise plan: what the UI is, key sections, data model fields, and events/actions.
+- When the task involves **math, calculus, or 3D**, follow the appendix **Plot3D, surfaces, meshes, and calculus wiring** and call out: (1) **Heightfields:** \`series_surface\` + Plot3D \`surface\` or \`traces\` surface row; (2) **Solids:** \`mesh_*\` with **correct arg names** (\`radius\` or \`r\`, \`height\` or \`h\`, etc.) and **one** full mesh per trace via \`x\` or \`mesh\` \`functionCall\` with \`returnType: "object"\`, or six fields with \`path\` \`"x"\`…\`"k"\` (never \`/x\` on the call object); (3) **Parametric:** \`mesh_parametric_uv\` with \`u\`/\`v\` sweeps; (4) **2D math plots:** \`LineChart\`/\`AreaChart\` \`xMode: "number"\` + \`xValues\` + aligned \`series_expr\`, \`includeZeroOnY: false\` when needed; (5) **SymPy** paths \`/expression\`, \`/variable\` or \`/wrt\`; (6) **\`ModelViewer3D\`** only for GLB/GLTF files; (7) **Reactivity:** static \`/traces\` arrays do not update when sliders move unless you re-emit data or use inline \`functionCall\`s; (8) **ChoicePicker** single value is a **string**, not a one-element array.
 
 ## Output rules (strict)
 - **Do not output any JSON, JSONL, NDJSON, code fences, or A2UI messages** in this phase.
@@ -79,7 +80,9 @@ export function systemPromptForUiExecute(): string {
 - Output **ONLY** A2UI v0.9 **NDJSON** lines (one JSON object per line).
 - No prose, no markdown, no explanations.
 - Start with exactly one \`createSurface\` line, then many \`updateComponents\` lines, and optional \`updateDataModel\` lines.
-- Choose a **unique** \`createSurface.surfaceId\` for this panel (do not reuse an id from earlier panels in this conversation).\n+- Use that exact same \`surfaceId\` for all subsequent messages.\n+- Do not emit extra top-level keys outside the A2UI message object.
+- Choose a **unique** \`createSurface.surfaceId\` for this panel (do not reuse an id from earlier panels in this conversation).
+- Use that exact same \`surfaceId\` for all subsequent messages.
+- Do not emit extra top-level keys outside the A2UI message object.
 
 ${generateA2uiV09SystemPromptAppendix()}`;
 }

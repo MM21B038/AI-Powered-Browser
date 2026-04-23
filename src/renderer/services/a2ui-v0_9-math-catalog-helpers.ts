@@ -10,6 +10,8 @@ export function safeNum(x: unknown, fallback = 0): number {
     const n = Number.parseFloat(x.trim());
     if (Number.isFinite(n)) return n;
   }
+  // ChoicePicker / legacy bindings sometimes store a one-element array for a scalar path.
+  if (Array.isArray(x) && x.length > 0) return safeNum(x[0], fallback);
   return fallback;
 }
 
@@ -60,4 +62,85 @@ export function evaluateMathExpression(expression: string, scope: Record<string,
 
 export function clampSteps(n: number): number {
   return Math.min(500, Math.max(2, Math.floor(n)));
+}
+
+export function clampSurfaceSteps(n: number): number {
+  return Math.min(180, Math.max(2, Math.floor(n)));
+}
+
+function safeFinite(n: number, fallback = 0): number {
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Central difference derivative for a mathjs expression in x.
+ * Returns 0 on invalid inputs/NaNs (keeps A2UI surfaces stable).
+ */
+export function differentiateNumeric(opts: {
+  expression: string;
+  x: number;
+  h?: number;
+  scopeBase?: Record<string, number>;
+}): number {
+  const expr = String(opts.expression ?? "");
+  const x = safeFinite(opts.x, 0);
+  const hRaw = typeof opts.h === "number" ? opts.h : 1e-4;
+  const h = Math.max(1e-12, Math.abs(safeFinite(hRaw, 1e-4)));
+  const base = opts.scopeBase ?? {};
+  const a = evaluateMathExpression(expr, { ...base, x: x + h });
+  const b = evaluateMathExpression(expr, { ...base, x: x - h });
+  const d = (a - b) / (2 * h);
+  return Number.isFinite(d) ? d : 0;
+}
+
+/**
+ * Trapezoidal integration for a mathjs expression in x.
+ * Returns 0 on invalid inputs/NaNs (keeps A2UI surfaces stable).
+ */
+export type PartialDiffWrt = "x" | "y" | "z";
+
+/**
+ * Central partial derivative ∂f/∂wrt at the point given by `scope` (must include `wrt` and any other symbols used in the expression).
+ */
+export function partialDifferentiateNumeric(opts: {
+  expression: string;
+  wrt: PartialDiffWrt;
+  h?: number;
+  scope?: Record<string, number>;
+}): number {
+  const expr = String(opts.expression ?? "");
+  const w = opts.wrt;
+  const hRaw = typeof opts.h === "number" ? opts.h : 1e-4;
+  const h = Math.max(1e-12, Math.abs(safeFinite(hRaw, 1e-4)));
+  const base: Record<string, number> = { ...(opts.scope ?? {}) };
+  const v0 = safeFinite(base[w] ?? 0, 0);
+  const a = evaluateMathExpression(expr, { ...base, [w]: v0 + h });
+  const b = evaluateMathExpression(expr, { ...base, [w]: v0 - h });
+  const d = (a - b) / (2 * h);
+  return Number.isFinite(d) ? d : 0;
+}
+
+export function integrateNumeric(opts: {
+  expression: string;
+  xMin: number;
+  xMax: number;
+  steps: number;
+  scopeBase?: Record<string, number>;
+}): number {
+  const expr = String(opts.expression ?? "");
+  const xMin = safeFinite(opts.xMin, 0);
+  const xMax = safeFinite(opts.xMax, 1);
+  const n = clampSteps(opts.steps);
+  const base = opts.scopeBase ?? {};
+  if (n < 2) return 0;
+  const dx = (xMax - xMin) / (n - 1);
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const x = xMin + dx * i;
+    const fx = evaluateMathExpression(expr, { ...base, x });
+    const w = i === 0 || i === n - 1 ? 0.5 : 1;
+    sum += w * (Number.isFinite(fx) ? fx : 0);
+  }
+  const area = dx * sum;
+  return Number.isFinite(area) ? area : 0;
 }

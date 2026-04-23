@@ -3,11 +3,27 @@ import { Catalog } from "@a2ui/web_core/v0_9";
 import { basicCatalog } from "@a2ui/react/v0_9";
 import { a2uiV09DynamicNumberSchema } from "./a2ui-v0_9-dynamic-number-schema";
 import {
+  clampSurfaceSteps,
   clampSteps,
+  differentiateNumeric,
   evaluateMathExpression,
+  integrateNumeric,
   MATH_EXPR_MAX_LENGTH,
+  partialDifferentiateNumeric,
   safeNum,
 } from "./a2ui-v0_9-math-catalog-helpers";
+import {
+  emptyMesh3d,
+  meshBox,
+  meshCone,
+  meshCuboid,
+  meshCylinder,
+  meshMerge,
+  meshParametricUv,
+  meshSphere,
+  meshTorus,
+  type Mesh3dData,
+} from "./a2ui-v0_9-mesh-primitives";
 
 function currencyNarrowSymbolFor(currency: string): string {
   try {
@@ -416,6 +432,441 @@ const SeriesExprFn = {
   },
 } as const;
 
+const DiffNumericFn = {
+  name: "diff_numeric",
+  returnType: "number",
+  schema: z
+    .object({
+      expression: z.string().max(MATH_EXPR_MAX_LENGTH),
+      x: a2uiV09DynamicNumberSchema,
+      h: a2uiV09DynamicNumberSchema.optional(),
+    })
+    .passthrough()
+    .describe(
+      "Numeric derivative d/dx of `expression` at `x` via central differences. Extra keys become variables; bind with `{ path }` for reactivity."
+    ),
+  execute: (args: Record<string, unknown>) => {
+    const expression = String(args.expression ?? "");
+    const x = safeNum(args.x, 0);
+    const h = args.h == null ? undefined : safeNum(args.h, 1e-4);
+    const scopeBase: Record<string, number> = {};
+    for (const [k, v] of Object.entries(args)) {
+      if (["expression", "x", "h"].includes(k)) continue;
+      scopeBase[k] = safeNum(v, 0);
+    }
+    return differentiateNumeric({ expression, x, h, scopeBase });
+  },
+} as const;
+
+const PartialDiffNumericFn = {
+  name: "partial_diff_numeric",
+  returnType: "number",
+  schema: z
+    .object({
+      expression: z.string().max(MATH_EXPR_MAX_LENGTH),
+      wrt: z.enum(["x", "y", "z"]),
+      h: a2uiV09DynamicNumberSchema.optional(),
+    })
+    .passthrough()
+    .describe(
+      "Numeric partial derivative ∂f/∂wrt at the point given by top-level variable keys (e.g. x, y, z); bind with `{ path }` for reactivity."
+    ),
+  execute: (args: Record<string, unknown>) => {
+    const expression = String(args.expression ?? "");
+    const wrt = args.wrt === "y" || args.wrt === "z" ? args.wrt : "x";
+    const h = args.h == null ? undefined : safeNum(args.h, 1e-4);
+    const scope: Record<string, number> = {};
+    for (const [k, v] of Object.entries(args)) {
+      if (["expression", "wrt", "h"].includes(k)) continue;
+      scope[k] = safeNum(v, 0);
+    }
+    return partialDifferentiateNumeric({ expression, wrt, h, scope });
+  },
+} as const;
+
+const IntegrateNumericFn = {
+  name: "integrate_numeric",
+  returnType: "number",
+  schema: z
+    .object({
+      expression: z.string().max(MATH_EXPR_MAX_LENGTH),
+      xMin: a2uiV09DynamicNumberSchema,
+      xMax: a2uiV09DynamicNumberSchema,
+      steps: a2uiV09DynamicNumberSchema.optional(),
+    })
+    .passthrough()
+    .describe(
+      "Numeric integral of `expression` over x from `xMin` to `xMax` (trapezoid). Extra keys become variables; bind with `{ path }` for reactivity."
+    ),
+  execute: (args: Record<string, unknown>) => {
+    const expression = String(args.expression ?? "");
+    const xMin = safeNum(args.xMin, 0);
+    const xMax = safeNum(args.xMax, 1);
+    const steps = args.steps == null ? 256 : safeNum(args.steps, 256);
+    const scopeBase: Record<string, number> = {};
+    for (const [k, v] of Object.entries(args)) {
+      if (["expression", "xMin", "xMax", "steps"].includes(k)) continue;
+      scopeBase[k] = safeNum(v, 0);
+    }
+    return integrateNumeric({ expression, xMin, xMax, steps, scopeBase });
+  },
+} as const;
+
+const SeriesSurfaceFn = {
+  name: "series_surface",
+  returnType: "object",
+  schema: z
+    .object({
+      expression: z.string().max(MATH_EXPR_MAX_LENGTH),
+      xMin: a2uiV09DynamicNumberSchema,
+      xMax: a2uiV09DynamicNumberSchema,
+      yMin: a2uiV09DynamicNumberSchema,
+      yMax: a2uiV09DynamicNumberSchema,
+      xSteps: a2uiV09DynamicNumberSchema.optional(),
+      ySteps: a2uiV09DynamicNumberSchema.optional(),
+    })
+    .passthrough()
+    .describe(
+      "Sample a 3D surface z=f(x,y) across x/y bounds. Returns { x: number[], y: number[], z: number[][] } for plotting."
+    ),
+  execute: (args: Record<string, unknown>) => {
+    const expression = String(args.expression ?? "");
+    const xMin = safeNum(args.xMin, -1);
+    const xMax = safeNum(args.xMax, 1);
+    const yMin = safeNum(args.yMin, -1);
+    const yMax = safeNum(args.yMax, 1);
+    const xSteps = clampSurfaceSteps(safeNum(args.xSteps, 48));
+    const ySteps = clampSurfaceSteps(safeNum(args.ySteps, 48));
+    const scopeBase: Record<string, number> = {};
+    for (const [k, v] of Object.entries(args)) {
+      if (
+        ["expression", "xMin", "xMax", "yMin", "yMax", "xSteps", "ySteps"].includes(k)
+      )
+        continue;
+      scopeBase[k] = safeNum(v, 0);
+    }
+
+    const x: number[] = [];
+    const y: number[] = [];
+    for (let i = 0; i < xSteps; i++) {
+      const t = xSteps <= 1 ? 0 : i / (xSteps - 1);
+      x.push(xMin + (xMax - xMin) * t);
+    }
+    for (let j = 0; j < ySteps; j++) {
+      const t = ySteps <= 1 ? 0 : j / (ySteps - 1);
+      y.push(yMin + (yMax - yMin) * t);
+    }
+
+    const z: number[][] = [];
+    for (let j = 0; j < y.length; j++) {
+      const row: number[] = [];
+      for (let i = 0; i < x.length; i++) {
+        const n = evaluateMathExpression(expression, {
+          ...scopeBase,
+          x: x[i]!,
+          y: y[j]!,
+        });
+        row.push(Number.isFinite(n) ? n : 0);
+      }
+      z.push(row);
+    }
+    return { x, y, z };
+  },
+} as const;
+
+function parseMesh3dArg(raw: unknown): Mesh3dData | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Mesh3dData;
+  if (!Array.isArray(o.x) || !Array.isArray(o.y) || !Array.isArray(o.z)) return null;
+  if (!Array.isArray(o.i) || !Array.isArray(o.j) || !Array.isArray(o.k)) return null;
+  if (o.x.length !== o.y.length || o.y.length !== o.z.length) return null;
+  if (o.i.length !== o.j.length || o.j.length !== o.k.length) return null;
+  return o;
+}
+
+const MeshSphereFn = {
+  name: "mesh_sphere",
+  returnType: "object",
+  schema: z
+    .object({
+      radius: a2uiV09DynamicNumberSchema.optional(),
+      r: a2uiV09DynamicNumberSchema.optional(),
+      cx: a2uiV09DynamicNumberSchema.optional(),
+      cy: a2uiV09DynamicNumberSchema.optional(),
+      cz: a2uiV09DynamicNumberSchema.optional(),
+      segments: a2uiV09DynamicNumberSchema.optional(),
+      /** LLM-friendly aliases (same meaning as `segments` for UV grid). */
+      widthSegments: a2uiV09DynamicNumberSchema.optional(),
+      heightSegments: a2uiV09DynamicNumberSchema.optional(),
+    })
+    .passthrough()
+    .describe(
+      "UV sphere mesh for Plot3D `mesh` traces: `radius` or `r`, optional `cx`/`cy`/`cz` (default 0), optional `segments` or `widthSegments`/`heightSegments` (defaults 24)."
+    ),
+  execute: (args: Record<string, unknown>) => {
+    const segRaw =
+      args.segments ?? args.widthSegments ?? args.heightSegments ?? 24;
+    const segments = safeNum(segRaw, 24);
+    return meshSphere(
+      safeNum(args.cx, 0),
+      safeNum(args.cy, 0),
+      safeNum(args.cz, 0),
+      safeNum(args.radius ?? args.r, 1),
+      segments,
+    );
+  },
+} as const;
+
+const MeshBoxFn = {
+  name: "mesh_box",
+  returnType: "object",
+  schema: z
+    .object({
+      x0: a2uiV09DynamicNumberSchema,
+      y0: a2uiV09DynamicNumberSchema,
+      z0: a2uiV09DynamicNumberSchema,
+      x1: a2uiV09DynamicNumberSchema,
+      y1: a2uiV09DynamicNumberSchema,
+      z1: a2uiV09DynamicNumberSchema,
+    })
+    .passthrough()
+    .describe("Axis-aligned box mesh from corner (x0,y0,z0) to (x1,y1,z1)."),
+  execute: (args: Record<string, unknown>) => {
+    return meshBox(
+      safeNum(args.x0, 0),
+      safeNum(args.y0, 0),
+      safeNum(args.z0, 0),
+      safeNum(args.x1, 1),
+      safeNum(args.y1, 1),
+      safeNum(args.z1, 1),
+    );
+  },
+} as const;
+
+const MeshCuboidFn = {
+  name: "mesh_cuboid",
+  returnType: "object",
+  schema: z
+    .object({
+      hx: a2uiV09DynamicNumberSchema,
+      hy: a2uiV09DynamicNumberSchema,
+      hz: a2uiV09DynamicNumberSchema,
+      cx: a2uiV09DynamicNumberSchema.optional(),
+      cy: a2uiV09DynamicNumberSchema.optional(),
+      cz: a2uiV09DynamicNumberSchema.optional(),
+    })
+    .passthrough()
+    .describe("Axis-aligned box centered at (cx,cy,cz) (default 0) with half-extents (hx,hy,hz)."),
+  execute: (args: Record<string, unknown>) => {
+    return meshCuboid(
+      safeNum(args.cx, 0),
+      safeNum(args.cy, 0),
+      safeNum(args.cz, 0),
+      safeNum(args.hx, 0.5),
+      safeNum(args.hy, 0.5),
+      safeNum(args.hz, 0.5),
+    );
+  },
+} as const;
+
+const MeshCylinderFn = {
+  name: "mesh_cylinder",
+  returnType: "object",
+  schema: z
+    .object({
+      radius: a2uiV09DynamicNumberSchema.optional(),
+      r: a2uiV09DynamicNumberSchema.optional(),
+      height: a2uiV09DynamicNumberSchema.optional(),
+      h: a2uiV09DynamicNumberSchema.optional(),
+      cx: a2uiV09DynamicNumberSchema.optional(),
+      cy: a2uiV09DynamicNumberSchema.optional(),
+      cz: a2uiV09DynamicNumberSchema.optional(),
+      radialSegments: a2uiV09DynamicNumberSchema.optional(),
+      segments: a2uiV09DynamicNumberSchema.optional(),
+      heightSegments: a2uiV09DynamicNumberSchema.optional(),
+      caps: z.union([z.boolean(), z.number()]).optional(),
+    })
+    .passthrough()
+    .describe(
+      "Cylinder along Z through (cx,cy,cz) ± height/2; center defaults to origin. Aliases: `r`→`radius`, `h`→`height`, `segments`→`radialSegments`. caps false = open tube."
+    ),
+  execute: (args: Record<string, unknown>) => {
+    const capsRaw = args.caps;
+    const caps =
+      capsRaw === undefined ? true : capsRaw === true || capsRaw === 1 || capsRaw === "1";
+    const radius = safeNum(args.radius ?? args.r, 1);
+    const height = safeNum(args.height ?? args.h, 1);
+    const radialSeg =
+      args.radialSegments ?? args.radial ?? args.segments ?? args.widthSegments;
+    const heightSeg = args.heightSegments ?? args.heightRings;
+    return meshCylinder({
+      cx: safeNum(args.cx, 0),
+      cy: safeNum(args.cy, 0),
+      cz: safeNum(args.cz, 0),
+      radius,
+      height,
+      radialSegments: radialSeg == null ? undefined : safeNum(radialSeg, 24),
+      heightSegments: heightSeg == null ? undefined : safeNum(heightSeg, 1),
+      caps,
+    });
+  },
+} as const;
+
+const MeshConeFn = {
+  name: "mesh_cone",
+  returnType: "object",
+  schema: z
+    .object({
+      height: a2uiV09DynamicNumberSchema.optional(),
+      h: a2uiV09DynamicNumberSchema.optional(),
+      baseRadius: a2uiV09DynamicNumberSchema.optional(),
+      radius: a2uiV09DynamicNumberSchema.optional(),
+      r: a2uiV09DynamicNumberSchema.optional(),
+      cx: a2uiV09DynamicNumberSchema.optional(),
+      cy: a2uiV09DynamicNumberSchema.optional(),
+      cz: a2uiV09DynamicNumberSchema.optional(),
+      radialSegments: a2uiV09DynamicNumberSchema.optional(),
+      segments: a2uiV09DynamicNumberSchema.optional(),
+      caps: z.union([z.boolean(), z.number()]).optional(),
+    })
+    .passthrough()
+    .describe(
+      "Cone: base in z = cz − h/2, apex at z = cz + h/2; center defaults to origin. Use `baseRadius` or `radius`; `h`→`height`; `segments`→`radialSegments`."
+    ),
+  execute: (args: Record<string, unknown>) => {
+    const capsRaw = args.caps;
+    const caps =
+      capsRaw === undefined ? true : capsRaw === true || capsRaw === 1 || capsRaw === "1";
+    const baseRadius = safeNum(args.baseRadius ?? args.radius ?? args.r, 1);
+    const height = safeNum(args.height ?? args.h, 1);
+    const radialSeg = args.radialSegments ?? args.radial ?? args.segments;
+    return meshCone({
+      cx: safeNum(args.cx, 0),
+      cy: safeNum(args.cy, 0),
+      cz: safeNum(args.cz, 0),
+      baseRadius,
+      height,
+      radialSegments: radialSeg == null ? undefined : safeNum(radialSeg, 24),
+      caps,
+    });
+  },
+} as const;
+
+const MeshTorusFn = {
+  name: "mesh_torus",
+  returnType: "object",
+  schema: z
+    .object({
+      majorRadius: a2uiV09DynamicNumberSchema.optional(),
+      minorRadius: a2uiV09DynamicNumberSchema.optional(),
+      cx: a2uiV09DynamicNumberSchema.optional(),
+      cy: a2uiV09DynamicNumberSchema.optional(),
+      cz: a2uiV09DynamicNumberSchema.optional(),
+      uSegments: a2uiV09DynamicNumberSchema.optional(),
+      vSegments: a2uiV09DynamicNumberSchema.optional(),
+      /** Aliases for major / minor tube radius */
+      R: a2uiV09DynamicNumberSchema.optional(),
+      r: a2uiV09DynamicNumberSchema.optional(),
+    })
+    .passthrough()
+    .describe(
+      "Torus in XY plane; center defaults to origin. Use `majorRadius`/`minorRadius` or aliases `R`/`r`."
+    ),
+  execute: (args: Record<string, unknown>) => {
+    const major = safeNum(args.majorRadius ?? args.R, 2);
+    const minor = safeNum(args.minorRadius ?? args.r, 0.5);
+    return meshTorus({
+      cx: safeNum(args.cx, 0),
+      cy: safeNum(args.cy, 0),
+      cz: safeNum(args.cz, 0),
+      majorRadius: major,
+      minorRadius: minor,
+      uSegments: args.uSegments == null ? undefined : safeNum(args.uSegments, 32),
+      vSegments: args.vSegments == null ? undefined : safeNum(args.vSegments, 24),
+    });
+  },
+} as const;
+
+const MeshMergeFn = {
+  name: "mesh_merge",
+  returnType: "object",
+  schema: z
+    .object({
+      a: z.any(),
+      b: z.any(),
+    })
+    .passthrough()
+    .describe("Concatenate two mesh3d payloads `{x,y,z,i,j,k}` (e.g. from other mesh_* calls)."),
+  execute: (args: Record<string, unknown>) => {
+    const ma = parseMesh3dArg(args.a);
+    const mb = parseMesh3dArg(args.b);
+    if (!ma || !mb) return emptyMesh3d();
+    return meshMerge(ma, mb);
+  },
+} as const;
+
+const MeshParametricUvFn = {
+  name: "mesh_parametric_uv",
+  returnType: "object",
+  schema: z
+    .object({
+      xExpression: z.string().max(MATH_EXPR_MAX_LENGTH),
+      yExpression: z.string().max(MATH_EXPR_MAX_LENGTH),
+      zExpression: z.string().max(MATH_EXPR_MAX_LENGTH),
+      uMin: a2uiV09DynamicNumberSchema,
+      uMax: a2uiV09DynamicNumberSchema,
+      vMin: a2uiV09DynamicNumberSchema,
+      vMax: a2uiV09DynamicNumberSchema,
+      uSteps: a2uiV09DynamicNumberSchema.optional(),
+      vSteps: a2uiV09DynamicNumberSchema.optional(),
+    })
+    .passthrough()
+    .describe(
+      "Parametric patch (u,v) → (x,y,z) via mathjs expressions; sweep uses variables `u` and `v`. Extra top-level keys are numeric parameters (reactive)."
+    ),
+  execute: (args: Record<string, unknown>) => {
+    const xExpression = String(args.xExpression ?? "0");
+    const yExpression = String(args.yExpression ?? "0");
+    const zExpression = String(args.zExpression ?? "0");
+    const uMin = safeNum(args.uMin, 0);
+    const uMax = safeNum(args.uMax, 1);
+    const vMin = safeNum(args.vMin, 0);
+    const vMax = safeNum(args.vMax, 1);
+    const uSteps = args.uSteps == null ? 32 : safeNum(args.uSteps, 32);
+    const vSteps = args.vSteps == null ? 32 : safeNum(args.vSteps, 32);
+    const scopeBase: Record<string, number> = {};
+    for (const [k, v] of Object.entries(args)) {
+      if (
+        [
+          "xExpression",
+          "yExpression",
+          "zExpression",
+          "uMin",
+          "uMax",
+          "vMin",
+          "vMax",
+          "uSteps",
+          "vSteps",
+        ].includes(k)
+      )
+        continue;
+      scopeBase[k] = safeNum(v, 0);
+    }
+    return meshParametricUv({
+      xExpression,
+      yExpression,
+      zExpression,
+      uMin,
+      uMax,
+      vMin,
+      vMax,
+      uSteps,
+      vSteps,
+      scopeBase,
+    });
+  },
+} as const;
+
 /** Extra expression/catalog functions registered for both extended and host catalogs. */
 export function getA2uiV09ExtraCatalogFunctions(): readonly any[] {
   return [
@@ -433,6 +884,18 @@ export function getA2uiV09ExtraCatalogFunctions(): readonly any[] {
     MovingAverageFn,
     MathEvalFn,
     SeriesExprFn,
+    DiffNumericFn,
+    PartialDiffNumericFn,
+    IntegrateNumericFn,
+    SeriesSurfaceFn,
+    MeshSphereFn,
+    MeshBoxFn,
+    MeshCuboidFn,
+    MeshCylinderFn,
+    MeshConeFn,
+    MeshTorusFn,
+    MeshMergeFn,
+    MeshParametricUvFn,
   ];
 }
 

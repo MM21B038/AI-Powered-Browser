@@ -64,6 +64,8 @@ export type ChatStreamEvent =
       arguments: string;
       resultPreview: string;
       fullResult: string;
+      /** Gemini: must replay on `function` in the next request (see `thought_signature`). */
+      thoughtSignature?: string;
     }
   | { type: "error"; message: string; httpStatus?: number }
   /** Start of one model SSE response (each outer agent round). Resets bridge preamble state. */
@@ -86,7 +88,7 @@ type OpenAiMsg =
       tool_calls?: Array<{
         id: string;
         type: "function";
-        function: { name: string; arguments: string };
+        function: { name: string; arguments: string; thought_signature?: string };
       }>;
     }
   /** Gemini OpenAI-compat requires non-empty function name on tool results. */
@@ -110,6 +112,8 @@ function inferHttpStatusFromProxyError(message: string): number {
 export function responseLooksLikeToolsNotSupported(httpStatus: number, body: string): boolean {
   const status = httpStatus > 0 ? httpStatus : inferHttpStatusFromProxyError(body);
   const b = body.toLowerCase();
+  /** Gemini: missing thought_signature needs a client fix, not “drop tools”. */
+  if (b.includes("thought_signature")) return false;
   const mentionsTools =
     b.includes("tool_choice") ||
     b.includes('"tools"') ||
@@ -344,6 +348,19 @@ function toolArgumentsForApi(t: ToolMsgV2): string {
   return "{}";
 }
 
+/** Gemini OpenAI-compat: replay `thought_signature` on function calls or the API may return 400. */
+function toolFunctionPayloadForApi(t: ToolMsgV2): {
+  name: string;
+  arguments: string;
+  thought_signature?: string;
+} {
+  const name = nonEmptyToolName(t.name);
+  const args = toolArgumentsForApi(t);
+  const sig = t.thoughtSignature?.trim();
+  if (!sig) return { name, arguments: args };
+  return { name, arguments: args, thought_signature: sig };
+}
+
 function lastUserMessageAttachments(messages: ChatMessageV2[]): ChatAttachment[] {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
@@ -433,10 +450,7 @@ export function buildOpenAiMessagesFromChatV2(sysContent: string, messages: Chat
           tool_calls: tools.map((t) => ({
             id: t.toolCallId,
             type: "function" as const,
-            function: {
-              name: nonEmptyToolName(t.name),
-              arguments: toolArgumentsForApi(t),
-            },
+            function: toolFunctionPayloadForApi(t),
           })),
         });
         for (const t of tools) {
@@ -466,10 +480,7 @@ export function buildOpenAiMessagesFromChatV2(sysContent: string, messages: Chat
           tool_calls: tools.map((t) => ({
             id: t.toolCallId,
             type: "function" as const,
-            function: {
-              name: nonEmptyToolName(t.name),
-              arguments: toolArgumentsForApi(t),
-            },
+            function: toolFunctionPayloadForApi(t),
           })),
         });
         for (const t of tools) {
@@ -495,10 +506,7 @@ export function buildOpenAiMessagesFromChatV2(sysContent: string, messages: Chat
         tool_calls: tools.map((t) => ({
           id: t.toolCallId,
           type: "function" as const,
-          function: {
-            name: nonEmptyToolName(t.name),
-            arguments: toolArgumentsForApi(t),
-          },
+          function: toolFunctionPayloadForApi(t),
         })),
       });
       for (const t of tools) {
@@ -790,6 +798,8 @@ async function runOpenAiCompatible(
     settings: IntelligentSettingsState;
     abortSignal?: AbortSignal;
     onAgUiEvent?: (e: AgUiEventRecord) => void;
+    systemPromptOverride?: string;
+    disableSkillInjection?: boolean;
   },
   modelId: string,
   baseUrl: string,
@@ -857,13 +867,19 @@ async function runOpenAiCompatible(
     const proxy = opts.api.aiChatProxyStream;
 
     let fullAssistant = "";
-    let toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
+    let toolCallMap = new Map<
+      number,
+      { id: string; name: string; arguments: string; thoughtSignature: string }
+    >();
 
     streamAttempt: while (true) {
       emitStream({ type: "stream_start" });
       let buffer = "";
       fullAssistant = "";
-      toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
+      toolCallMap = new Map<
+        number,
+        { id: string; name: string; arguments: string; thoughtSignature: string }
+      >();
 
       const { feed: feedAssistantContent, flush: flushAssistantThinkBuffer } = createThinkTagSplitter(
         (text) => {
@@ -886,7 +902,12 @@ async function runOpenAiCompatible(
                 tool_calls?: Array<{
                   index?: number;
                   id?: string;
-                  function?: { name?: string; arguments?: string };
+                  function?: {
+                    name?: string;
+                    arguments?: string;
+                    thought_signature?: string;
+                    thoughtSignature?: string;
+                  };
                 }>;
               };
             }>;
@@ -908,12 +929,22 @@ async function runOpenAiCompatible(
                 const idx = typeof tc.index === "number" ? tc.index : 0;
                 let row = toolCallMap.get(idx);
                 if (!row) {
-                  row = { id: "", name: "", arguments: "" };
+                  row = { id: "", name: "", arguments: "", thoughtSignature: "" };
                   toolCallMap.set(idx, row);
                 }
                 if (tc.id) row.id = tc.id;
-                if (tc.function?.name) row.name = tc.function.name;
-                if (tc.function?.arguments) row.arguments += tc.function.arguments;
+                const fn = tc.function;
+                if (fn && typeof fn === "object") {
+                  if (fn.name) row.name = fn.name;
+                  if (fn.arguments) row.arguments += fn.arguments;
+                  const sig =
+                    typeof fn.thought_signature === "string"
+                      ? fn.thought_signature
+                      : typeof fn.thoughtSignature === "string"
+                        ? fn.thoughtSignature
+                        : "";
+                  if (sig) row.thoughtSignature += sig;
+                }
               }
             }
           }
@@ -1114,11 +1145,23 @@ async function runOpenAiCompatible(
       oaMessages.push({
         role: "assistant",
         content: fullAssistant || null,
-        tool_calls: valid.map((t) => ({
-          id: t.id,
-          type: "function" as const,
-          function: { name: nonEmptyToolName(t.name), arguments: t.arguments || "{}" },
-        })),
+        tool_calls: valid.map((t) => {
+          const fn: {
+            name: string;
+            arguments: string;
+            thought_signature?: string;
+          } = {
+            name: nonEmptyToolName(t.name),
+            arguments: t.arguments || "{}",
+          };
+          const ts = t.thoughtSignature.trim();
+          if (ts) fn.thought_signature = ts;
+          return {
+            id: t.id,
+            type: "function" as const,
+            function: fn,
+          };
+        }),
       });
 
       for (const tc of valid) {
@@ -1153,6 +1196,7 @@ async function runOpenAiCompatible(
         } catch (e) {
           resultText = JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
         }
+        const ts = tc.thoughtSignature.trim();
         emitStream({
           type: "tool_end",
           name: apiToolName,
@@ -1160,6 +1204,7 @@ async function runOpenAiCompatible(
           arguments: tc.arguments || "{}",
           resultPreview: resultText.slice(0, 400),
           fullResult: resultText,
+          ...(ts ? { thoughtSignature: ts } : {}),
         });
         oaMessages.push({
           role: "tool",

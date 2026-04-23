@@ -34,6 +34,31 @@ export function yDomainNonNegativeIfAllPositive(
   return undefined;
 }
 
+/** Y axis: when includeZeroOnY is false, always auto (shows negative quadrants). When true, keep KPI-style [0, auto] if all y ≥ 0. */
+export function yDomainForLineArea(
+  rows: readonly Record<string, string | number>[],
+  keys: readonly string[],
+  includeZeroOnY: boolean,
+): YDomainSetting {
+  if (!includeZeroOnY) return undefined;
+  return yDomainNonNegativeIfAllPositive(rows, keys);
+}
+
+/** Padded [min, max] for Recharts numeric axis (avoids zero-width domain). */
+export function numericAxisDomainFromValues(values: readonly number[]): readonly [number, number] | undefined {
+  const finite = values.filter((n) => typeof n === "number" && Number.isFinite(n));
+  if (finite.length === 0) return undefined;
+  let min = Math.min(...finite);
+  let max = Math.max(...finite);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return undefined;
+  if (min === max) {
+    const eps = Math.abs(min) * 1e-6 + 1e-6;
+    return [min - eps, max + eps];
+  }
+  const pad = (max - min) * 0.04;
+  return [min - pad, max + pad];
+}
+
 /** Compact Y (or numeric X) tick labels for large magnitudes. */
 export function formatCartesianTick(n: number): string {
   if (!Number.isFinite(n)) return "";

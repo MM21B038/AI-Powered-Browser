@@ -16,6 +16,7 @@ import {
   A2UI_V09_HOST_CHART_COMPONENT_NAMES,
   getA2uiV09HostChartComponents,
 } from "../components/a2ui/v0_9/a2ui-v0_9-host-chart-components";
+import { a2uiV09HostModelViewer3D } from "../components/a2ui/v0_9/A2uiV09HostModelViewer3D";
 import { getA2uiV09ExtraCatalogFunctions } from "./a2ui-v0_9-extended-catalog";
 
 /** Upstream `basicCatalog` entries replaced by host implementations (layout, interactives, Spacer, themed Button). */
@@ -51,6 +52,7 @@ const A2UI_V09_HOST_CATALOG_COMPONENT_NAMES = [
   "ChoicePicker",
   "Dropdown",
   "DateTimeInput",
+  "ModelViewer3D",
   ...A2UI_V09_HOST_CHART_COMPONENT_NAMES,
 ] as const;
 
@@ -80,6 +82,7 @@ export function buildA2uiV09HostCatalog(): any {
       ...hostLayout,
       ...hostInteractives,
       ...hostCharts,
+      a2uiV09HostModelViewer3D,
       a2uiV09HostSpacerComponent,
       a2uiV09HostButtonComponent,
       a2uiV09HostDropdownComponent,

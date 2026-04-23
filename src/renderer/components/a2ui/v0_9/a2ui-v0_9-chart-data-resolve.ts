@@ -46,7 +46,7 @@ export function isDynamicLeaf(v: unknown): v is { path?: string; call?: string }
   return v !== null && typeof v === "object" && !Array.isArray(v) && ("path" in v || "call" in v);
 }
 
-function resolveBoundNumArray(raw: unknown, dc: ChartDataContextLike | null): number[] {
+export function resolveBoundNumArray(raw: unknown, dc: ChartDataContextLike | null): number[] {
   if (isDynamicLeaf(raw)) {
     const resolved = dc?.resolveDynamicValue(raw);
     return resolveNumArray(resolved);
@@ -93,7 +93,11 @@ export function resolveCategoriesWithDataContext(
   return arr.length > 0 ? arr : undefined;
 }
 
-function collectCartesianDynamicLeaves(seriesRaw: unknown, categoriesRaw: unknown | undefined): unknown[] {
+function collectCartesianDynamicLeaves(
+  seriesRaw: unknown,
+  categoriesRaw: unknown | undefined,
+  xValuesRaw: unknown | undefined,
+): unknown[] {
   const leaves: unknown[] = [];
   if (Array.isArray(seriesRaw)) {
     for (const row of seriesRaw) {
@@ -104,20 +108,22 @@ function collectCartesianDynamicLeaves(seriesRaw: unknown, categoriesRaw: unknow
     }
   }
   if (categoriesRaw != null && isDynamicLeaf(categoriesRaw)) leaves.push(categoriesRaw);
+  if (xValuesRaw != null && isDynamicLeaf(xValuesRaw)) leaves.push(xValuesRaw);
   return leaves;
 }
 
 export function useCartesianChartResolvedData(
   seriesRaw: unknown,
   categoriesRaw: unknown | undefined,
+  xValuesRaw: unknown | undefined,
   context: { dataContext: ChartDataContextLike } | undefined
-): { series: SeriesRow[]; categories: string[] | undefined } {
+): { series: SeriesRow[]; categories: string[] | undefined; xValuesNum: number[] | undefined } {
   const dc = context?.dataContext ?? null;
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
     if (!dc) return;
-    const leaves = collectCartesianDynamicLeaves(seriesRaw, categoriesRaw);
+    const leaves = collectCartesianDynamicLeaves(seriesRaw, categoriesRaw, xValuesRaw);
     const unsubs = leaves.map((leaf) =>
       dc.subscribeDynamicValue(leaf, () => {
         setTick((n) => n + 1);
@@ -126,12 +132,19 @@ export function useCartesianChartResolvedData(
     return () => {
       for (const s of unsubs) s.unsubscribe();
     };
-  }, [dc, seriesRaw, categoriesRaw]);
+  }, [dc, seriesRaw, categoriesRaw, xValuesRaw]);
 
   return useMemo(() => {
     const series = resolveSeriesWithDataContext(seriesRaw, dc);
     const categories =
       categoriesRaw != null ? resolveCategoriesWithDataContext(categoriesRaw, dc) : undefined;
-    return { series, categories };
-  }, [dc, seriesRaw, categoriesRaw, tick]);
+    const xValuesNum =
+      xValuesRaw != null && xValuesRaw !== undefined
+        ? (() => {
+            const arr = resolveBoundNumArray(xValuesRaw, dc);
+            return arr.length > 0 ? arr : undefined;
+          })()
+        : undefined;
+    return { series, categories, xValuesNum };
+  }, [dc, seriesRaw, categoriesRaw, xValuesRaw, tick]);
 }

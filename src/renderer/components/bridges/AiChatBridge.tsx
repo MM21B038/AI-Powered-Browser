@@ -955,6 +955,9 @@ async function runChatPipelineRound(
           name: e.name,
           content: e.fullResult,
           arguments: e.arguments,
+          ...(e.thoughtSignature?.trim()
+            ? { thoughtSignature: e.thoughtSignature.trim() }
+            : {}),
         });
         let idx = -1;
         for (let j = segments.length - 1; j >= 0; j--) {
@@ -2302,6 +2305,100 @@ function AiChatPanel(): ReactElement {
           s?.dataModel?.set("/cards", arr);
           notifyComposerUser("Card moved", 1400);
           return;
+        }
+
+        // Host-local symbolic calculus helpers (Python sandbox + SymPy; no assistant round-trip).
+        if (name === "math.sympyDifferentiate" || name === "math.sympyIntegrate") {
+          if (!api?.pythonSandboxExecute) {
+            notifyComposerUser("Python sandbox unavailable.", 4200);
+            return;
+          }
+          const rt = getA2uiV09Runtime();
+          const s = rt.getSurface((action as any).surfaceId) as any;
+          if (!s?.dataModel) {
+            notifyComposerUser("A2UI surface is not ready yet.", 3200);
+            return;
+          }
+          const ctx = (action as any).context ?? {};
+          const expression =
+            String(ctx.expression ?? s.dataModel.get("/expression") ?? "").trim();
+          /** Differentiation / integration variable (SymPy symbol); `wrt` overrides `variable` for partial-style clarity. */
+          const varForSymPy =
+            String(
+              ctx.wrt ??
+                s.dataModel.get("/wrt") ??
+                ctx.variable ??
+                s.dataModel.get("/variable") ??
+                "x",
+            ).trim() || "x";
+          const xMinRaw = ctx.xMin ?? s.dataModel.get("/xMin");
+          const xMaxRaw = ctx.xMax ?? s.dataModel.get("/xMax");
+          const stepsRaw = ctx.steps ?? s.dataModel.get("/steps");
+          const xMin =
+            typeof xMinRaw === "number"
+              ? xMinRaw
+              : typeof xMinRaw === "string"
+                ? Number.parseFloat(xMinRaw.trim())
+                : -5;
+          const xMax =
+            typeof xMaxRaw === "number"
+              ? xMaxRaw
+              : typeof xMaxRaw === "string"
+                ? Number.parseFloat(xMaxRaw.trim())
+                : 5;
+          const steps =
+            typeof stepsRaw === "number"
+              ? Math.floor(stepsRaw)
+              : typeof stepsRaw === "string"
+                ? Math.floor(Number.parseFloat(stepsRaw.trim()))
+                : 200;
+          const nSteps = Math.min(600, Math.max(8, Number.isFinite(steps) ? steps : 200));
+
+          if (!expression) {
+            notifyComposerUser("Missing expression.", 3200);
+            return;
+          }
+
+          notifyComposerUser("Running SymPy…", 1600);
+          try {
+            const py = await api.pythonSandboxExecute({
+              packages: ["sympy", "numpy"],
+              timeoutMs: 300000,
+              code: `import json\nimport sympy as sp\nimport numpy as np\n\nexpr_s = ${JSON.stringify(
+                expression,
+              )}\nvar_s = ${JSON.stringify(varForSymPy)}\nmode = ${JSON.stringify(name)}\nxmin = float(${JSON.stringify(Number.isFinite(xMin) ? xMin : -5)})\nxmax = float(${JSON.stringify(Number.isFinite(xMax) ? xMax : 5)})\nsteps = int(${JSON.stringify(nSteps)})\n\ntry:\n    x = sp.Symbol(var_s)\n    expr = sp.sympify(expr_s)\n    if mode.endswith('Differentiate'):\n        out_expr = sp.simplify(sp.diff(expr, x))\n    else:\n        # Integrate: definite if bounds are finite and xmin!=xmax; else indefinite\n        if np.isfinite(xmin) and np.isfinite(xmax) and xmin != xmax:\n            out_expr = sp.simplify(sp.integrate(expr, (x, xmin, xmax)))\n        else:\n            out_expr = sp.simplify(sp.integrate(expr, x))\n\n    latex = sp.latex(out_expr)\n    text = str(out_expr)\n\n    # Sample (for plotting) when result is an expression in x.\n    series = []\n    try:\n        f = sp.lambdify(x, out_expr, modules=['numpy'])\n        xs = np.linspace(xmin, xmax, steps)\n        ys = f(xs)\n        ys = np.where(np.isfinite(ys), ys, 0.0)\n        series = [float(v) for v in ys]\n    except Exception:\n        series = []\n\n    print(json.dumps({'ok': True, 'text': text, 'latex': latex, 'series': series}, ensure_ascii=False))\nexcept Exception as e:\n    print(json.dumps({'ok': False, 'error': str(e)}, ensure_ascii=False))\n`,
+            });
+            if (!py.ok) {
+              notifyComposerUser(`SymPy failed: ${py.error}`, 5200);
+              s.dataModel.set("/symbolicError", py.error);
+              return;
+            }
+            const stdout = String(py.python_sandbox?.stdout ?? "").trim();
+            const line =
+              stdout
+                .split(/\r?\n/)
+                .reverse()
+                .find((l) => l.trim().startsWith("{") && l.trim().endsWith("}")) ??
+              "";
+            const parsed = line ? (JSON.parse(line) as any) : null;
+            if (!parsed?.ok) {
+              const err = String(parsed?.error ?? py.python_sandbox?.error ?? "unknown error");
+              notifyComposerUser(`SymPy error: ${err}`, 5200);
+              s.dataModel.set("/symbolicError", err);
+              return;
+            }
+            s.dataModel.set("/symbolicText", String(parsed.text ?? ""));
+            s.dataModel.set("/symbolicLatex", String(parsed.latex ?? ""));
+            s.dataModel.set("/symbolicSeries", Array.isArray(parsed.series) ? parsed.series : []);
+            s.dataModel.set("/symbolicError", "");
+            notifyComposerUser("Symbolic result updated", 2000);
+            return;
+          } catch (e) {
+            const err = e instanceof Error ? e.message : String(e);
+            notifyComposerUser(`SymPy failed: ${err}`, 5200);
+            s.dataModel.set("/symbolicError", err);
+            return;
+          }
         }
 
         const line = `[A2UI v0.9 action] name=${name || "(unknown)"} surface=${(action as any).surfaceId} source=${(action as any).sourceComponentId}`;

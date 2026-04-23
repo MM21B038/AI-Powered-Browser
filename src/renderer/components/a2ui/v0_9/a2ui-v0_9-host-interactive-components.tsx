@@ -92,6 +92,20 @@ export const a2uiV09HostCheckBox = createReactComponent(CheckBoxApi as any, ({ p
 
 export const a2uiV09HostSlider = a2uiV09HostSliderComponent;
 
+/**
+ * ChoicePicker catalog type is `DynamicStringList`, but surfaces often bind to a **scalar**
+ * string in the data model (e.g. `"12"` for math_eval). Internally we always derive a `string[]`
+ * for chip/radio selection state.
+ */
+function normalizeChoicePickerSelectedValues(raw: unknown, mutuallyExclusive: boolean): string[] {
+  if (Array.isArray(raw)) return raw.map((v) => String(v));
+  if (raw == null) return [];
+  const s = String(raw).trim();
+  if (s === "") return [];
+  if (mutuallyExclusive) return [s];
+  return [s];
+}
+
 export const a2uiV09HostDateTimeInput = createReactComponent(DateTimeInputApi as any, ({ props }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const onChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -145,13 +159,16 @@ export const a2uiV09HostDateTimeInput = createReactComponent(DateTimeInputApi as
 
 export const a2uiV09HostChoicePicker = createReactComponent(ChoicePickerApi as any, ({ props, context }) => {
   const [filter, setFilter] = useState("");
-  const values = Array.isArray(props.value) ? props.value : [];
-  const isMutuallyExclusive = props.variant === "mutuallyExclusive";
+  /** Spec default is mutually exclusive unless `variant` is `multipleSelection`. */
+  const isMutuallyExclusive = props.variant !== "multipleSelection";
+  const values = normalizeChoicePickerSelectedValues(props.value, isMutuallyExclusive);
   const filterId = useId();
 
   const onToggle = (val: string) => {
     if (isMutuallyExclusive) {
-      props.setValue([val]);
+      // Store a scalar string so paths like `/frequency` stay numeric-friendly for `math_eval` /
+      // `series_expr`; read path normalizes back to an array for selection UI.
+      props.setValue(val);
     } else {
       const newValues = values.includes(val) ? values.filter((v: string) => v !== val) : [...values, val];
       props.setValue(newValues);

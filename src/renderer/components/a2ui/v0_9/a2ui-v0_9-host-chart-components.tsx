@@ -28,6 +28,7 @@ import {
   LineChartApi,
   PieChartApi,
 } from "./a2ui-v0_9-chart-types";
+import { a2uiV09HostPlot3D } from "./A2uiV09HostPlot3D";
 import {
   asString,
   resolveNumArray,
@@ -38,6 +39,8 @@ import {
 import {
   denseCategoryAxisProps,
   formatCartesianTick,
+  numericAxisDomainFromValues,
+  yDomainForLineArea,
   yDomainNonNegativeIfAllPositive,
 } from "./a2ui-v0_9-chart-axis-helpers";
 
@@ -196,6 +199,42 @@ function buildCartesianRows(
   return { rows, keys };
 }
 
+function parseCategoriesAsNumericX(categories: string[] | undefined, len: number): number[] {
+  if (!categories || categories.length === 0) {
+    return Array.from({ length: len }, (_, i) => i);
+  }
+  const out: number[] = [];
+  for (let i = 0; i < len; i++) {
+    const raw = categories[i] ?? String(i);
+    const n = Number.parseFloat(String(raw).trim());
+    out.push(Number.isFinite(n) ? n : i);
+  }
+  return out;
+}
+
+/** Rows for Recharts numeric X (`xNum`); `name` kept for tooltips. */
+function buildCartesianRowsNumeric(
+  xNums: number[],
+  series: SeriesRow[]
+): { rows: Record<string, string | number>[]; keys: string[] } {
+  const maxLen = Math.max(0, ...series.map((s) => s.values.length));
+  const keys = series.map((_, i) => `s${i}`);
+  const len = Math.min(xNums.length, maxLen, MAX_POINTS);
+  const rows: Record<string, string | number>[] = [];
+  for (let i = 0; i < len; i++) {
+    const xv = xNums[i] ?? 0;
+    const row: Record<string, string | number> = {
+      xNum: xv,
+      name: String(xv),
+    };
+    for (let j = 0; j < series.length; j++) {
+      row[keys[j]] = series[j].values[i] ?? 0;
+    }
+    rows.push(row);
+  }
+  return { rows, keys };
+}
+
 function ChartFrame(props: {
   title?: unknown;
   heightPx: number;
@@ -230,23 +269,46 @@ function legendProps(pos: string): { verticalAlign?: "top" | "bottom" | "middle"
 }
 
 export const a2uiV09HostLineChart = createReactComponent(LineChartApi as any, ({ props, context }) => {
-  const { series, categories: categoriesResolved } = useCartesianChartResolvedData(
+  const xMode = props.xMode ?? "category";
+  const includeZeroOnY = props.includeZeroOnY !== false;
+  const { series, categories: categoriesResolved, xValuesNum } = useCartesianChartResolvedData(
     props.series,
     props.categories,
-    context as { dataContext: ChartDataContextLike } | undefined
+    props.xValues,
+    context as { dataContext: ChartDataContextLike } | undefined,
   );
   const categories = categoriesResolved;
-  const { rows, keys } = useMemo(() => buildCartesianRows(categories, series), [categories, series]);
-  const yDomain = useMemo(() => yDomainNonNegativeIfAllPositive(rows, keys), [rows, keys]);
-  const xCategoryExtra = useMemo(() => denseCategoryAxisProps(rows), [rows]);
+  const { rows, keys } = useMemo(() => {
+    if (xMode === "number") {
+      const maxLen = Math.max(0, ...series.map((s) => s.values.length));
+      const xNums =
+        xValuesNum && xValuesNum.length > 0
+          ? xValuesNum
+          : parseCategoriesAsNumericX(categories, maxLen);
+      return buildCartesianRowsNumeric(xNums, series);
+    }
+    return buildCartesianRows(categories, series);
+  }, [xMode, xValuesNum, categories, series]);
+  const yDomain = useMemo(() => yDomainForLineArea(rows, keys, includeZeroOnY), [rows, keys, includeZeroOnY]);
+  const xNumericDomain = useMemo(() => {
+    if (xMode !== "number") return undefined;
+    const xs = rows
+      .map((r) => (typeof r.xNum === "number" ? r.xNum : Number(r.xNum)))
+      .filter((n) => Number.isFinite(n));
+    return numericAxisDomainFromValues(xs);
+  }, [xMode, rows]);
+  const xCategoryExtra = useMemo(
+    () => (xMode === "category" ? denseCategoryAxisProps(rows) : {}),
+    [xMode, rows],
+  );
   const lineMargins = useMemo(
     () => ({
       top: 8,
       right: 12,
       left: CARTESIAN_MARGIN_LEFT,
-      bottom: xCategoryExtra.height ? 32 : 8,
+      bottom: xMode === "category" && xCategoryExtra.height ? 32 : 8,
     }),
-    [xCategoryExtra.height]
+    [xMode, xCategoryExtra.height]
   );
   const legendPos = (props.legendPosition ?? "bottom") as string;
   const h = Math.min(props.heightPx ?? 280, 900);
@@ -267,7 +329,17 @@ export const a2uiV09HostLineChart = createReactComponent(LineChartApi as any, ({
           {props.showGrid !== false ? (
             <CartesianGrid stroke="var(--a2ui-host-chart-grid-stroke)" strokeDasharray="3 3" />
           ) : null}
-          <XAxis dataKey="name" tick={chartTickSmall} {...xCategoryExtra} />
+          {xMode === "number" ? (
+            <XAxis
+              type="number"
+              dataKey="xNum"
+              domain={xNumericDomain ? ([xNumericDomain[0], xNumericDomain[1]] as [number, number]) : ["auto", "auto"]}
+              tick={chartTickSmall}
+              tickFormatter={(v) => formatCartesianTick(typeof v === "number" ? v : Number(v))}
+            />
+          ) : (
+            <XAxis dataKey="name" tick={chartTickSmall} {...xCategoryExtra} />
+          )}
           <YAxis
             tick={chartTickSmall}
             width={52}
@@ -305,7 +377,8 @@ export const a2uiV09HostBarChart = createReactComponent(BarChartApi as any, ({ p
   const { series, categories: categoriesResolved } = useCartesianChartResolvedData(
     props.series,
     props.categories,
-    context as { dataContext: ChartDataContextLike } | undefined
+    undefined,
+    context as { dataContext: ChartDataContextLike } | undefined,
   );
   const categories = categoriesResolved;
   const { rows, keys } = useMemo(() => buildCartesianRows(categories, series), [categories, series]);
@@ -388,23 +461,46 @@ export const a2uiV09HostBarChart = createReactComponent(BarChartApi as any, ({ p
 });
 
 export const a2uiV09HostAreaChart = createReactComponent(AreaChartApi as any, ({ props, context }) => {
-  const { series, categories: categoriesResolved } = useCartesianChartResolvedData(
+  const xMode = props.xMode ?? "category";
+  const includeZeroOnY = props.includeZeroOnY !== false;
+  const { series, categories: categoriesResolved, xValuesNum } = useCartesianChartResolvedData(
     props.series,
     props.categories,
-    context as { dataContext: ChartDataContextLike } | undefined
+    props.xValues,
+    context as { dataContext: ChartDataContextLike } | undefined,
   );
   const categories = categoriesResolved;
-  const { rows, keys } = useMemo(() => buildCartesianRows(categories, series), [categories, series]);
-  const yDomain = useMemo(() => yDomainNonNegativeIfAllPositive(rows, keys), [rows, keys]);
-  const xCategoryExtra = useMemo(() => denseCategoryAxisProps(rows), [rows]);
+  const { rows, keys } = useMemo(() => {
+    if (xMode === "number") {
+      const maxLen = Math.max(0, ...series.map((s) => s.values.length));
+      const xNums =
+        xValuesNum && xValuesNum.length > 0
+          ? xValuesNum
+          : parseCategoriesAsNumericX(categories, maxLen);
+      return buildCartesianRowsNumeric(xNums, series);
+    }
+    return buildCartesianRows(categories, series);
+  }, [xMode, xValuesNum, categories, series]);
+  const yDomain = useMemo(() => yDomainForLineArea(rows, keys, includeZeroOnY), [rows, keys, includeZeroOnY]);
+  const xNumericDomain = useMemo(() => {
+    if (xMode !== "number") return undefined;
+    const xs = rows
+      .map((r) => (typeof r.xNum === "number" ? r.xNum : Number(r.xNum)))
+      .filter((n) => Number.isFinite(n));
+    return numericAxisDomainFromValues(xs);
+  }, [xMode, rows]);
+  const xCategoryExtra = useMemo(
+    () => (xMode === "category" ? denseCategoryAxisProps(rows) : {}),
+    [xMode, rows],
+  );
   const areaMargins = useMemo(
     () => ({
       top: 8,
       right: 12,
       left: CARTESIAN_MARGIN_LEFT,
-      bottom: xCategoryExtra.height ? 32 : 8,
+      bottom: xMode === "category" && xCategoryExtra.height ? 32 : 8,
     }),
-    [xCategoryExtra.height]
+    [xMode, xCategoryExtra.height]
   );
   const legendPos = (props.legendPosition ?? "bottom") as string;
   const h = Math.min(props.heightPx ?? 280, 900);
@@ -426,7 +522,17 @@ export const a2uiV09HostAreaChart = createReactComponent(AreaChartApi as any, ({
           {props.showGrid !== false ? (
             <CartesianGrid stroke="var(--a2ui-host-chart-grid-stroke)" strokeDasharray="3 3" />
           ) : null}
-          <XAxis dataKey="name" tick={chartTickSmall} {...xCategoryExtra} />
+          {xMode === "number" ? (
+            <XAxis
+              type="number"
+              dataKey="xNum"
+              domain={xNumericDomain ? ([xNumericDomain[0], xNumericDomain[1]] as [number, number]) : ["auto", "auto"]}
+              tick={chartTickSmall}
+              tickFormatter={(v) => formatCartesianTick(typeof v === "number" ? v : Number(v))}
+            />
+          ) : (
+            <XAxis dataKey="name" tick={chartTickSmall} {...xCategoryExtra} />
+          )}
           <YAxis
             tick={chartTickSmall}
             width={52}
@@ -602,6 +708,7 @@ export const A2UI_V09_HOST_CHART_COMPONENT_NAMES = [
   "PieChart",
   "Histogram",
   "DensityPlot",
+  "Plot3D",
 ] as const;
 
 const HOST_CHART_COMPONENTS = [
@@ -611,6 +718,7 @@ const HOST_CHART_COMPONENTS = [
   a2uiV09HostPieChart,
   a2uiV09HostHistogram,
   a2uiV09HostDensityPlot,
+  a2uiV09HostPlot3D,
 ] as const;
 
 export function getA2uiV09HostChartComponents(): readonly any[] {

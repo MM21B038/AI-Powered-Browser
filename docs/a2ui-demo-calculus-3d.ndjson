@@ -1,0 +1,38 @@
+{"version":"v0.9","createSurface":{"surfaceId":"calc3d-demo","catalogId":"https://autonomous-browser.local/spec/a2ui/v0_9/host-interactive-catalog.json"}}
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"root","component":"Column","children":["title","row1","row2","row3","plotTitle","plot3d","modelTitle","model3d"],"justify":"start","align":"stretch"}]}}
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"title","component":"Text","text":"A2UI Calculus + 3D demo","variant":"h2"}]}}
+
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"row1","component":"Row","children":["exprField","varField"],"justify":"start","align":"center"}]}}
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"exprField","component":"TextField","label":"Expression","placeholder":"e.g. sin(x) * exp(x)","value":{"path":"/expression"},"onChange":{"event":{"name":"a2ui.localPatch","context":{"updates":[{"path":"/expression","value":"{{value}}"}]}}},"width":"100%"}]}}
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"varField","component":"TextField","label":"Variable","placeholder":"x","value":{"path":"/variable"},"onChange":{"event":{"name":"a2ui.localPatch","context":{"updates":[{"path":"/variable","value":"{{value}}"}]}}},"width":"180px"}]}}
+
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"row2","component":"Row","children":["xminField","xmaxField","stepsField"],"justify":"start","align":"center"}]}}
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"xminField","component":"TextField","label":"xMin","value":{"path":"/xMin"},"onChange":{"event":{"name":"a2ui.localPatch","context":{"updates":[{"path":"/xMin","value":"{{value}}"}]}}},"width":"140px"}]}}
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"xmaxField","component":"TextField","label":"xMax","value":{"path":"/xMax"},"onChange":{"event":{"name":"a2ui.localPatch","context":{"updates":[{"path":"/xMax","value":"{{value}}"}]}}},"width":"140px"}]}}
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"stepsField","component":"TextField","label":"Steps","value":{"path":"/steps"},"onChange":{"event":{"name":"a2ui.localPatch","context":{"updates":[{"path":"/steps","value":"{{value}}"}]}}},"width":"140px"}]}}
+
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"row3","component":"Row","children":["diffBtn","intBtn","resultCard"],"justify":"start","align":"center"}]}}
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"diffBtn","component":"Button","variant":"primary","child":"diffBtnText","action":{"event":{"name":"math.sympyDifferentiate","context":{"expression":{"path":"/expression"},"variable":{"path":"/variable"},"xMin":{"path":"/xMin"},"xMax":{"path":"/xMax"},"steps":{"path":"/steps"}}}}}]}}
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"diffBtnText","component":"Text","text":"Differentiate (SymPy)","variant":"body"}]}}
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"intBtn","component":"Button","variant":"secondary","child":"intBtnText","action":{"event":{"name":"math.sympyIntegrate","context":{"expression":{"path":"/expression"},"variable":{"path":"/variable"},"xMin":{"path":"/xMin"},"xMax":{"path":"/xMax"},"steps":{"path":"/steps"}}}}}]}}
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"intBtnText","component":"Text","text":"Integrate (SymPy)","variant":"body"}]}}
+
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"resultCard","component":"Card","children":["symText","symLatex","symErr"],"variant":"elevated"}]}}
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"symText","component":"Text","text":{"path":"/symbolicText"},"variant":"code"}]}}
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"symLatex","component":"Text","text":{"path":"/symbolicLatex"},"variant":"body"}]}}
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"symErr","component":"Text","text":{"path":"/symbolicError"},"variant":"body"}]}}
+
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"plotTitle","component":"Text","text":"3D surface plot (z = sin(x) * cos(y))","variant":"h3"}]}}
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"plot3d","component":"Plot3D","kind":"surface","heightPx":420,"surface":{"call":"series_surface","args":{"expression":"sin(x) * cos(y)","xMin":-6.283,"xMax":6.283,"yMin":-6.283,"yMax":6.283,"xSteps":64,"ySteps":64},"returnType":"object"}}]}}
+
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"modelTitle","component":"Text","text":"3D model viewer (set /modelSrc to a GLB URL or artifact)","variant":"h3"}]}}
+{"version":"v0.9","updateComponents":{"surfaceId":"calc3d-demo","components":[{"id":"model3d","component":"ModelViewer3D","heightPx":520,"source":{"path":"/modelSrc"},"files":{"path":"/modelFiles"}}]}}
+
+{"version":"v0.9","updateDataModel":{"surfaceId":"calc3d-demo","path":"/expression","value":"sin(x) * exp(x)"}}
+{"version":"v0.9","updateDataModel":{"surfaceId":"calc3d-demo","path":"/variable","value":"x"}}
+{"version":"v0.9","updateDataModel":{"surfaceId":"calc3d-demo","path":"/xMin","value":-5}}
+{"version":"v0.9","updateDataModel":{"surfaceId":"calc3d-demo","path":"/xMax","value":5}}
+{"version":"v0.9","updateDataModel":{"surfaceId":"calc3d-demo","path":"/steps","value":200}}
+{"version":"v0.9","updateDataModel":{"surfaceId":"calc3d-demo","path":"/modelSrc","value":"https://modelviewer.dev/shared-assets/models/Astronaut.glb"}}
+{"version":"v0.9","updateDataModel":{"surfaceId":"calc3d-demo","path":"/modelFiles","value":[{"label":"Astronaut.glb","source":"https://modelviewer.dev/shared-assets/models/Astronaut.glb"}]}}
+

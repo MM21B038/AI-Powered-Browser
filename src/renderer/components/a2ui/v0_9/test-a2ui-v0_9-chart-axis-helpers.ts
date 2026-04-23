@@ -3,6 +3,8 @@ import {
   collectSeriesValuesFromRows,
   denseCategoryAxisProps,
   formatCartesianTick,
+  numericAxisDomainFromValues,
+  yDomainForLineArea,
   yDomainNonNegativeIfAllPositive,
 } from "./a2ui-v0_9-chart-axis-helpers";
 
@@ -21,6 +23,40 @@ describe("a2ui v0.9 chart axis helpers", () => {
       { name: "b", s0: 20, s1: 3 },
     ];
     expect(yDomainNonNegativeIfAllPositive(rows, ["s0", "s1"])).toBeUndefined();
+  });
+
+  it("yDomainForLineArea with includeZeroOnY false is always auto domain", () => {
+    const rows = [
+      { name: "a", s0: 10, s1: 2 },
+      { name: "b", s0: 20, s1: 3 },
+    ];
+    expect(yDomainForLineArea(rows, ["s0", "s1"], false)).toBeUndefined();
+  });
+
+  it("yDomainForLineArea with includeZeroOnY true matches non-negative pin behavior", () => {
+    const rows = [
+      { name: "a", s0: 10, s1: 2 },
+      { name: "b", s0: 20, s1: 3 },
+    ];
+    expect(yDomainForLineArea(rows, ["s0", "s1"], true)).toEqual(yDomainNonNegativeIfAllPositive(rows, ["s0", "s1"]));
+  });
+
+  it("numericAxisDomainFromValues pads min and max", () => {
+    const d = numericAxisDomainFromValues([0, 10]);
+    expect(d).toBeDefined();
+    expect(d![0]).toBeLessThan(0);
+    expect(d![1]).toBeGreaterThan(10);
+  });
+
+  it("numericAxisDomainFromValues widens degenerate range", () => {
+    const d = numericAxisDomainFromValues([5, 5, 5]);
+    expect(d).toBeDefined();
+    expect(d![0]).toBeLessThan(5);
+    expect(d![1]).toBeGreaterThan(5);
+  });
+
+  it("numericAxisDomainFromValues returns undefined for empty input", () => {
+    expect(numericAxisDomainFromValues([])).toBeUndefined();
   });
 
   it("collectSeriesValuesFromRows gathers all numeric series columns", () => {

@@ -38,6 +38,7 @@ describe("a2ui v0.9 extended catalog", () => {
     const fn = cat.functions.get("math_eval");
     expect(fn.execute({ expression: "a^2", a: 3 }, null)).toBe(9);
     expect(fn.execute({ expression: "a + b", a: 1, b: 2 }, null)).toBe(3);
+    expect(fn.execute({ expression: "n", n: ["12"] }, null)).toBe(12);
   });
 
   it("format_compact_currency shortens large amounts (en-US)", () => {
@@ -117,6 +118,58 @@ describe("a2ui v0.9 extended catalog", () => {
     expect(compound.every((v) => typeof v === "number" && Number.isFinite(v))).toBe(true);
     expect(compound[0]).toBeCloseTo(p, 0);
     expect(compound[compound.length - 1]).toBeGreaterThan(compound[0]);
+  });
+
+  it("mesh_sphere accepts widthSegments and defaults cx,cy,cz", () => {
+    const cat: any = buildA2uiV09ExtendedCatalog();
+    const fn = cat.functions.get("mesh_sphere");
+    const m = fn.execute({ radius: 2, widthSegments: 12 }, null) as { x: number[]; i: number[] };
+    expect(m.x.length).toBeGreaterThan(10);
+    expect(m.i.length).toBeGreaterThan(0);
+    const m2 = fn.execute({ radius: 1, segments: 12, cx: 10, cy: 0, cz: 0 }, null) as { x: number[] };
+    expect(Math.max(...m2.x)).toBeGreaterThan(10.5);
+  });
+
+  it("mesh_cylinder works with only radius, height, and radialSegments (no cx,cy,cz)", () => {
+    const cat: any = buildA2uiV09ExtendedCatalog();
+    const fn = cat.functions.get("mesh_cylinder");
+    const m = fn.execute({ radius: 1, height: 2, radialSegments: 8, caps: false }, null) as {
+      x: number[];
+      i: number[];
+    };
+    expect(m.x.length).toBeGreaterThan(0);
+    expect(m.i.length).toBeGreaterThan(0);
+    const m2 = fn.execute({ r: 1, h: 2, segments: 6 }, null) as { x: number[] };
+    expect(m2.x.length).toBeGreaterThan(0);
+  });
+
+  it("mesh_cylinder schema accepts r and h without radius/height keys (wire validation)", () => {
+    const cat: any = buildA2uiV09ExtendedCatalog();
+    const fn = cat.functions.get("mesh_cylinder");
+    expect(() =>
+      fn.schema.parse({
+        r: { path: "/radius" },
+        h: { path: "/height" },
+        segments: { path: "/segments" },
+        cx: { path: "/cx" },
+        cy: { path: "/cy" },
+        cz: { path: "/cz" },
+      }),
+    ).not.toThrow();
+  });
+
+  it("mesh_cone accepts radius alias and optional center", () => {
+    const cat: any = buildA2uiV09ExtendedCatalog();
+    const fn = cat.functions.get("mesh_cone");
+    const m = fn.execute({ height: 2, radius: 1, segments: 6 }, null) as { x: number[] };
+    expect(m.x.length).toBeGreaterThan(0);
+  });
+
+  it("mesh_torus accepts R and r aliases without center", () => {
+    const cat: any = buildA2uiV09ExtendedCatalog();
+    const fn = cat.functions.get("mesh_torus");
+    const m = fn.execute({ R: 3, r: 0.4, uSegments: 12, vSegments: 8 }, null) as { x: number[] };
+    expect(m.x.length).toBeGreaterThan(0);
   });
 });
 
