@@ -630,7 +630,12 @@ export async function runAiChatPipeline(opts: {
   messages: ChatMessageV2[];
   onEvent: (e: ChatStreamEvent) => void;
   maxToolRounds?: number;
-  /** When set (intelligent workspace), only these OpenAI function names are exposed to the model. */
+  /**
+   * Intelligent workspace only:
+   * - `undefined` / `null` — expose every enabled tool (assistant mode default).
+   * - non-empty array — restrict to these OpenAI function names (`@tool` mentions).
+   * - **empty array** — expose **no** tools (UI / A2UI mode); skips MCP list calls.
+   */
   toolAllowlist?: string[] | null;
   /** Optional: override the base system prompt (skills may still append unless disabled). */
   systemPromptOverride?: string;
@@ -649,15 +654,23 @@ export async function runAiChatPipeline(opts: {
     return;
   }
 
-  const butcherDefs = filterButcherTools(opts.settings, opts.scope);
+  const intelligentExplicitNoTools =
+    opts.scope === "intelligent" &&
+    Array.isArray(opts.toolAllowlist) &&
+    opts.toolAllowlist.length === 0;
+
+  const butcherDefs = intelligentExplicitNoTools
+    ? []
+    : filterButcherTools(opts.settings, opts.scope);
   const externalGroups =
-    opts.scope === "browser" ? [] : await loadExternalToolGroups(opts.api, opts.settings, opts.scope);
+    opts.scope === "browser"
+      ? []
+      : intelligentExplicitNoTools
+        ? []
+        : await loadExternalToolGroups(opts.api, opts.settings, opts.scope);
   let { openAiTools, dispatch } = buildToolDispatchMap(butcherDefs, externalGroups);
   const allow = opts.toolAllowlist;
-  if (
-    opts.scope === "intelligent" &&
-    allow != null
-  ) {
+  if (opts.scope === "intelligent" && allow != null && allow.length > 0) {
     const narrowed = filterToolsByAllowlist(openAiTools, dispatch, allow);
     openAiTools = narrowed.openAiTools;
     dispatch = narrowed.dispatch;
