@@ -17,6 +17,11 @@ describe("buildA2uiV09HostCatalog", () => {
     expect(names).toContain("Dropdown");
     expect(names).toContain("Spacer");
     expect(names).toContain("TextField");
+    expect(names).toContain("Table");
+    expect(names).toContain("OrderedList");
+    expect(names).toContain("UnorderedList");
+    expect(names).toContain("Callout");
+    expect(names).toContain("CodeBlock");
     expect(names).toContain("LineChart");
     expect(names).toContain("BarChart");
     expect(names).toContain("PieChart");
@@ -53,6 +58,19 @@ describe("buildA2uiV09HostCatalog", () => {
     const sp = c.components.get("Spacer") as { name?: string; render?: unknown } | undefined;
     expect(sp?.name).toBe("Spacer");
     expect(typeof sp?.render).toBe("function");
+  });
+
+  it("registers host document components with React renderers", () => {
+    const c = buildA2uiV09HostCatalog();
+    const table = c.components.get("Table") as { name?: string; render?: unknown } | undefined;
+    expect(table?.name).toBe("Table");
+    expect(typeof table?.render).toBe("function");
+    const callout = c.components.get("Callout") as { name?: string; render?: unknown } | undefined;
+    expect(callout?.name).toBe("Callout");
+    expect(typeof callout?.render).toBe("function");
+    const code = c.components.get("CodeBlock") as { name?: string; render?: unknown } | undefined;
+    expect(code?.name).toBe("CodeBlock");
+    expect(typeof code?.render).toBe("function");
   });
 
   it("registers host chart components with React renderers", () => {

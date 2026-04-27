@@ -1,7 +1,7 @@
 const fs = require("fs").promises;
 const path = require("path");
 const os = require("os");
-const Database = require("sqlite3").verbose();
+const Database = require("better-sqlite3");
 
 class ChromeImporter {
   constructor() {
@@ -316,14 +316,17 @@ class ChromeImporter {
 
   _queryDb(dbPath, sql, mapper) {
     return new Promise((resolve, reject) => {
-      const db = new (require("sqlite3").verbose().Database)(dbPath, require("sqlite3").OPEN_READONLY, (err) => {
-        if (err) return reject(err);
-      });
-      db.all(sql, (err, rows) => {
-        db.close(() => fs.unlink(dbPath).catch(() => {}));
-        if (err) return reject(err);
+      let db;
+      try {
+        db = new Database(dbPath, { readonly: true, fileMustExist: true });
+        const rows = db.prepare(sql).all();
         resolve((rows || []).map(mapper));
-      });
+      } catch (err) {
+        reject(err);
+      } finally {
+        try { db?.close(); } catch {}
+        fs.unlink(dbPath).catch(() => {});
+      }
     });
   }
 

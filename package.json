@@ -21,7 +21,8 @@
     "knip": "knip --include files,dependencies",
     "depcheck": "npx depcheck --ignores=cross-env,tailwindcss,wait-on,zod,sqlite3",
     "test": "vitest run",
-    "postinstall": "cd node_modules/sqlite3 && npx node-gyp rebuild --target=41.0.3 --arch=x64 --dist-url=https://electronjs.org/headers --module_name=node_sqlite3 --module_path=./build/Release"
+    "rebuild:native": "electron-builder install-app-deps",
+    "postinstall": "electron-builder install-app-deps"
   },
   "keywords": [
     "browser",
@@ -80,7 +81,7 @@
     "@vitejs/plugin-react": "^5.1.0",
     "concurrently": "^9.2.1",
     "cross-env": "^10.0.0",
-    "electron": "^41.0.3",
+    "electron": "^41.3.0",
     "electron-builder": "^26.8.1",
     "eslint": "^9.35.0",
     "eslint-plugin-react-hooks": "^5.2.0",
@@ -90,7 +91,7 @@
     "sharp": "^0.34.5",
     "tailwindcss": "^4.2.2",
     "typescript": "^5.9.2",
-    "vite": "^7.1.7",
+    "vite": "^8.0.10",
     "vitest": "^3.2.4",
     "wait-on": "^8.0.5"
   },
@@ -108,18 +109,21 @@
     "@google/model-viewer": "^4.2.0",
     "@modelcontextprotocol/sdk": "^1.28.0",
     "@types/express": "^5.0.6",
-    "dompurify": "^3.3.3",
+    "dompurify": "^3.4.1",
     "express": "^5.2.1",
     "highlight.js": "^11.11.1",
     "html-to-image": "^1.11.13",
     "marked": "^17.0.5",
-    "mathjs": "^15.1.1",
+    "mathjs": "^15.2.0",
     "plotly.js-dist-min": "^3.5.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "recharts": "^3.8.1",
-    "sqlite3": "^6.0.1",
+    "better-sqlite3": "^12.9.0",
     "zod": "^4.3.6",
     "zustand": "^5.0.8"
+  },
+  "overrides": {
+    "uuid": "14.0.0"
   }
 }

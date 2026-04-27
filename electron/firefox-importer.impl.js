@@ -2,7 +2,7 @@ const fs = require("fs").promises;
 const fss = require("fs");
 const path = require("path");
 const os = require("os");
-const Database = require("sqlite3").verbose();
+const Database = require("better-sqlite3");
 
 class FirefoxImporter {
   constructor() {
@@ -289,14 +289,16 @@ class FirefoxImporter {
 
   _queryDb(dbPath, sql, mapper) {
     return new Promise((resolve, reject) => {
-      const db = new Database(dbPath, Database.OPEN_READONLY, (err) => {
-        if (err) return reject(err);
-      });
-      db.all(sql, (err, rows) => {
-        db.close(() => {});
-        if (err) return reject(err);
+      let db;
+      try {
+        db = new Database(dbPath, { readonly: true, fileMustExist: true });
+        const rows = db.prepare(sql).all();
         resolve((rows || []).map(mapper));
-      });
+      } catch (err) {
+        reject(err);
+      } finally {
+        try { db?.close(); } catch {}
+      }
     });
   }
 

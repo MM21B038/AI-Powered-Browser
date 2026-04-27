@@ -23,6 +23,8 @@ The renderer applies shared CSS variables for rhythm (for example `--a2ui-host-l
 
 **Layout / content:** `Column`, `Row`, `Text`, `Card`, `Divider`, `List`, `Image`, `Tabs`, `Modal`, `Icon`, `Video`, `AudioPlayer`, `Spacer`
 
+**Document (host):** `Table`, `OrderedList`, `UnorderedList`, `Blockquote`, `Callout`, `DefinitionList`, `CodeBlock`, `HorizontalRule`, `Badge`
+
 **Interactive:** `TextField`, `Button`, `Slider`, `CheckBox`, `ChoicePicker`, `Dropdown`, `DateTimeInput`
 
 **Charts (host):** `LineChart`, `BarChart`, `AreaChart`, `PieChart`, `Histogram`, `DensityPlot` — see [Charts (host)](#charts-host).
@@ -115,6 +117,99 @@ Host-themed; **`variant`** picks the visual role (still only catalog enums — n
 - **Card:** single `child` id (wrap content in `Column` / `Row`).
 - **Text:** `text` (`DynamicString`), `variant`: `h1`–`h5`, `body`, `caption`.
 - **Spacer:** host-only flex helper — no children. Optional `weight` (flex-grow, default when omitted: `1`), optional `minWidth` / `minHeight` as allowed CSS lengths (`8px`, `1rem`, `10%`, or `0`). Use between `Row` children to push controls (e.g. title left, actions right).
+
+---
+
+## Document components (host)
+
+These components are **host-only** (not part of the upstream basic catalog). Use them when you need a structured “document” layout that stays readable in the A2UI surface (instead of embedding markdown in `Text`).
+
+### Table (dataframe-like)
+
+| Property | Required | Notes |
+| -------- | -------- | ----- |
+| `component` | yes | `"Table"` |
+| `columns` | yes | `[{ key, label, align?, width? }]` — `label` is `DynamicString`; `align`: `start` \| `center` \| `end` |
+| `rows` | yes | array of row objects/arrays **or** `{ "path": "/..." }` binding to one |
+| `caption` | no | `DynamicString` |
+| `dense` | no | boolean |
+| `striped` | no | boolean |
+| `showIndex` | no | boolean |
+| `maxHeightPx` | no | number (120–1200) — adds scroll container |
+| `wrap` | no | boolean — allow multi-line cells |
+
+**Row shapes**
+
+- If `rows` is an **array of objects**, each cell is looked up by `columns[i].key`.
+- If `rows` is an **array of arrays**, each cell uses the column index order.
+### OrderedList / UnorderedList (semantic lists)
+
+| Property | Required | Notes |
+| -------- | -------- | ----- |
+| `component` | yes | `"OrderedList"` or `"UnorderedList"` |
+| `items` | yes | array of child refs: `\"id\"` or `{ id, basePath? }` |
+| `tight` | no | boolean — tighter vertical spacing |
+
+OrderedList extras:
+
+- `start`: first number (default 1)
+- `style`: `decimal` \| `lowerAlpha` \| `upperAlpha` \| `lowerRoman` \| `upperRoman`
+
+UnorderedList extras:
+
+- `style`: `disc` \| `circle` \| `square`
+
+### Blockquote
+
+| Property | Required | Notes |
+| -------- | -------- | ----- |
+| `component` | yes | `"Blockquote"` |
+| `child` | no | component id |
+| `text` | no | `DynamicString` |
+
+Use either `child` (rich content) or `text` (simple quote).
+
+### Callout (admonition)
+
+| Property | Required | Notes |
+| -------- | -------- | ----- |
+| `component` | yes | `"Callout"` |
+| `variant` | no | `note` \| `tip` \| `info` \| `warning` \| `danger` |
+| `title` | no | `DynamicString` |
+| `child` | no | component id |
+| `text` | no | `DynamicString` |
+
+### DefinitionList
+
+| Property | Required | Notes |
+| -------- | -------- | ----- |
+| `component` | yes | `"DefinitionList"` |
+| `entries` | yes | `[{ term: DynamicString, description?: DynamicString, child?: id }]` |
+| `compact` | no | boolean |
+
+### CodeBlock
+
+| Property | Required | Notes |
+| -------- | -------- | ----- |
+| `component` | yes | `"CodeBlock"` |
+| `code` | yes | `DynamicString` (string) |
+| `language` | no | string (e.g. `ts`, `python`) |
+| `showCopy` | no | boolean (default true) |
+| `caption` | no | `DynamicString` |
+
+### HorizontalRule
+
+| Property | Required | Notes |
+| -------- | -------- | ----- |
+| `component` | yes | `"HorizontalRule"` |
+
+### Badge
+
+| Property | Required | Notes |
+| -------- | -------- | ----- |
+| `component` | yes | `"Badge"` |
+| `text` | yes | `DynamicString` |
+| `variant` | no | `default` \| `info` \| `success` \| `warning` \| `danger` |
 
 ### Spacer
 

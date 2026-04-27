@@ -13,6 +13,10 @@ import { a2uiV09HostButtonComponent } from "../components/a2ui/v0_9/A2uiV09HostB
 import { a2uiV09HostDropdownComponent } from "../components/a2ui/v0_9/A2uiV09Dropdown";
 import { a2uiV09HostSpacerComponent } from "../components/a2ui/v0_9/A2uiV09HostSpacer";
 import {
+  A2UI_V09_HOST_DOCUMENT_COMPONENT_NAMES,
+  getA2uiV09HostDocumentComponents,
+} from "../components/a2ui/v0_9/a2ui-v0_9-host-document-components";
+import {
   A2UI_V09_HOST_CHART_COMPONENT_NAMES,
   getA2uiV09HostChartComponents,
 } from "../components/a2ui/v0_9/a2ui-v0_9-host-chart-components";
@@ -23,6 +27,7 @@ import { getA2uiV09ExtraCatalogFunctions } from "./a2ui-v0_9-extended-catalog";
 const HOST_REPLACEMENT_NAMES = new Set<string>([
   ...A2UI_V09_HOST_BASIC_LAYOUT_COMPONENT_NAMES,
   ...A2UI_V09_HOST_INTERACTIVE_COMPONENT_NAMES,
+  ...A2UI_V09_HOST_DOCUMENT_COMPONENT_NAMES,
   "Button",
   "Spacer",
 ]);
@@ -44,6 +49,7 @@ const A2UI_V09_HOST_CATALOG_COMPONENT_NAMES = [
   "Icon",
   "Video",
   "AudioPlayer",
+  ...A2UI_V09_HOST_DOCUMENT_COMPONENT_NAMES,
   "Spacer",
   "TextField",
   "Button",
@@ -71,6 +77,7 @@ export function buildA2uiV09HostCatalog(): any {
       !HOST_REPLACEMENT_NAMES.has(c.name)
   );
   const hostLayout = getA2uiV09HostBasicLayoutComponents();
+  const hostDocs = getA2uiV09HostDocumentComponents();
   const hostInteractives = getA2uiV09HostInteractiveComponents();
   const hostCharts = getA2uiV09HostChartComponents();
   const baseFns = Array.from((basicCatalog as any).functions?.values?.() ?? []) as any[];
@@ -80,6 +87,7 @@ export function buildA2uiV09HostCatalog(): any {
     [
       ...filtered,
       ...hostLayout,
+      ...hostDocs,
       ...hostInteractives,
       ...hostCharts,
       a2uiV09HostModelViewer3D,

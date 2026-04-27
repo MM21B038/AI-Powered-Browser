@@ -7,6 +7,7 @@ import {
   clipboard,
   ipcMain,
   nativeImage,
+  screen,
   session,
   shell,
   Notification,
@@ -219,17 +220,44 @@ function syncMainWindowAppIcon(themeIdRaw: unknown): void {
   }
 }
 
+const MAIN_WIN_DEFAULT_W = 1600;
+const MAIN_WIN_DEFAULT_H = 1000;
+const MAIN_WIN_MIN_W = 900;
+const MAIN_WIN_MIN_H = 600;
+
+/** Fit the initial window inside the display work area (excludes taskbars / notches). */
+function getMainWindowInitialBounds(): Rectangle {
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const { x: wx, y: wy, width: ww, height: wh } = display.workArea;
+
+  const margin = 16;
+  const maxW = Math.max(MAIN_WIN_MIN_W, ww - margin * 2);
+  const maxH = Math.max(MAIN_WIN_MIN_H, wh - margin * 2);
+
+  const w = Math.min(MAIN_WIN_DEFAULT_W, maxW);
+  const h = Math.min(MAIN_WIN_DEFAULT_H, maxH);
+
+  const x = wx + Math.max(0, Math.floor((ww - w) / 2));
+  const y = wy + Math.max(0, Math.floor((wh - h) / 2));
+
+  return { x, y, width: w, height: h };
+}
+
 function createWindow(): BrowserWindow {
   if (mainWindow && !mainWindow.isDestroyed()) {
     traceMain("createWindow reused existing window");
     return mainWindow;
   }
   traceMain("createWindow creating new BrowserWindow");
+  const initial = getMainWindowInitialBounds();
+  traceMain("main window initial bounds clamped to work area", initial);
   const win = new BrowserWindow({
-    width: 1600,
-    height: 1000,
-    minWidth: 900,
-    minHeight: 600,
+    x: initial.x,
+    y: initial.y,
+    width: initial.width,
+    height: initial.height,
+    minWidth: MAIN_WIN_MIN_W,
+    minHeight: MAIN_WIN_MIN_H,
     frame: false,
     backgroundColor: "#0a0a0f",
     icon: getAppIcon(),

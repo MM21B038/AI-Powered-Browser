@@ -84,6 +84,13 @@ These are registered on the **host** v0.9 catalog (\`${A2UI_V09_HOST_CATALOG_JSO
 
 **Layout & actions:** \`Text\`, \`Image\`, \`Icon\`, \`Row\`, \`Column\`, \`Spacer\`, and other layout/media types, plus all interactive inputs and \`Button\` (use \`variant\`: \`primary\` for main CTAs, \`default\` for secondary, \`borderless\` for link-style), are implemented by the Autonomous Browser renderer; **prop shapes match** the basic catalog (and \`Spacer\` as documented in the spec).
 
+**Document blocks (host):** For structured doc output inside an A2UI surface, prefer the host document components: \`Table\` (dataframe-like), \`OrderedList\` / \`UnorderedList\` (semantic lists), \`Callout\` (admonitions), \`Blockquote\`, \`DefinitionList\`, \`CodeBlock\`, \`HorizontalRule\`, and \`Badge\`. Use these instead of embedding markdown inside \`Text\` when you want stable layout and consistent theme styling.
+
+**When to pick what**
+- Use **\`Table\`** when you have rows/columns (dataframes, tool results, comparisons). If it’s just a few key/value pairs, prefer **\`DefinitionList\`**.
+- Use **\`CodeBlock\`** for code (with \`language\`) instead of putting code into \`Text\` or markdown.
+- Use **\`Callout\`** for “Note/Warning/Tip” style emphasis instead of ad-hoc bold text.
+
 **Charts:** The host catalog includes \`LineChart\`, \`BarChart\`, \`AreaChart\`, \`PieChart\`, \`Histogram\`, \`DensityPlot\`, **\`Plot3D\`** (WebGL: multiple surfaces, scatter, and **mesh3d** solids via \`traces\`), and **\`ModelViewer3D\`** (GLB/GLTF viewer + optional download links). Themed; no arbitrary colors in NDJSON. For a **tiny** sparkline image only, you may still use \`Image\` with \`url\` from the \`sparkline_svg\` catalog function.
 
 **KPI amounts:** For large currency values in \`Text\`, use \`format_compact_currency\` (short labels like \`$48K\`) instead of \`format_currency\` when full precision strings would overflow or wrap badly; optional \`locale\`: \`en-US\` keeps output stable.

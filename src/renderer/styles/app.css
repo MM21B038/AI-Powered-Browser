@@ -6779,6 +6779,31 @@ webview {
   margin: 10px 0;
 }
 
+/* Definition lists */
+.msg-bubble dl,
+.chat-input-md dl {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg2);
+}
+.msg-bubble dt,
+.chat-input-md dt {
+  margin: 0;
+  font-weight: 700;
+  color: var(--text);
+}
+.msg-bubble dd,
+.chat-input-md dd {
+  margin: 2px 0 8px;
+  color: var(--text2);
+}
+.msg-bubble dd:last-child,
+.chat-input-md dd:last-child {
+  margin-bottom: 0;
+}
+
 /* Tables (GFM) */
 .msg-bubble table,
 .chat-input-md table {
